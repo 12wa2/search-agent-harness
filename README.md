@@ -8,7 +8,7 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-108%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-113%20passed-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -32,7 +32,7 @@ understand → plan → execute → judge → evaluate → reflect → revise �
 
 ## 亮点（面试可展开讲的部分）
 
-- **显式状态机，不套框架**：8 个阶段各自是 `state in → state out` 的纯函数，`phase` 字段驱动流转；核心逻辑全部可单测（108 个测试），框架接入点通过 runner 协议预留。
+- **显式状态机，不套框架**：8 个阶段各自是 `state in → state out` 的纯函数，`phase` 字段驱动流转；核心逻辑全部可单测（113 个测试），框架接入点通过 runner 协议预留。
 - **Intent Signature 防重**：搜索意图做规范化 sha1 签名（大小写 / 顺序 / 权重归一），同一意图绝不重复执行——掐死 LLM「换个说法重跑一遍」的烧钱行为。
 - **预算是一等公民**：迭代数 / 路径数 / LLM 调用数 / 墙钟时间 4 维预算贯穿循环，5 种显式终止原因（达标 / 迭代上限 / 时间 / 调用预算 / 无进展）。
 - **降级矩阵，永不炸**：每个阶段失败都映射到预定义降级动作（返回基线单趟结果 / 降级单路径 / 跳过判断 / 跳过全局重排 / 立即收敛），`degradedReason` 透传到响应。
@@ -51,6 +51,7 @@ pip install -e ".[dev]"
 
 search-agent demo        # 离线演示：脚本化 LLM + 16 个合成候选人，零 API key
 search-agent eval        # 离线评测：单趟基线 vs Agent 全循环（确定性、可复现）
+search-agent serve --offline   # 可选：HTTP 服务（需 pip install -e ".[api]"）
 ```
 
 接入真实 LLM（任何 OpenAI 兼容端点：OpenAI / Qwen / DeepSeek / vLLM …）：
@@ -106,6 +107,26 @@ search-agent search "招聘推荐算法工程师，要求 5 年以上，有召�
 > 数字来自本机离线运行，毫秒级会有抖动；重新生成：`search-agent eval --markdown`。
 > 目的不是刷分，而是展示**效果与成本的定量权衡**，以及可回归的评测入口。
 
+## HTTP 服务（可选）
+
+```bash
+pip install -e ".[api]"
+search-agent serve --offline    # http://127.0.0.1:8000；不传 --offline 时按环境变量走真实 LLM
+```
+
+| 端点 | 说明 |
+|---|---|
+| `POST /search` | `SearchRequest` → `SearchResponse`（camelCase JSON；`details=true` 附带 `agentTrace` / `agentMetrics`） |
+| `GET /search/stream?query=…&topK=10` | SSE 事件流：每个阶段一帧，最后 `result` 帧返回完整结果 |
+| `GET /healthz` | 健康检查：版本 / 模式 / 后端与 LLM 类型 |
+
+```bash
+curl -s http://127.0.0.1:8000/search -H "Content-Type: application/json" \
+  -d '{"query": "找有 3 年以上经验的后端工程师", "topK": 5}'
+```
+
+`create_app(tool=..., llm_client=...)` 同样接受自定义后端，与本地调用共用同一套 `SearchTool` 协议。
+
 ## 架构
 
 ```mermaid
@@ -137,6 +158,7 @@ search-agent-harness/
 │   ├── harness.py           # 外层循环：阶段调度、降级应用、trace 组装
 │   ├── service.py           # SearchRequest → SearchResponse 适配层
 │   ├── runner.py            # 可替换执行后端（默认 LoopRunner）
+│   ├── server.py            # 可选：FastAPI HTTP 服务（SSE 阶段事件流）
 │   ├── stages/              # 8 个阶段（每个都是纯函数，可独立单测）
 │   ├── core/                # 签名 / 合并 / 预算 / 降级 / 难度路由 / 指标 / trace
 │   ├── contract/tool.py     # SearchTool 协议 —— 与检索后端的唯一边界
@@ -145,8 +167,8 @@ search-agent-harness/
 │   ├── models/              # 意图 IR / 推理工件 / API 模型（pydantic v2）
 │   ├── demo.py              # 离线脚本化 LLM + 合成候选人数据
 │   ├── eval.py              # 离线评测：单趟基线 vs 全循环（效果 / 成本对比）
-│   └── cli.py               # 命令行入口：demo / search / eval
-├── tests/                   # 108 个单元测试
+│   └── cli.py               # 命令行入口：demo / search / eval / serve
+├── tests/                   # 113 个单元测试
 ├── examples/                # 接入自定义后端的示例
 └── docs/                    # 架构与设计决策文档
 ```
@@ -183,9 +205,9 @@ class SearchTool(Protocol):
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 108 个单元测试；ruff 全绿；GitHub Actions CI（ruff + pytest）
+- [x] 113 个单元测试；ruff 全绿；GitHub Actions CI（ruff + pytest）
 - [ ] LangGraphRunner：把同一批阶段编译成 StateGraph（runner 协议已预留，见 `runner.py`）
-- [ ] FastAPI 服务示例（HTTP 入口）
+- [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）
 - [ ] 演示 GIF 与英文文档
 

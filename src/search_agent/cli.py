@@ -6,11 +6,13 @@ Examples::
     search-agent search "高并发 后端" --offline
     search-agent search "高并发 后端"        # needs SEARCH_AGENT_API_KEY
     search-agent eval --markdown            # single-pass baseline comparison
+    search-agent serve --offline            # optional HTTP service (.[api])
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 import unicodedata
@@ -180,6 +182,11 @@ def _build_parser() -> argparse.ArgumentParser:
     eval_cmd.add_argument("--data", default=None, help="candidate JSONL path")
     eval_cmd.add_argument("--top-k", type=int, default=10)
     eval_cmd.add_argument("--markdown", action="store_true", help="markdown tables")
+    serve_cmd = sub.add_parser("serve", help='optional HTTP service (pip install ".[api]")')
+    serve_cmd.add_argument("--host", default="127.0.0.1")
+    serve_cmd.add_argument("--port", type=int, default=8000)
+    serve_cmd.add_argument("--offline", action="store_true", help="force the scripted demo LLM")
+    serve_cmd.add_argument("--data", default=None, help="candidate JSONL path")
     return parser
 
 
@@ -233,6 +240,24 @@ def _run_eval_command(args: argparse.Namespace) -> int:
     )
 
 
+def _run_serve_command(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+
+        from search_agent.server import create_app
+    except ImportError:
+        print('HTTP 服务需要可选依赖：pip install -e ".[api]"', file=sys.stderr)
+        return 1
+    offline = args.offline or not (
+        os.environ.get("SEARCH_AGENT_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    )
+    app = create_app(data_path=args.data, offline=offline)
+    mode = "offline（脚本化 LLM）" if offline else "openai 兼容端点"
+    print(f"search-agent HTTP 服务启动：http://{args.host}:{args.port}  ({mode})")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -242,6 +267,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_search_command(args)
     if args.command == "eval":
         return _run_eval_command(args)
+    if args.command == "serve":
+        return _run_serve_command(args)
     parser.print_help()
     return 2
 

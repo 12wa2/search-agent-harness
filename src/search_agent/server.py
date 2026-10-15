@@ -1,0 +1,173 @@
+"""Optional FastAPI HTTP entry point (``pip install -e ".[api]"``).
+
+Endpoints:
+
+- ``POST /search``        -- JSON ``SearchRequest`` in, ``SearchResponse`` out.
+- ``GET  /search/stream`` -- Server-Sent Events driven by the ``event_sink``
+  hook: one frame per harness stage, then a final ``result`` frame.
+- ``GET  /healthz``       -- version, mode and backend class names.
+
+``create_app`` accepts ``tool`` / ``llm_client`` so the same server can front
+a real backend; defaults to the zero-key offline stack. Run it via::
+
+    search-agent serve --offline
+
+or with uvicorn directly (module-level demo app)::
+
+    uvicorn search_agent.server:app
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import queue
+import threading
+from typing import Any, AsyncIterator
+
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import StreamingResponse
+
+from search_agent import __version__
+from search_agent.contract.tool import SearchTool
+from search_agent.demo import DEMO_DATA, ScriptedLlmClient
+from search_agent.llm.client import LlmClient, OpenAILlmClient
+from search_agent.models.api import SearchRequest, SearchResponse
+from search_agent.service import SearchAgentService
+from search_agent.tools.memory import InMemorySearchTool
+
+
+def _stage_payload(event: str, state: dict[str, Any]) -> dict[str, Any]:
+    """JSON-safe summary of one stage event (mirrors the CLI event printer)."""
+    if event == "understand":
+        job = state.get("job_profile")
+        if job is None:
+            return {}
+        return {
+            "jobTitle": job.title,
+            "mustAbilities": [a.name for a in job.must_abilities],
+            "hardConstraints": len(job.hard_constraints),
+        }
+    if event == "plan":
+        paths = state.get("paths") or []
+        return {"paths": len(paths), "rationales": [p.rationale for p in paths]}
+    if event == "execute":
+        results = state.get("path_results") or []
+        return {
+            "paths": len(results),
+            "recalled": sum(pr.tool_result.total for pr in results),
+            "qualities": [f"{pr.path_id}:{pr.quality}" for pr in results],
+        }
+    if event == "judge":
+        return {"qualified": len(state.get("accumulated") or {})}
+    if event == "evaluate":
+        return {"next": state.get("phase"), "stopReason": state.get("finalize_reason")}
+    if event == "reflect":
+        reflections = state.get("reflections") or []
+        if not reflections:
+            return {}
+        last = reflections[-1]
+        return {
+            "commonTraits": last.common_traits[:2],
+            "gaps": last.gaps[:2],
+            "newSoftSignals": len(last.inferred_soft_signals),
+        }
+    if event == "revise":
+        talent = state.get("talent_profile")
+        return {
+            "softSignals": len(talent.soft_signals) if talent else 0,
+            "converged": bool(state.get("profile_converged")),
+            "iteration": state.get("iteration"),
+        }
+    if event == "finalize":
+        return {"total": state.get("final_total"), "searchTotal": state.get("final_search_total")}
+    if event.startswith("degrade"):
+        return {"reason": state.get("degraded_reason")}
+    return {}
+
+
+def _sse(event: str, payload: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+async def _stream_search(
+    tool: SearchTool, llm: LlmClient, req: SearchRequest
+) -> AsyncIterator[str]:
+    """Run one search in a worker thread; yield SSE frames as stages fire."""
+    events: queue.Queue = queue.Queue()
+
+    def sink(event: str, state: dict[str, Any]) -> None:
+        events.put(("stage", {"stage": event, "detail": _stage_payload(event, state)}))
+
+    def worker() -> None:
+        try:
+            service = SearchAgentService(tool=tool, llm_client=llm, event_sink=sink)
+            resp = service.search(req)
+            events.put(("result", resp.model_dump(by_alias=True)))
+        except Exception as exc:  # surfaced as an SSE error frame, not a crash
+            events.put(("error", {"message": str(exc)}))
+        finally:
+            events.put(None)
+
+    threading.Thread(target=worker, daemon=True).start()
+    while True:
+        item = await asyncio.to_thread(events.get)
+        if item is None:
+            break
+        yield _sse(item[0], item[1])
+
+
+def create_app(
+    *,
+    tool: SearchTool | None = None,
+    llm_client: LlmClient | None = None,
+    data_path: str | None = None,
+    offline: bool = True,
+) -> FastAPI:
+    """Build the HTTP app. Defaults to the zero-key offline stack."""
+    resolved_tool = tool or InMemorySearchTool(str(data_path or DEMO_DATA))
+    resolved_llm = llm_client or (ScriptedLlmClient() if offline else OpenAILlmClient())
+    service = SearchAgentService(tool=resolved_tool, llm_client=resolved_llm)
+
+    app = FastAPI(
+        title="search-agent-harness",
+        version=__version__,
+        description="Eight-stage reflective retrieval agent over HTTP.",
+    )
+
+    @app.get("/healthz")
+    def healthz() -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "version": __version__,
+            "mode": "offline" if isinstance(resolved_llm, ScriptedLlmClient) else "openai",
+            "backend": type(resolved_tool).__name__,
+            "llm": type(resolved_llm).__name__,
+        }
+
+    @app.post("/search")
+    def search(req: SearchRequest) -> SearchResponse:
+        try:
+            return service.search(req)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/search/stream")
+    def search_stream(
+        query: str = Query(..., min_length=1),
+        topK: int = Query(10, ge=1, le=5000),
+        details: bool = Query(False),
+    ) -> StreamingResponse:
+        req = SearchRequest(query=query, topK=topK, details=details)
+        return StreamingResponse(
+            _stream_search(resolved_tool, resolved_llm, req),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    return app
+
+
+app = create_app()
+
+__all__ = ["app", "create_app"]
