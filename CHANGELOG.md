@@ -12,6 +12,9 @@
 - **共享语义层**（`tools/text.py`）：分词 / 条件匹配 / 软打分 / 结果组装集中一处，所有后端复用同一公式（行为不变重构）。
 - **Elasticsearch 后端**（`tools/elasticsearch.py`，`.[es]` extra）：`WhereNode` 树编译成 ES DSL，`details=True` 时原样返回；
   `docker-compose.yml` 单节点 ES 8.15；`examples/es_end_to_end.py` 端到端演示；集成测试 `-m es` 门控，CI 新增 ES 作业。
+- **后端工厂与 CLI 选择**（`tools/factory.py`）：`search-agent search|serve --backend memory|sqlite|es`，ES 索引名可走 `SEARCH_AGENT_ES_INDEX`。
+- **Docker 全栈**：多阶段 `Dockerfile`（wheel 构建 → 非 root 运行 + `HEALTHCHECK`）+ compose `api` 服务
+  （等待 ES 健康后启动并自动灌入演示语料）：`docker compose up -d --build` 一条命令起「HTTP 服务 + ES」。
 
 ## [0.1.0] - 2026-10-15
 

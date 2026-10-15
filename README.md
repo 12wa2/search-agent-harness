@@ -128,6 +128,22 @@ curl -s http://127.0.0.1:8000/search -H "Content-Type: application/json" \
 
 `create_app(tool=..., llm_client=...)` 同样接受自定义后端，与本地调用共用同一套 `SearchTool` 协议。
 
+## Docker 全栈（API + Elasticsearch）
+
+一条命令起「HTTP 服务 + Elasticsearch 后端」：
+
+```bash
+docker compose up -d --build            # 首次要构建镜像，之后可去掉 --build
+curl -s http://127.0.0.1:8000/healthz   # → backend=ElasticsearchSearchTool, mode=offline
+curl -s -X POST http://127.0.0.1:8000/search -H "Content-Type: application/json" -d '{"query": "找有 3 年以上经验的后端工程师", "topK": 5}'
+docker compose down                     # 停止（加 -v 一并清掉 ES 数据卷）
+```
+
+镜像为多阶段构建（build 阶段产出 wheel，runtime 阶段只装 wheel、以非 root 运行、内置
+`HEALTHCHECK`）；compose 里 `api` 服务等 ES 健康检查通过后才启动，启动时把 16 条演示语料
+灌进 ES（`--recreate-index`，可用 `command:` 覆盖）。想切真实 LLM，取消 compose 里
+`SEARCH_AGENT_API_KEY` 的注释即可——容器会自动从 offline 模式换成 OpenAI 兼容端点。
+
 ## 架构
 
 ```mermaid
@@ -177,7 +193,8 @@ search-agent-harness/
 ├── tests/                   # 148 离线 + 17 ES 集成
 ├── examples/                # custom_backend.py（最小接入示例）· es_end_to_end.py（真实 ES 全链路）
 ├── docs/                    # ARCHITECTURE.md · DECISIONS.md · demo.tape（演示录制脚本）
-└── docker-compose.yml       # 单节点 Elasticsearch 8（端到端示例用）
+├── Dockerfile               # 多阶段镜像：wheel 构建 → 非 root 运行 + HEALTHCHECK
+└── docker-compose.yml       # 单节点 ES 8 + API 服务（docker compose up -d --build）
 ```
 
 ## 接入你自己的检索后端
@@ -236,6 +253,7 @@ pytest -q -m es
 - [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）
 - [x] SQLite/FTS5 后端（`tools/sqlite_fts.py`，标准库）：where 树编译 SQL + 跨后端一致性测试。
 - [x] Elasticsearch 真实后端 + `docker compose` 端到端示例（ES DSL 编译，`examples/es_end_to_end.py`）。
+- [x] Docker 全栈：多阶段镜像 + compose（`api` 等待 ES 健康后启动，自动灌入演示语料）。
 - [ ] 演示 GIF（`docs/demo.tape` 已就绪，待录制）与完整英文 README（现为 README 内折叠版）
 
 ## 诚实声明

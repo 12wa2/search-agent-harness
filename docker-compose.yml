@@ -14,4 +14,19 @@ services:
       interval: 5s
       timeout: 5s
       retries: 60
+    restart: unless-stopped
 
+  api:
+    build: .
+    image: search-agent-harness:local
+    container_name: search-agent-api
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - SEARCH_AGENT_ES_URL=http://elasticsearch:9200
+      - SEARCH_AGENT_ES_INDEX=search-agent-demo
+      # - SEARCH_AGENT_API_KEY=sk-...    # uncomment for a real LLM instead of the demo
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

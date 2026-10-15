@@ -7,6 +7,7 @@ Examples::
     search-agent search "高并发 后端"        # needs SEARCH_AGENT_API_KEY
     search-agent eval --markdown            # single-pass baseline comparison
     search-agent serve --offline            # optional HTTP service (.[api])
+    search-agent serve --backend es         # same service on a real Elasticsearch
 """
 
 from __future__ import annotations
@@ -19,12 +20,17 @@ import unicodedata
 from typing import Any, Callable, TextIO
 
 from search_agent import __version__
-from search_agent.demo import DEMO_DATA, DEMO_QUERIES, ScriptedLlmClient, run_demo
+from search_agent.demo import DEMO_QUERIES, ScriptedLlmClient, run_demo
 from search_agent.eval import run_eval
 from search_agent.llm.client import OpenAILlmClient
 from search_agent.models.api import SearchRequest, SearchResponse
 from search_agent.service import SearchAgentService
-from search_agent.tools.memory import InMemorySearchTool
+from search_agent.tools.factory import (
+    BACKENDS,
+    DEFAULT_ES_INDEX,
+    ES_INDEX_ENV,
+    build_search_tool,
+)
 
 
 def _display_width(text: str) -> int:
@@ -154,6 +160,28 @@ def print_metrics(resp: SearchResponse, stream: TextIO | None = None) -> None:
         print(f"  输出校验: {issues}", file=out)
 
 
+def _add_backend_flags(parser: argparse.ArgumentParser) -> None:
+    """Backend-selection flags shared by ``search`` and ``serve``."""
+    parser.add_argument("--data", default=None, help="candidate JSONL path")
+    parser.add_argument(
+        "--backend",
+        choices=BACKENDS,
+        default="memory",
+        help="retrieval backend: memory (default) / sqlite / es (needs .[es])",
+    )
+    parser.add_argument("--sqlite-path", default=":memory:", help="db file for --backend sqlite")
+    parser.add_argument(
+        "--es-index",
+        default=None,
+        help=f"index for --backend es (default: ${ES_INDEX_ENV} or {DEFAULT_ES_INDEX})",
+    )
+    parser.add_argument(
+        "--recreate-index",
+        action="store_true",
+        help="drop and re-index the corpus on startup (--backend es)",
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="search-agent",
@@ -173,7 +201,7 @@ def _build_parser() -> argparse.ArgumentParser:
     search.add_argument(
         "--offline", action="store_true", help="use the scripted demo LLM instead of a real API"
     )
-    search.add_argument("--data", default=None, help="candidate JSONL path")
+    _add_backend_flags(search)
     search.add_argument("--top-k", type=int, default=10)
     search.add_argument("--json", action="store_true", help="print raw JSON response")
 
@@ -186,7 +214,7 @@ def _build_parser() -> argparse.ArgumentParser:
     serve_cmd.add_argument("--host", default="127.0.0.1")
     serve_cmd.add_argument("--port", type=int, default=8000)
     serve_cmd.add_argument("--offline", action="store_true", help="force the scripted demo LLM")
-    serve_cmd.add_argument("--data", default=None, help="candidate JSONL path")
+    _add_backend_flags(serve_cmd)
     return parser
 
 
@@ -213,12 +241,19 @@ def _run_demo_command(args: argparse.Namespace) -> int:
 
 def _run_search_command(args: argparse.Namespace) -> int:
     llm = ScriptedLlmClient() if args.offline else OpenAILlmClient()
-    service = SearchAgentService(
-        tool=InMemorySearchTool(args.data or DEMO_DATA),
-        llm_client=llm,
-        event_sink=make_event_printer(),
-    )
     try:
+        tool = build_search_tool(
+            args.backend,
+            data_path=args.data,
+            sqlite_path=args.sqlite_path,
+            es_index=args.es_index,
+            recreate=args.recreate_index,
+        )
+        service = SearchAgentService(
+            tool=tool,
+            llm_client=llm,
+            event_sink=make_event_printer(),
+        )
         resp = service.search(SearchRequest(query=args.query, topK=args.top_k, details=True))
     except RuntimeError as exc:
         print(f"错误: {exc}", file=sys.stderr)
@@ -251,9 +286,23 @@ def _run_serve_command(args: argparse.Namespace) -> int:
     offline = args.offline or not (
         os.environ.get("SEARCH_AGENT_API_KEY") or os.environ.get("OPENAI_API_KEY")
     )
-    app = create_app(data_path=args.data, offline=offline)
+    try:
+        tool = build_search_tool(
+            args.backend,
+            data_path=args.data,
+            sqlite_path=args.sqlite_path,
+            es_index=args.es_index,
+            recreate=args.recreate_index,
+        )
+    except RuntimeError as exc:
+        print(f"错误: {exc}", file=sys.stderr)
+        return 1
+    app = create_app(tool=tool, offline=offline)
     mode = "offline（脚本化 LLM）" if offline else "openai 兼容端点"
-    print(f"search-agent HTTP 服务启动：http://{args.host}:{args.port}  ({mode})")
+    print(
+        f"search-agent HTTP 服务启动：http://{args.host}:{args.port}"
+        f"  ({mode} · 检索后端 {type(tool).__name__})"
+    )
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     return 0
 

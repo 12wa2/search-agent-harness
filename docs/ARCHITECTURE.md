@@ -176,3 +176,14 @@ understand ──(need_clarify)──> 返回澄清问题
 | 调整难度路由策略 | `core/difficulty.py::difficulty_route / adaptive_budget` |
 | 调整预算默认值 | 环境变量（见 README「配置」表）或直接构造 `Budget` |
 | 调整阶段行为 | `stages/<阶段>.py` 单文件改动，配套测试在 `tests/` |
+
+## 12. 部署形态（容器）
+
+`Dockerfile` 两阶段构建：build 阶段把 `.[api,es]` 解析成 wheel，runtime 阶段只安装 wheel，
+以 uid 10001 非 root 运行，内置 `HEALTHCHECK` 打 `/healthz`。
+
+compose 的 `api` 服务等待 `elasticsearch` 通过健康检查后才启动，随后执行
+`search-agent serve --host 0.0.0.0 --backend es --recreate-index`——先把 16 条演示语料灌进
+ES 索引，再对外提供 HTTP + SSE。后端统一由 `tools/factory.py` 构造，CLI 的
+`--backend memory|sqlite|es` 与容器入口走同一条代码路径；`/healthz` 回显当前后端与 LLM
+类型，便于确认容器实际接的是哪一个。
