@@ -10,6 +10,8 @@
 - **SQLite/FTS5 后端**（`tools/sqlite_fts.py`，仅标准库）：`WhereNode` 树编译为 SQL（归一化表 + FTS5 虚表），
   过滤后由共享语义层复检与打分；与内存后端在同一语料上结果逐位一致（新增 27 个测试）。
 - **共享语义层**（`tools/text.py`）：分词 / 条件匹配 / 软打分 / 结果组装集中一处，所有后端复用同一公式（行为不变重构）。
+- **Elasticsearch 后端**（`tools/elasticsearch.py`，`.[es]` extra）：`WhereNode` 树编译成 ES DSL，`details=True` 时原样返回；
+  `docker-compose.yml` 单节点 ES 8.15；`examples/es_end_to_end.py` 端到端演示；集成测试 `-m es` 门控，CI 新增 ES 作业。
 
 ## [0.1.0] - 2026-10-15
 

@@ -34,18 +34,21 @@ from search_agent.models.api import CandidateItem
 from search_agent.models.ir import StructuredConditionIR, WhereNode
 from search_agent.tools.memory import load_candidates
 from search_agent.tools.text import (
+    TERM_FIELDS,
     ability_hits,
     as_number,
     build_tool_candidate,
     candidate_text,
-    candidate_values,
     collect_leaves,
     hard_facts,
+    normalized_terms,
     quality_label,
     soft_score,
     tokens,
     where_matches,
 )
+
+__all__ = ["SqliteFtsSearchTool"]
 
 __all__ = ["SqliteFtsSearchTool"]
 
@@ -71,22 +74,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS candidate_fts USING fts5(
     tokens
 );
 """
-
-# IR fields backed by the term table (mirrors ``candidate_values``).
-_TERM_FIELDS = (
-    "name",
-    "skill",
-    "company",
-    "position",
-    "intention_position",
-    "school",
-    "major",
-    "degree",
-    "city",
-    "intention_city",
-    "certificate",
-    "language",
-)
 # IR fields that alias another term field; ``latest_*`` only keeps the newest entry.
 _LATEST_FIELDS = {"latest_company": "company", "latest_work_job": "position"}
 _ALIAS_FIELDS = {"live_city": "city"}
@@ -131,14 +118,8 @@ class SqliteFtsSearchTool:
     def _term_rows(item: CandidateItem) -> list[tuple[str, int, str]]:
         """Normalized (field, position, value) rows; same fields as the shared evaluator."""
         rows: list[tuple[str, int, str]] = []
-        for field in _TERM_FIELDS:
-            values = candidate_values(item, field)
-            if not isinstance(values, list):
-                continue
-            for position, value in enumerate(values):
-                text = str(value).strip().lower()
-                if text:
-                    rows.append((field, position, text))
+        for field, values in normalized_terms(item).items():
+            rows.extend((field, position, value) for position, value in enumerate(values))
         return rows
 
     def _ingest(self) -> None:
@@ -231,7 +212,7 @@ class SqliteFtsSearchTool:
         latest = False
         if field in _LATEST_FIELDS:
             term_field, latest = _LATEST_FIELDS[field], True
-        elif field in _TERM_FIELDS:
+        elif field in TERM_FIELDS:
             term_field = field
         if term_field is None:
             # Unknown to the shared evaluator as well: stay permissive.

@@ -155,3 +155,15 @@ dev 依赖里带上它们以在 CI 跑接口测试；核心安装仍然只有 py
 
 **影响**：`tools/text.py` 成为分词 / 条件匹配 / 打分 / 结果组装的唯一事实来源；任何新后端只需复用这些函数、并保证引擎侧过滤不弱于 Python 复检，就能自动获得一致的排序与解释；Elasticsearch 真实后端（DSL）按同一模式接入。
 
+
+## D16. Elasticsearch 真实后端：同一套 IR 编译成 ES DSL
+
+**背景**：秋招展示与真实企业场景都需要「真引擎」证据：DSL 生成、索引映射、端到端示例，而不只是内存假后端。
+
+**选择**：新增 `tools/elasticsearch.py`（`.[es]` extra，客户端惰加载）：`WhereNode` 树编译成 ES DSL（`terms` / `range` / `bool.must_not` / `minimum_should_match`，`latest_*` 单独存 keyword 字段）；`docker-compose.yml` 一键起单节点 ES 8.15；`examples/es_end_to_end.py` 演示「建索引 → 完整 Agent 循环 → 与内存后端逐位比对」；集成测试用 `-m es` 门控（未起 ES 自动跳过），CI 加一个 ES service container 作业真跑集成用例。
+
+**取舍**：命中集在引擎侧过滤、Python 侧复检与打分（与 SQLite 后端同一模式），保证「换引擎不改结果」可被测试钉死；语义条件不参与过滤（与内存后端一致），BM25 走独立的 `search_text` 通道，避免近似召回悄悄改变 Agent 的判定与解释。
+
+**影响**：三个后端（内存 / SQLite / ES）共享同一语义层与同一套对比测试，`SearchTool` 协议作为唯一替换点的价值被真实引擎验证；后续向量检索或多路召回可按同一模式接入。
+
+

@@ -20,6 +20,7 @@ from search_agent.models.ir import SemanticConditionIR, StructuredConditionIR, W
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "TERM_FIELDS",
     "ability_hits",
     "as_number",
     "build_tool_candidate",
@@ -34,6 +35,7 @@ __all__ = [
     "first_present",
     "hard_facts",
     "leaf_matches",
+    "normalized_terms",
     "quality_label",
     "skill_names",
     "soft_score",
@@ -44,6 +46,22 @@ __all__ = [
 
 
 NUMERIC_OPS = {"gte", "lte", "range"}
+
+# IR fields backed by term tables / keyword indexes (mirrors ``candidate_values``).
+TERM_FIELDS = (
+    "name",
+    "skill",
+    "company",
+    "position",
+    "intention_position",
+    "school",
+    "major",
+    "degree",
+    "city",
+    "intention_city",
+    "certificate",
+    "language",
+)
 ASCII_RE = re.compile(r"[a-z0-9+#.]+")
 CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff]+")
 
@@ -143,6 +161,18 @@ def candidate_values(item: CandidateItem, field: str) -> list[str] | float | int
     if field == "age":
         return item.age
     return None
+
+
+def normalized_terms(item: CandidateItem) -> dict[str, list[str]]:
+    """Lowercased, stripped term values per IR field (shared by bundled backends)."""
+    out: dict[str, list[str]] = {}
+    for field in TERM_FIELDS:
+        values = candidate_values(item, field)
+        if not isinstance(values, list):
+            continue
+        cleaned = [str(value).strip().lower() for value in values]
+        out[field] = [value for value in cleaned if value]
+    return out
 
 
 # ── WHERE tree evaluation ──────────────────────────────────────────────────
