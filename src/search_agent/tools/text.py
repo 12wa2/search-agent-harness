@@ -13,13 +13,16 @@ import logging
 import re
 from typing import Any
 
+from search_agent.contract.tool import ToolCandidate, ToolQuality
 from search_agent.models.api import CandidateItem
-from search_agent.models.ir import StructuredConditionIR, WhereNode
+from search_agent.models.ir import SemanticConditionIR, StructuredConditionIR, WhereNode
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "ability_hits",
     "as_number",
+    "build_tool_candidate",
     "candidate_text",
     "candidate_values",
     "certificate_names",
@@ -29,8 +32,11 @@ __all__ = [
     "coverage",
     "education_values",
     "first_present",
+    "hard_facts",
     "leaf_matches",
+    "quality_label",
     "skill_names",
+    "soft_score",
     "titles",
     "tokens",
     "where_matches",
@@ -238,3 +244,80 @@ def coverage(text: str, blob: str) -> float:
 
 def confidence(score: float) -> float:
     return round(min(1.0, score / 2.5), 3)
+
+
+# ── shared result shaping ───────────────────────────────────────────────────────────
+
+
+def hard_facts(
+    leaves: list[StructuredConditionIR],
+    item: CandidateItem,
+) -> list[dict[str, Any]]:
+    """One explainable fact per leaf in the where tree (matched flag included)."""
+    return [
+        {
+            "field": cond.field,
+            "operator": cond.operator,
+            "values": list(cond.values),
+            "required": cond.required,
+            "matched": leaf_matches(cond, item),
+        }
+        for cond in leaves
+    ]
+
+
+def soft_score(
+    semantic: list[SemanticConditionIR] | None,
+    blob: str,
+) -> tuple[float, list[dict[str, Any]]]:
+    """Coverage-weighted soft score; shared by every bundled backend."""
+    score = 1.0
+    facts: list[dict[str, Any]] = []
+    for cond in semantic or []:
+        cov = coverage(cond.text, blob)
+        if cov > 0:
+            score += min(float(cond.weight), 2.0) * cov * 0.6
+        facts.append({"text": cond.text, "weight": cond.weight, "coverage": round(cov, 3)})
+    return round(score, 4), facts
+
+
+def ability_hits(abilities: list[str], blob: str) -> int:
+    """Count job abilities with at least one token present in the candidate text."""
+    return sum(1 for ability in abilities if any(token in blob for token in tokens(ability)))
+
+
+def quality_label(item_count: int, total: int, top_k: int) -> ToolQuality:
+    """Map result sizes to the thin/rich/empty signal the agent routes on."""
+    if total <= 0:
+        return "empty"
+    if item_count >= max(3, top_k // 4):
+        return "rich"
+    return "thin"
+
+
+def build_tool_candidate(
+    score: float,
+    hard: list[dict[str, Any]],
+    soft: list[dict[str, Any]],
+    item: CandidateItem,
+) -> ToolCandidate:
+    """Shared result shaping: identical facts and explanations for every backend."""
+    hard_hits = sum(1 for h in hard if h["matched"])
+    soft_hits = sum(1 for s in soft if s["coverage"] > 0)
+    if hard or soft:
+        summary = f"命中 {hard_hits}/{len(hard)} 硬条件、{soft_hits}/{len(soft)} 语义信号"
+    else:
+        summary = "命中检索条件"
+    explanation: dict[str, Any] = {
+        "summary": summary,
+        "hardMatches": hard,
+        "softSignals": soft,
+        "confidence": confidence(score),
+    }
+    return ToolCandidate(
+        doc_id=item.docId,
+        score=score,
+        item=item.model_copy(update={"score": score, "matchExplanation": explanation}),
+        hard_matches=hard,
+        match_explanation=explanation,
+    )

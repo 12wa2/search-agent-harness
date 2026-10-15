@@ -31,27 +31,14 @@ from search_agent.contract.tool import (
 )
 from search_agent.models.api import CandidateItem
 from search_agent.models.ir import StructuredConditionIR
-from search_agent.tools.text import (
-    candidate_text as _candidate_text,
-)
-from search_agent.tools.text import (
-    collect_leaves as _collect_leaves,
-)
-from search_agent.tools.text import (
-    confidence as _confidence,
-)
-from search_agent.tools.text import (
-    coverage as _coverage,
-)
-from search_agent.tools.text import (
-    leaf_matches as _leaf_matches,
-)
-from search_agent.tools.text import (
-    tokens as _tokens,
-)
-from search_agent.tools.text import (
-    where_matches as _where_matches,
-)
+from search_agent.tools.text import ability_hits as _ability_hits
+from search_agent.tools.text import build_tool_candidate as _build_tool_candidate
+from search_agent.tools.text import candidate_text as _candidate_text
+from search_agent.tools.text import collect_leaves as _collect_leaves
+from search_agent.tools.text import hard_facts as _hard_facts
+from search_agent.tools.text import quality_label as _quality_label
+from search_agent.tools.text import soft_score as _soft_score
+from search_agent.tools.text import where_matches as _where_matches
 
 __all__ = ["InMemorySearchTool", "load_candidates"]
 
@@ -113,40 +100,18 @@ class InMemorySearchTool:
         leaves = _collect_leaves(req.intent.where)
         scored: list[tuple[float, list[dict[str, Any]], list[dict[str, Any]], CandidateItem]] = []
         for item in filtered:
-            hard = [
-                {
-                    "field": cond.field,
-                    "operator": cond.operator,
-                    "values": list(cond.values),
-                    "required": cond.required,
-                    "matched": _leaf_matches(cond, item),
-                }
-                for cond in leaves
-            ]
             blob = _candidate_text(item)
-            score = 1.0
-            soft: list[dict[str, Any]] = []
-            for cond in req.intent.semantic or []:
-                cov = _coverage(cond.text, blob)
-                if cov > 0:
-                    score += min(float(cond.weight), 2.0) * cov * 0.6
-                soft.append({"text": cond.text, "weight": cond.weight, "coverage": round(cov, 3)})
-            scored.append((round(score, 4), hard, soft, item))
+            hard = _hard_facts(leaves, item)
+            score, soft = _soft_score(req.intent.semantic, blob)
+            scored.append((score, hard, soft, item))
         score_ms = int((time.perf_counter() - score_started) * 1000)
 
         scored.sort(key=lambda row: (-row[0], row[3].docId))
         total = len(scored)
         page = scored[: max(0, int(req.top_k))]
 
-        items = [
-            self._to_tool_candidate(score, hard, soft, item) for score, hard, soft, item in page
-        ]
-        if total <= 0:
-            quality = "empty"
-        elif len(items) >= max(3, int(req.top_k) // 4):
-            quality = "rich"
-        else:
-            quality = "thin"
+        items = [_build_tool_candidate(score, hard, soft, item) for score, hard, soft, item in page]
+        quality = _quality_label(len(items), total, int(req.top_k))
 
         es_query: dict[str, Any] | None = None
         if req.details:
@@ -183,27 +148,15 @@ class InMemorySearchTool:
         scored: list[tuple[float, list[dict[str, Any]], ToolCandidate]] = []
         for candidate in req.candidates:
             blob = _candidate_text(candidate.item)
-            ability_hits = sum(
-                1 for ability in abilities if any(t in blob for t in _tokens(ability))
-            )
-            hard = [
-                {
-                    "field": cond.field,
-                    "operator": cond.operator,
-                    "values": list(cond.values),
-                    "required": cond.required,
-                    "matched": _leaf_matches(cond, candidate.item),
-                }
-                for cond in job_hard
-            ]
-            score = round(1.0 + 0.5 * ability_hits + 0.2 * sum(1 for h in hard if h["matched"]), 4)
+            hits = _ability_hits(abilities, blob)
+            hard = _hard_facts(job_hard, candidate.item)
+            score = round(1.0 + 0.5 * hits + 0.2 * sum(1 for h in hard if h["matched"]), 4)
             scored.append((score, hard, candidate))
 
         scored.sort(key=lambda row: (-row[0], row[2].doc_id))
         top = scored[: max(0, int(req.top_k))]
         items = [
-            self._to_tool_candidate(score, hard, [], candidate.item)
-            for score, hard, candidate in top
+            _build_tool_candidate(score, hard, [], candidate.item) for score, hard, candidate in top
         ]
         return SearchToolResult(
             items=items,
@@ -211,33 +164,4 @@ class InMemorySearchTool:
             total_relation="eq",
             quality="rich" if items else "empty",
             timings_ms={"total": int((time.perf_counter() - started) * 1000)},
-        )
-
-    # -- internals -----------------------------------------------------------
-
-    @staticmethod
-    def _to_tool_candidate(
-        score: float,
-        hard: list[dict[str, Any]],
-        soft: list[dict[str, Any]],
-        item: CandidateItem,
-    ) -> ToolCandidate:
-        hard_hits = sum(1 for h in hard if h["matched"])
-        soft_hits = sum(1 for s in soft if s["coverage"] > 0)
-        if hard or soft:
-            summary = f"命中 {hard_hits}/{len(hard)} 硬条件、{soft_hits}/{len(soft)} 语义信号"
-        else:
-            summary = "命中检索条件"
-        explanation: dict[str, Any] = {
-            "summary": summary,
-            "hardMatches": hard,
-            "softSignals": soft,
-            "confidence": _confidence(score),
-        }
-        return ToolCandidate(
-            doc_id=item.docId,
-            score=score,
-            item=item.model_copy(update={"score": score, "matchExplanation": explanation}),
-            hard_matches=hard,
-            match_explanation=explanation,
         )
