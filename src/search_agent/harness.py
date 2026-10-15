@@ -58,6 +58,135 @@ _MAX_STEPS = 60
 logger = logging.getLogger(__name__)
 
 
+def init_state_defaults(initial: dict[str, Any]) -> dict[str, Any]:
+    """Copy ``initial`` and fill the loop's default keys."""
+    state = dict(initial)
+    state.setdefault("phase", "understand")
+    state.setdefault("iteration", 0)
+    state.setdefault("accumulated", {})
+    state.setdefault("seen_doc_ids", set())
+    state.setdefault("tried_signatures", set())
+    state.setdefault("paths", [])
+    state.setdefault("path_results", [])
+    state.setdefault("reflections", [])
+    state.setdefault("llm_calls", 0)
+    state.setdefault("finalize", False)
+    state.setdefault("need_clarify", False)
+    state.setdefault("fallback_baseline", False)
+    state.setdefault("final_items", [])
+    state.setdefault("final_total", 0)
+    return state
+
+
+def emit_event(deps: Deps, event: str, state: dict[str, Any]) -> None:
+    """Fire the optional observability hook; sink errors never break a run."""
+    sink = getattr(deps, "event_sink", None)
+    if sink is None:
+        return
+    try:
+        sink(event, state)
+    except Exception:  # noqa: BLE001 - observability must not fail the run
+        logger.debug("event sink failed for %s", event, exc_info=True)
+
+
+def apply_difficulty_routing(state: dict[str, Any], deps: Deps) -> None:
+    """After understand, route based on difficulty (adaptive budget included)."""
+    job = state.get("job_profile")
+    if not job:
+        return
+    route = difficulty_route(job.subjective_difficulty)
+    state["difficulty_route"] = route
+
+    new_budget = adaptive_budget(deps.budget_state.budget, route)
+    deps.budget_state.budget = new_budget
+    state["budget"] = new_budget
+
+    if route == "single_pass":
+        state["skip_reflection"] = True
+        path = single_path_from_hard_constraints(state)
+        if path is not None:
+            state["paths"] = [path]
+            state["tried_signatures"] = state.get("tried_signatures", set()) | {path.signature}
+            state["phase"] = "execute"
+        # if no hard_constraints to build a path, fall through to plan
+
+
+def handle_stage_failure(state: dict[str, Any], phase: str, deps: Deps) -> None:
+    """Map a stage exception to the degradation matrix (control plane never raises)."""
+    action, reason = degrade(phase, "llm_failed")
+    if reason != "understand_failed" or state.get("degraded_reason") is None:
+        state["degraded_reason"] = reason
+
+    if action == "fallback_baseline":
+        state["fallback_baseline"] = True
+        state["phase"] = "done"
+    elif action == "single_path":
+        path = single_path_from_hard_constraints(state)
+        if path is not None:
+            state["paths"] = [path]
+            state["tried_signatures"] = state.get("tried_signatures", set()) | {path.signature}
+            state["phase"] = "execute"
+        else:
+            state["fallback_baseline"] = True
+            state["phase"] = "done"
+    elif action == "skip_judge":
+        state["phase"] = "evaluate"
+    elif action == "skip_global_rerank":
+        state["phase"] = "finalize"
+    else:  # finalize_now
+        if phase == "finalize":
+            state["final_items"] = []
+            state["final_total"] = 0
+            state["phase"] = "done"
+        else:
+            state["phase"] = "finalize"
+    emit_event(deps, f"degrade:{phase}", state)
+
+
+def build_trace(
+    state: dict[str, Any],
+    deps: Deps,
+    iterations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Assemble ``agentTrace`` from the state, budget usage and iterations."""
+    bs = deps.budget_state
+    budget = state.get("budget")
+    tool_calls = [
+        {
+            "pathId": pr.path_id,
+            "elapsedMs": pr.tool_result.timings_ms.get("total", 0),
+            "total": pr.tool_result.total,
+            "quality": pr.quality,
+        }
+        for pr in state.get("path_results", [])
+    ]
+    return build_agent_trace(
+        iterations=iterations,
+        merged_pool_size=len(state.get("accumulated", {})),
+        reranked_top_k=len(state.get("final_items", [])),
+        rerank_used=bool(state.get("rerank_used", False)),
+        budget=budget.model_dump() if budget else {},
+        budget_used={
+            "llmCalls": bs.llm_calls,
+            "elapsedMs": int(bs.elapsed_sec() * 1000),
+        },
+        degraded_reason=state.get("degraded_reason"),
+        tool_calls=tool_calls,
+    )
+
+
+def assemble_observability(
+    state: dict[str, Any],
+    deps: Deps,
+    iterations: list[dict[str, Any]],
+) -> None:
+    """Attach metrics + trace to the final state (shared by all runners)."""
+    metrics = collect_metrics(state, deps.budget_state)
+    emit_metrics(metrics, query=state.get("query"))
+    state["agent_metrics"] = metrics.to_dict()
+    state["agent_trace"] = build_trace(state, deps, iterations)
+
+
 class Harness:
     """Outer loop controller. Stateless between runs; deps injected once."""
 
@@ -67,7 +196,7 @@ class Harness:
     # ── public ──────────────────────────────────────────────────────────
 
     def run(self, initial_state: dict[str, Any]) -> dict[str, Any]:
-        state = self._init_defaults(initial_state)
+        state = init_state_defaults(initial_state)
         bs = self.deps.budget_state
 
         iterations: list[dict[str, Any]] = []
@@ -96,14 +225,14 @@ class Harness:
             try:
                 updates = _STAGES[phase](state, self.deps)
                 state.update(updates)
-                self._emit(phase, state)
+                emit_event(self.deps, phase, state)
             except Exception:  # noqa: BLE001 - degradation
-                self._handle_failure(state, phase)
+                handle_stage_failure(state, phase, self.deps)
                 continue
 
             # post-understand: difficulty routing
             if phase == "understand" and not state.get("need_clarify"):
-                self._apply_difficulty_routing(state)
+                apply_difficulty_routing(state, self.deps)
 
             # post-execute: detect all-paths-failed
             if phase == "execute" and had_pending:
@@ -139,125 +268,8 @@ class Harness:
                 )
                 iter_index += 1
 
-        metrics = collect_metrics(state, bs)
-        emit_metrics(metrics, query=state.get("query"))
-        state["agent_metrics"] = metrics.to_dict()
-
-        state["agent_trace"] = self._build_trace(state, iterations)
+        assemble_observability(state, self.deps, iterations)
         return state
-
-    # ── internals ───────────────────────────────────────────────────────
-
-    @staticmethod
-    def _init_defaults(initial: dict[str, Any]) -> dict[str, Any]:
-        state = dict(initial)
-        state.setdefault("phase", "understand")
-        state.setdefault("iteration", 0)
-        state.setdefault("accumulated", {})
-        state.setdefault("seen_doc_ids", set())
-        state.setdefault("tried_signatures", set())
-        state.setdefault("paths", [])
-        state.setdefault("path_results", [])
-        state.setdefault("reflections", [])
-        state.setdefault("llm_calls", 0)
-        state.setdefault("finalize", False)
-        state.setdefault("need_clarify", False)
-        state.setdefault("fallback_baseline", False)
-        state.setdefault("final_items", [])
-        state.setdefault("final_total", 0)
-        return state
-
-    def _handle_failure(self, state: dict[str, Any], phase: str) -> None:
-        action, reason = degrade(phase, "llm_failed")
-        if reason != "understand_failed" or state.get("degraded_reason") is None:
-            state["degraded_reason"] = reason
-
-        if action == "fallback_baseline":
-            state["fallback_baseline"] = True
-            state["phase"] = "done"
-        elif action == "single_path":
-            path = single_path_from_hard_constraints(state)
-            if path is not None:
-                state["paths"] = [path]
-                state["tried_signatures"] = state.get("tried_signatures", set()) | {path.signature}
-                state["phase"] = "execute"
-            else:
-                state["fallback_baseline"] = True
-                state["phase"] = "done"
-        elif action == "skip_judge":
-            state["phase"] = "evaluate"
-        elif action == "skip_global_rerank":
-            state["phase"] = "finalize"
-        else:  # finalize_now
-            if phase == "finalize":
-                state["final_items"] = []
-                state["final_total"] = 0
-                state["phase"] = "done"
-            else:
-                state["phase"] = "finalize"
-        self._emit(f"degrade:{phase}", state)
-
-    def _apply_difficulty_routing(self, state: dict[str, Any]) -> None:
-        """After understand, route based on difficulty."""
-        job = state.get("job_profile")
-        if not job:
-            return
-        route = difficulty_route(job.subjective_difficulty)
-        state["difficulty_route"] = route
-
-        # adaptive budget
-        new_budget = adaptive_budget(self.deps.budget_state.budget, route)
-        self.deps.budget_state.budget = new_budget
-        state["budget"] = new_budget
-
-        if route == "single_pass":
-            state["skip_reflection"] = True
-            path = single_path_from_hard_constraints(state)
-            if path is not None:
-                state["paths"] = [path]
-                state["tried_signatures"] = state.get("tried_signatures", set()) | {path.signature}
-                state["phase"] = "execute"
-            # if no hard_constraints to build a path, fall through to plan
-
-    def _emit(self, event: str, state: dict[str, Any]) -> None:
-        """Fire the optional observability hook; sink errors never break a run."""
-        sink = getattr(self.deps, "event_sink", None)
-        if sink is None:
-            return
-        try:
-            sink(event, state)
-        except Exception:  # noqa: BLE001 - observability must not fail the run
-            logger.debug("event sink failed for %s", event, exc_info=True)
-
-    def _build_trace(
-        self,
-        state: dict[str, Any],
-        iterations: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        bs = self.deps.budget_state
-        budget = state.get("budget")
-        tool_calls = [
-            {
-                "pathId": pr.path_id,
-                "elapsedMs": pr.tool_result.timings_ms.get("total", 0),
-                "total": pr.tool_result.total,
-                "quality": pr.quality,
-            }
-            for pr in state.get("path_results", [])
-        ]
-        return build_agent_trace(
-            iterations=iterations,
-            merged_pool_size=len(state.get("accumulated", {})),
-            reranked_top_k=len(state.get("final_items", [])),
-            rerank_used=bool(state.get("rerank_used", False)),
-            budget=budget.model_dump() if budget else {},
-            budget_used={
-                "llmCalls": bs.llm_calls,
-                "elapsedMs": int(bs.elapsed_sec() * 1000),
-            },
-            degraded_reason=state.get("degraded_reason"),
-            tool_calls=tool_calls,
-        )
 
 
 def single_path_from_hard_constraints(state: dict[str, Any]) -> SearchPath | None:
@@ -284,4 +296,13 @@ def single_path_from_hard_constraints(state: dict[str, Any]) -> SearchPath | Non
     )
 
 
-__all__ = ["Harness", "single_path_from_hard_constraints"]
+__all__ = [
+    "Harness",
+    "apply_difficulty_routing",
+    "assemble_observability",
+    "build_trace",
+    "emit_event",
+    "handle_stage_failure",
+    "init_state_defaults",
+    "single_path_from_hard_constraints",
+]

@@ -12,7 +12,8 @@
 3. **预算是第一公民**。迭代 / 路径 / LLM 调用 / 墙钟预算贯穿整个循环（`core/budget.py`），
    而不是用「超时兜底」处理失控。
 4. **不引入 Agent 框架**。8 个阶段是纯函数，`LoopRunner` 就是一个显式循环；
-   框架接入点（`LangGraphRunner`）通过 `runner.py` 的协议预留，阶段代码不需要改动。
+   框架接入点通过 `runner.py` 的协议实现：`graph.py` 的 `LangGraphRunner`（可选 extra）把同一批阶段
+   编译成 StateGraph，与默认循环行为等价（`tests/test_langgraph_runner.py`），阶段代码不改动。
 5. **唯一协议边界**：`contract/tool.py` 的 `SearchTool`。换检索后端 = 换一个实现类。
 
 ## 2. 八个阶段
@@ -171,7 +172,7 @@ understand ──(need_clarify)──> 返回澄清问题
 |---|---|
 | 接自己的检索后端 | 实现 `SearchTool` 两个方法，注入 `SearchAgentService(tool=...)` |
 | 换 LLM / 换模型 | 实现 `LlmClient.complete_json`，或配 `SEARCH_AGENT_BASE_URL / MODEL` |
-| 换执行后端（LangGraph 等） | 实现 `runner.py` 的 `HarnessRunner.run` 协议 |
+| 换执行后端（LangGraph 等） | 实现 `HarnessRunner.run` 协议；内置 `graph.py` 的 `LangGraphRunner` 可直接用 |
 | 调整难度路由策略 | `core/difficulty.py::difficulty_route / adaptive_budget` |
 | 调整预算默认值 | 环境变量（见 README「配置」表）或直接构造 `Budget` |
 | 调整阶段行为 | `stages/<阶段>.py` 单文件改动，配套测试在 `tests/` |

@@ -1,9 +1,10 @@
 """HarnessRunner: pluggable execution backend.
 
 LoopRunner (default) delegates to ``Harness.run`` -- a plain-Python loop.
-LangGraphRunner (future work) compiles the same stages into a StateGraph with
-``Send`` for parallel execute and reducer-based merge; harness logic stays
-unchanged because stages already return full values (not deltas).
+LangGraphRunner (``search_agent.graph``, optional extra ``langgraph``)
+compiles the same stages into a StateGraph and is verified equivalent to
+the loop; harness logic stays unchanged because stages already return
+full values (not deltas).
 """
 
 from __future__ import annotations
