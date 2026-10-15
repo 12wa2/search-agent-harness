@@ -31,17 +31,23 @@ understand → plan → execute → judge → evaluate → reflect → revise �
 - 每轮反思「缺什么」，修订路径再搜，直到达标或预算耗尽
 - 全程可降级：任何一步失败都不会让整个请求崩掉
 
-## 亮点（面试可展开讲的部分）
-- **显式状态机，不套框架**：8 个阶段各自是 `state in → state out` 的纯函数，`phase` 字段驱动流转；核心逻辑全部可单测（160 个离线测试，另 22 个 ES 集成测试）。同一批阶段还能编译成 LangGraph StateGraph（可选 extra），与默认循环行为等价（有对比测试）。
-- **Intent Signature 防重**：搜索意图做规范化 sha1 签名（大小写 / 顺序 / 权重归一），同一意图绝不重复执行——掐死 LLM「换个说法重跑一遍」的烧钱行为。
-- **预算是一等公民**：迭代数 / 路径数 / LLM 调用数 / 墙钟时间 4 维预算贯穿循环，5 种显式终止原因（达标 / 迭代上限 / 时间 / 调用预算 / 无进展）。
-- **降级矩阵，永不炸**：每个阶段失败都映射到预定义降级动作（返回基线单趟结果 / 降级单路径 / 跳过判断 / 跳过全局重排 / 立即收敛），`degradedReason` 透传到响应。
-- **Grounding 防幻觉**：judge 阶段基于检索工具返回的硬事实（hardMatches）做能力判断，prompt 明确「不得编造经历」。
-- **收敛再搜**：反思循环把人才画像越描越准，finalize 用进化后的画像做决定性的「最后一发」检索，再做全局重排。
-- **并行执行 + 路径质量分级**：多路径用线程池并行调用后端；每条路径产出质量分级（rich / thin / empty）驱动后续策略。
-- **可替换检索后端（3 个）**：`SearchTool` 协议下内置内存参考后端、SQLite/FTS5 后端（标准库、无需外部服务）与 Elasticsearch 8 后端（`docker compose` 一键起）；where 树分别编译成 SQL / ES DSL，三个后端在同一语料上结果逐位一致（跨后端一致性测试钉住）。
-- **可观测性内建**：`event_sink` 时间线（下面 demo 里那 8 行）、`agentTrace`、5 组质量指标全部随响应返回。
-- **可选持久化**：多轮对话记忆 + 结果分页支持 Redis；不配也能完全无依赖地跑（内存实现兜底）。
+## 设计动机（这个项目从哪来）
+
+起点是一个很具体的现象：招聘 JD 写的是抽象能力（比如「高并发系统设计能力」），简历写的是具体项目（订单系统、支付系统、分布式架构）——同一种能力可能来自完全不同的岗位、行业或产品线；反过来，岗位名称不同，经验却是可迁移的。纯关键词检索在这种情况下天然会漏人。
+
+我起初在做这条链路的上游：把自然语言解析成检索 IR（NL2IR）。解析准确率提上去之后，天花板反而更清楚了：**解析得再准，也只是把一句话翻译成一个查询。**整条链路（自然语言 → IR → ES 召回 → LLM 重排 → 返回）是一次性的——首轮条件过严或者搜索方向选错，系统不会根据结果主动修正，也没有任何一个环节回答「召回到的这些人够不够、有没有覆盖岗位的必备能力」。所以缺的不是检索能力，ES 本身已经很强；缺的是**搜索策略的决策能力**——是「搜什么、从哪搜、够不够、要不要换」这一层。
+
+再看真人猎头是怎么干活的：他不会只敲一次关键词，而是先想「什么样的人可能具备这种能力」，然后从公司、行业、岗位、项目几个不同来源分别去找，看完结果再判断要不要换方向。这层决策恰好是 LLM 擅长的，但它又不能失控——招聘搜索对成本和延迟有要求，不能让它无限反思。
+
+所以我的做法不是「把搜索换成 Agent」，而是在确定性的混合检索之上加一层**受控的推理闭环**：用显式状态机编排八个阶段，LLM 只负责岗位理解、路径规划、能力判断和反思；工程层负责状态流转、预算控制、签名防重和终止条件；底层的 IR 编译、ES 召回、重排全部通过 `SearchTool` 协议复用原有能力，不重写执行层。
+
+一句话总结：原来的系统解决的是「一次查询怎么执行」，我解决的是「这次搜索策略对不对」。
+
+### 为什么仓库里没有直接放原来的检索工具
+
+`SearchTool` 这条边界抽象自一个真实的人才检索系统：那边 `SearchAgentService(tool=...)` 背后是内部的混合检索服务（Elasticsearch 8 混合召回 + 大模型重排），Agent 只负责「理解 → 规划 → 执行 → 判断 → 反思 → 修订」这层编排。那套服务依赖公司内网的存储与数据，不属于个人资产，因此不在本仓库内。
+
+也正因如此，「换引擎不改 Agent 代码」这句话需要用**可运行的参考实现**来证明——仓库内置的内存 / SQLite / Elasticsearch 三个后端就是干这个的：它们在同一份 `SearchTool` 协议下可互换，并在同一语料上结果逐位一致（跨后端一致性测试）。
 
 ## 30 秒上手
 
@@ -286,24 +292,6 @@ pytest -q -m es
 - [x] Docker 全栈：多阶段镜像 + compose（`api` 等待 ES 健康后启动，自动灌入演示语料）。
 - [ ] 演示 GIF（`docs/demo.tape` 已就绪，待录制）与完整英文 README（现为 README 内折叠版）
 
-## 这个项目从哪来（设计动机）
-
-起点是一个很具体的现象：招聘 JD 写的是抽象能力（比如「高并发系统设计能力」），简历写的是具体项目（订单系统、支付系统、分布式架构）——同一种能力可能来自完全不同的岗位、行业或产品线；反过来，岗位名称不同，经验却是可迁移的。纯关键词检索在这种情况下天然会漏人。
-
-我起初在做这条链路的上游：把自然语言解析成检索 IR（NL2IR）。解析准确率提上去之后，天花板反而更清楚了：**解析得再准，也只是把一句话翻译成一个查询。**整条链路（自然语言 → IR → ES 召回 → LLM 重排 → 返回）是一次性的——首轮条件过严或者搜索方向选错，系统不会根据结果主动修正，也没有任何一个环节回答「召回到的这些人够不够、有没有覆盖岗位的必备能力」。所以缺的不是检索能力，ES 本身已经很强；缺的是**搜索策略的决策能力**——是「搜什么、从哪搜、够不够、要不要换」这一层。
-
-再看真人猎头是怎么干活的：他不会只敲一次关键词，而是先想「什么样的人可能具备这种能力」，然后从公司、行业、岗位、项目几个不同来源分别去找，看完结果再判断要不要换方向。这层决策恰好是 LLM 擅长的，但它又不能失控——招聘搜索对成本和延迟有要求，不能让它无限反思。
-
-所以我的做法不是「把搜索换成 Agent」，而是在确定性的混合检索之上加一层**受控的推理闭环**：用显式状态机编排八个阶段，LLM 只负责岗位理解、路径规划、能力判断和反思；工程层负责状态流转、预算控制、签名防重和终止条件；底层的 IR 编译、ES 召回、重排全部通过 `SearchTool` 协议复用原有能力，不重写执行层。
-
-一句话总结：原来的系统解决的是「一次查询怎么执行」，我解决的是「这次搜索策略对不对」。
-
-### 为什么仓库里没有直接放原来的检索工具
-
-`SearchTool` 这条边界抽象自一个真实的人才检索系统：那边 `SearchAgentService(tool=...)` 背后是内部的混合检索服务（Elasticsearch 8 混合召回 + 大模型重排），Agent 只负责「理解 → 规划 → 执行 → 判断 → 反思 → 修订」这层编排。那套服务依赖公司内网的存储与数据，不属于个人资产，因此不在本仓库内。
-
-也正因如此，「换引擎不改 Agent 代码」这句话需要用**可运行的参考实现**来证明——仓库内置的内存 / SQLite / Elasticsearch 三个后端就是干这个的：它们在同一份 `SearchTool` 协议下可互换，并在同一语料上结果逐位一致（跨后端一致性测试）。
-
 ## 诚实声明
 
 - 本仓库代码为独立实现：不含任何公司代码、数据或内部文档；演示数据为 16 个虚构候选人（`c001`–`c016`），其中的公司 / 院校名仅作为行业背景用于演示，与真实个人无关。
@@ -315,23 +303,6 @@ pytest -q -m es
 
 An eight-stage reflective retrieval agent harness for talent search:
 `understand → plan → execute → judge → evaluate → reflect → revise → finalize`.
-
-Highlights:
-
-- Explicit state machine in pure Python (pydantic v2 is the only required
-  dependency); every stage is a `state in → state out` function, unit-testable
-  in isolation.
-- Budget-governed loop: iterations / paths / LLM calls / wall-clock, with five
-  explicit stop reasons.
-- Degradation matrix: any stage failure maps to a predefined fallback instead of
-  crashing; the reason is surfaced as `degradedReason`.
-- Intent signatures deduplicate recall paths; judgments are grounded in
-  tool-provided facts (no fabricated experience).
-- Three built-in retrieval backends (in-memory, SQLite/FTS5, Elasticsearch 8),
-  parity-tested against each other on the same corpus.
-- Optional extras: `openai` (real LLM), `api` (FastAPI `search-agent serve`),
-  `langgraph` (`LangGraphRunner`, verified equivalent to the plain loop),
-  `es` (Elasticsearch backend), `redis` (conversation memory / pagination).
 
 Offline runnable without any API key:
 
