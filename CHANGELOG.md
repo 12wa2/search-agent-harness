@@ -3,6 +3,14 @@
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Added
+
+- **SQLite/FTS5 后端**（`tools/sqlite_fts.py`，仅标准库）：`WhereNode` 树编译为 SQL（归一化表 + FTS5 虚表），
+  过滤后由共享语义层复检与打分；与内存后端在同一语料上结果逐位一致（新增 27 个测试）。
+- **共享语义层**（`tools/text.py`）：分词 / 条件匹配 / 软打分 / 结果组装集中一处，所有后端复用同一公式（行为不变重构）。
+
 ## [0.1.0] - 2026-10-15
 
 首个公开版本。

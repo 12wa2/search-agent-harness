@@ -8,7 +8,7 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-117%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-144%20passed-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![version](https://img.shields.io/badge/version-v0.1.0-blue)
@@ -32,14 +32,14 @@ understand → plan → execute → judge → evaluate → reflect → revise �
 - 全程可降级：任何一步失败都不会让整个请求崩掉
 
 ## 亮点（面试可展开讲的部分）
-
-- **显式状态机，不套框架**：8 个阶段各自是 `state in → state out` 的纯函数，`phase` 字段驱动流转；核心逻辑全部可单测（117 个测试）。同一批阶段还能编译成 LangGraph StateGraph（可选 extra），与默认循环行为等价（有对比测试）。
+- **显式状态机，不套框架**：8 个阶段各自是 `state in → state out` 的纯函数，`phase` 字段驱动流转；核心逻辑全部可单测（144 个测试）。同一批阶段还能编译成 LangGraph StateGraph（可选 extra），与默认循环行为等价（有对比测试）。
 - **Intent Signature 防重**：搜索意图做规范化 sha1 签名（大小写 / 顺序 / 权重归一），同一意图绝不重复执行——掐死 LLM「换个说法重跑一遍」的烧钱行为。
 - **预算是一等公民**：迭代数 / 路径数 / LLM 调用数 / 墙钟时间 4 维预算贯穿循环，5 种显式终止原因（达标 / 迭代上限 / 时间 / 调用预算 / 无进展）。
 - **降级矩阵，永不炸**：每个阶段失败都映射到预定义降级动作（返回基线单趟结果 / 降级单路径 / 跳过判断 / 跳过全局重排 / 立即收敛），`degradedReason` 透传到响应。
 - **Grounding 防幻觉**：judge 阶段基于检索工具返回的硬事实（hardMatches）做能力判断，prompt 明确「不得编造经历」。
 - **收敛再搜**：反思循环把人才画像越描越准，finalize 用进化后的画像做决定性的「最后一发」检索，再做全局重排。
 - **并行执行 + 路径质量分级**：多路径用线程池并行调用后端；每条路径产出质量分级（rich / thin / empty）驱动后续策略。
+- **可替换检索后端**：`SearchTool` 协议下内置内存参考后端 + SQLite/FTS5 后端（标准库、无需外部服务）；where 树编译成 SQL，两个后端在同一语料上结果逐位一致（跨后端一致性测试钉住）。
 - **可观测性内建**：`event_sink` 时间线（下面 demo 里那 8 行）、`agentTrace`、5 组质量指标全部随响应返回。
 - **可选持久化**：多轮对话记忆 + 结果分页支持 Redis；不配也能完全无依赖地跑（内存实现兜底）。
 
@@ -166,12 +166,14 @@ search-agent-harness/
 │   ├── core/                # 签名 / 合并 / 预算 / 降级 / 难度路由 / 指标 / trace
 │   ├── contract/tool.py     # SearchTool 协议 —— 与检索后端的唯一边界
 │   ├── tools/memory.py      # 参考实现：内存检索后端（离线演示用）
+│   ├── tools/sqlite_fts.py  # 零依赖 SQLite/FTS5 后端（SQL 编译 where 树）
+│   ├── tools/text.py        # 共享语义层：分词 / 匹配 / 打分（多后端同源）
 │   ├── llm/                 # LLM 客户端（OpenAI 协议）+ 各阶段 prompt
 │   ├── models/              # 意图 IR / 推理工件 / API 模型（pydantic v2）
 │   ├── demo.py              # 离线脚本化 LLM + 合成候选人数据
 │   ├── eval.py              # 离线评测：单趟基线 vs 全循环（效果 / 成本对比）
 │   └── cli.py               # 命令行入口：demo / search / eval / serve
-├── tests/                   # 117 个单元测试
+├── tests/                   # 144 个单元测试
 ├── examples/                # 接入自定义后端的示例
 └── docs/                    # 架构与设计决策文档
 ```
@@ -189,6 +191,7 @@ class SearchTool(Protocol):
 实现这两个方法（ES / 向量库 / 内部检索服务皆可），组装
 `SearchAgentService(tool=..., llm_client=...)` 即可。参考实现见
 `src/search_agent/tools/memory.py`，最小示例见 `examples/custom_backend.py`。
+此外仓库内置 SQLite/FTS5 后端（`tools/sqlite_fts.py`，仅标准库）：与内存后端在同一语料上结果逐位一致（见 `tests/test_sqlite_fts.py`）。
 
 ## 配置
 
@@ -208,10 +211,12 @@ class SearchTool(Protocol):
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 117 个单元测试；ruff 全绿；GitHub Actions CI（ruff + pytest）
+- [x] 144 个单元测试；ruff 全绿；GitHub Actions CI（ruff + pytest）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）
+- [x] SQLite/FTS5 后端（`tools/sqlite_fts.py`，标准库）：where 树编译 SQL + 跨后端一致性测试。
+- [ ] Elasticsearch 真实后端 + `docker compose` 端到端示例（ES DSL 编译）。
 - [ ] 演示 GIF 与英文文档
 
 ## 诚实声明

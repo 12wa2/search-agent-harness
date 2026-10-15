@@ -143,3 +143,15 @@ dev 依赖里带上它们以在 CI 跑接口测试；核心安装仍然只有 py
 
 **取舍**：多一条需要同步维护的执行路径（阶段改动时图边几乎不变）；换来「框架切换」
 的可行性被真实代码与测试证明，而不是口头承诺。
+
+
+## D15. SQLite/FTS5 后端：where 树编译 SQL（跨后端结果一致）
+
+**背景**：项目核心卖点是「Agent 只依赖 `SearchTool` 协议，换引擎不改 Agent 代码」。只有内存参考实现时这个卖点无法被验证，也没有真实引擎的过滤 / 索引路径可展示。
+
+**选择**：新增 `tools/sqlite_fts.py`（仅标准库）：`WhereNode` 树编译成 SQL（`candidates` + `candidate_terms` 归一化表，可建索引）；`latest_company` / `latest_work_job` 用 `position = 0` 精确对齐 `companies[:1]` 语义；FTS5 虚表为关键词通道提供 BM25 排序；`db_path` 传文件路径即可持久化。
+
+**取舍**：SQL 编译器允许输出「上近似」（未知字段 → 恒真；`not` 子树不可精确编译 → 恒真），过滤后一律用共享语义层（`tools/text.py`）复检并打分——正确性优先于过滤率，代价是极端情况下退化为全表扫描；两个后端在同一语料上的排序与解释由 `tests/test_sqlite_fts.py` 逐位钉住（含 `not` / `or.minimumShouldMatch` 等树形）。
+
+**影响**：`tools/text.py` 成为分词 / 条件匹配 / 打分 / 结果组装的唯一事实来源；任何新后端只需复用这些函数、并保证引擎侧过滤不弱于 Python 复检，就能自动获得一致的排序与解释；Elasticsearch 真实后端（DSL）按同一模式接入。
+
