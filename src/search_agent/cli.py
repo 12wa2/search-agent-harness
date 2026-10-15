@@ -5,6 +5,7 @@ Examples::
     search-agent demo                       # zero-config offline showcase
     search-agent search "高并发 后端" --offline
     search-agent search "高并发 后端"        # needs SEARCH_AGENT_API_KEY
+    search-agent eval --markdown            # single-pass baseline comparison
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import Any, Callable, TextIO
 
 from search_agent import __version__
 from search_agent.demo import DEMO_DATA, DEMO_QUERIES, ScriptedLlmClient, run_demo
+from search_agent.eval import run_eval
 from search_agent.llm.client import OpenAILlmClient
 from search_agent.models.api import SearchRequest, SearchResponse
 from search_agent.service import SearchAgentService
@@ -172,6 +174,12 @@ def _build_parser() -> argparse.ArgumentParser:
     search.add_argument("--data", default=None, help="candidate JSONL path")
     search.add_argument("--top-k", type=int, default=10)
     search.add_argument("--json", action="store_true", help="print raw JSON response")
+
+    eval_cmd = sub.add_parser("eval", help="offline evaluation: full loop vs single-pass baseline")
+    eval_cmd.add_argument("query", nargs="*", help="optional custom queries")
+    eval_cmd.add_argument("--data", default=None, help="candidate JSONL path")
+    eval_cmd.add_argument("--top-k", type=int, default=10)
+    eval_cmd.add_argument("--markdown", action="store_true", help="markdown tables")
     return parser
 
 
@@ -216,6 +224,15 @@ def _run_search_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_eval_command(args: argparse.Namespace) -> int:
+    return run_eval(
+        args.query or None,
+        data_path=args.data,
+        top_k=args.top_k,
+        markdown=args.markdown,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -223,6 +240,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_demo_command(args)
     if args.command == "search":
         return _run_search_command(args)
+    if args.command == "eval":
+        return _run_eval_command(args)
     parser.print_help()
     return 2
 

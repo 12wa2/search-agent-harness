@@ -3,7 +3,7 @@
 Parsing is tolerant: each LLM-proposed path is validated end-to-end inside a
 try/except, so one malformed path never aborts the stage. If the LLM produces
 zero valid paths, a default path is built from understand's hard_constraints so
-execute always has something to run (mirrors Harness._single_fallback_path).
+execute always has something to run (mirrors the harness's single-path fallback).
 """
 
 from __future__ import annotations

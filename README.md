@@ -8,7 +8,7 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-104%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-108%20passed-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -32,7 +32,7 @@ understand → plan → execute → judge → evaluate → reflect → revise �
 
 ## 亮点（面试可展开讲的部分）
 
-- **显式状态机，不套框架**：8 个阶段各自是 `state in → state out` 的纯函数，`phase` 字段驱动流转；核心逻辑全部可单测（104 个测试），框架接入点通过 runner 协议预留。
+- **显式状态机，不套框架**：8 个阶段各自是 `state in → state out` 的纯函数，`phase` 字段驱动流转；核心逻辑全部可单测（108 个测试），框架接入点通过 runner 协议预留。
 - **Intent Signature 防重**：搜索意图做规范化 sha1 签名（大小写 / 顺序 / 权重归一），同一意图绝不重复执行——掐死 LLM「换个说法重跑一遍」的烧钱行为。
 - **预算是一等公民**：迭代数 / 路径数 / LLM 调用数 / 墙钟时间 4 维预算贯穿循环，5 种显式终止原因（达标 / 迭代上限 / 时间 / 调用预算 / 无进展）。
 - **降级矩阵，永不炸**：每个阶段失败都映射到预定义降级动作（返回基线单趟结果 / 降级单路径 / 跳过判断 / 跳过全局重排 / 立即收敛），`degradedReason` 透传到响应。
@@ -50,6 +50,7 @@ cd search-agent-harness
 pip install -e ".[dev]"
 
 search-agent demo        # 离线演示：脚本化 LLM + 16 个合成候选人，零 API key
+search-agent eval        # 离线评测：单趟基线 vs Agent 全循环（确定性、可复现）
 ```
 
 接入真实 LLM（任何 OpenAI 兼容端点：OpenAI / Qwen / DeepSeek / vLLM …）：
@@ -89,6 +90,22 @@ search-agent search "招聘推荐算法工程师，要求 5 年以上，有召�
 
 （演示数据为 16 个虚构候选人；真实模式下同一循环直接对接你自己的检索后端。）
 
+## 评测：单趟基线 vs 全循环
+
+`search-agent eval` 在合成数据上用脚本化 LLM 做**离线确定性**对比：
+「单趟基线」（understand → 单条硬条件路径 → judge → 合并重排）与「Agent 全循环」
+（八阶段反思循环）跑同一批查询，输出合格候选人数、召回完成度与成本：
+
+| 指标（3 个查询合计） | 单趟基线 | Agent 全循环 | 变化 |
+|---|---|---|---|
+| 合格候选人 | 25 人 | 36 人 | +11（+44%） |
+| 平均召回完成度 | 0.42 | 0.60 | +0.18 |
+| LLM 调用次数 | 6 次 | 16 次 | ×2.7 |
+| 累计耗时 | 4.7 ms | 8.7 ms | ×1.9 |
+
+> 数字来自本机离线运行，毫秒级会有抖动；重新生成：`search-agent eval --markdown`。
+> 目的不是刷分，而是展示**效果与成本的定量权衡**，以及可回归的评测入口。
+
 ## 架构
 
 ```mermaid
@@ -126,8 +143,10 @@ search-agent-harness/
 │   ├── tools/memory.py      # 参考实现：内存检索后端（离线演示用）
 │   ├── llm/                 # LLM 客户端（OpenAI 协议）+ 各阶段 prompt
 │   ├── models/              # 意图 IR / 推理工件 / API 模型（pydantic v2）
-│   └── demo.py              # 离线脚本化 LLM + 合成候选人数据
-├── tests/                   # 104 个单元测试
+│   ├── demo.py              # 离线脚本化 LLM + 合成候选人数据
+│   ├── eval.py              # 离线评测：单趟基线 vs 全循环（效果 / 成本对比）
+│   └── cli.py               # 命令行入口：demo / search / eval
+├── tests/                   # 108 个单元测试
 ├── examples/                # 接入自定义后端的示例
 └── docs/                    # 架构与设计决策文档
 ```
@@ -164,10 +183,10 @@ class SearchTool(Protocol):
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 104 个单元测试；ruff 全绿；GitHub Actions CI（ruff + pytest）
+- [x] 108 个单元测试；ruff 全绿；GitHub Actions CI（ruff + pytest）
 - [ ] LangGraphRunner：把同一批阶段编译成 StateGraph（runner 协议已预留，见 `runner.py`）
 - [ ] FastAPI 服务示例（HTTP 入口）
-- [ ] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比
+- [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）
 - [ ] 演示 GIF 与英文文档
 
 ## 诚实声明

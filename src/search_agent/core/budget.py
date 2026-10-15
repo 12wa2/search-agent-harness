@@ -11,13 +11,13 @@ from search_agent.models.artifacts import Budget
 @dataclass
 class BudgetState:
     budget: Budget
-    start_time: float = field(default_factory=time.monotonic)
+    start_time: float = field(default_factory=time.perf_counter)
     llm_calls: int = 0
     iteration: int = 0
     new_qualified_last_round: int = 0
 
     def elapsed_sec(self) -> float:
-        return time.monotonic() - self.start_time
+        return time.perf_counter() - self.start_time
 
     def record_llm(self, n: int = 1) -> None:
         self.llm_calls += n

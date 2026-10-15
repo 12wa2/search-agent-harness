@@ -176,7 +176,7 @@ class Harness:
             state["fallback_baseline"] = True
             state["phase"] = "done"
         elif action == "single_path":
-            path = self._single_fallback_path(state)
+            path = single_path_from_hard_constraints(state)
             if path is not None:
                 state["paths"] = [path]
                 state["tried_signatures"] = state.get("tried_signatures", set()) | {path.signature}
@@ -197,23 +197,6 @@ class Harness:
                 state["phase"] = "finalize"
         self._emit(f"degrade:{phase}", state)
 
-    @staticmethod
-    def _single_fallback_path(state: dict[str, Any]) -> SearchPath | None:
-        job = state.get("job_profile")
-        if not job or not job.hard_constraints:
-            return None
-        leaves = [WhereNode(type="leaf", condition=c) for c in job.hard_constraints]
-        where = leaves[0] if len(leaves) == 1 else WhereNode(type="and", children=leaves)
-        intent = CandidateSearchIR(where=where, semantic=[])
-        sig = intent_signature(intent)
-        return SearchPath(
-            id="p1",
-            rationale="fallback single path (plan degraded)",
-            intent=intent,
-            signature=sig,
-            status="pending",
-        )
-
     def _apply_difficulty_routing(self, state: dict[str, Any]) -> None:
         """After understand, route based on difficulty."""
         job = state.get("job_profile")
@@ -229,7 +212,7 @@ class Harness:
 
         if route == "single_pass":
             state["skip_reflection"] = True
-            path = self._single_fallback_path(state)
+            path = single_path_from_hard_constraints(state)
             if path is not None:
                 state["paths"] = [path]
                 state["tried_signatures"] = state.get("tried_signatures", set()) | {path.signature}
@@ -277,4 +260,28 @@ class Harness:
         )
 
 
-__all__ = ["Harness"]
+def single_path_from_hard_constraints(state: dict[str, Any]) -> SearchPath | None:
+    """Build the single-path fallback from a job profile's hard constraints.
+
+    This is the harness's own one-shot path constructor: used when plan is
+    degraded or difficulty routes to ``single_pass``, and reused by the offline
+    evaluation (``search_agent.eval``) as its single-pass baseline path.
+    Returns ``None`` when there is nothing to anchor the ``where`` clause.
+    """
+    job = state.get("job_profile")
+    if not job or not job.hard_constraints:
+        return None
+    leaves = [WhereNode(type="leaf", condition=c) for c in job.hard_constraints]
+    where = leaves[0] if len(leaves) == 1 else WhereNode(type="and", children=leaves)
+    intent = CandidateSearchIR(where=where, semantic=[])
+    sig = intent_signature(intent)
+    return SearchPath(
+        id="p1",
+        rationale="fallback single path (plan degraded)",
+        intent=intent,
+        signature=sig,
+        status="pending",
+    )
+
+
+__all__ = ["Harness", "single_path_from_hard_constraints"]
