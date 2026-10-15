@@ -286,13 +286,23 @@ pytest -q -m es
 - [x] Docker 全栈：多阶段镜像 + compose（`api` 等待 ES 健康后启动，自动灌入演示语料）。
 - [ ] 演示 GIF（`docs/demo.tape` 已就绪，待录制）与完整英文 README（现为 README 内折叠版）
 
-## 这个项目从哪来
+## 这个项目从哪来（设计动机）
 
-`SearchTool` 这条边界抽象自一个真实的人才检索系统：那边 `SearchAgentService(tool=...)` 背后是
-内部的混合检索服务（Elasticsearch 8 混合召回 + 大模型重排），Agent 只负责「理解 → 规划 →
-执行 → 判断 → 反思 → 修订」这层编排。那套服务与数据不在本仓库内，也正因如此，「换引擎不改
-Agent 代码」这句话需要用**可运行的参考实现**来证明——仓库内置的内存 / SQLite / Elasticsearch
-三个后端就是干这个的。
+起点是一个很具体的现象：招聘 JD 写的是抽象能力（比如「高并发系统设计能力」），简历写的是具体项目（订单系统、支付系统、分布式架构）——同一种能力可能来自完全不同的岗位、行业或产品线；反过来，岗位名称不同，经验却是可迁移的。纯关键词检索在这种情况下天然会漏人。
+
+我起初在做这条链路的上游：把自然语言解析成检索 IR（NL2IR）。解析准确率提上去之后，天花板反而更清楚了：**解析得再准，也只是把一句话翻译成一个查询。**整条链路（自然语言 → IR → ES 召回 → LLM 重排 → 返回）是一次性的——首轮条件过严或者搜索方向选错，系统不会根据结果主动修正，也没有任何一个环节回答「召回到的这些人够不够、有没有覆盖岗位的必备能力」。所以缺的不是检索能力，ES 本身已经很强；缺的是**搜索策略的决策能力**——是「搜什么、从哪搜、够不够、要不要换」这一层。
+
+再看真人猎头是怎么干活的：他不会只敲一次关键词，而是先想「什么样的人可能具备这种能力」，然后从公司、行业、岗位、项目几个不同来源分别去找，看完结果再判断要不要换方向。这层决策恰好是 LLM 擅长的，但它又不能失控——招聘搜索对成本和延迟有要求，不能让它无限反思。
+
+所以我的做法不是「把搜索换成 Agent」，而是在确定性的混合检索之上加一层**受控的推理闭环**：用显式状态机编排八个阶段，LLM 只负责岗位理解、路径规划、能力判断和反思；工程层负责状态流转、预算控制、签名防重和终止条件；底层的 IR 编译、ES 召回、重排全部通过 `SearchTool` 协议复用原有能力，不重写执行层。
+
+一句话总结：原来的系统解决的是「一次查询怎么执行」，我解决的是「这次搜索策略对不对」。
+
+### 为什么仓库里没有直接放原来的检索工具
+
+`SearchTool` 这条边界抽象自一个真实的人才检索系统：那边 `SearchAgentService(tool=...)` 背后是内部的混合检索服务（Elasticsearch 8 混合召回 + 大模型重排），Agent 只负责「理解 → 规划 → 执行 → 判断 → 反思 → 修订」这层编排。那套服务依赖公司内网的存储与数据，不属于个人资产，因此不在本仓库内。
+
+也正因如此，「换引擎不改 Agent 代码」这句话需要用**可运行的参考实现**来证明——仓库内置的内存 / SQLite / Elasticsearch 三个后端就是干这个的：它们在同一份 `SearchTool` 协议下可互换，并在同一语料上结果逐位一致（跨后端一致性测试）。
 
 ## 诚实声明
 
@@ -333,6 +343,13 @@ search-agent eval     # single-pass baseline vs the full loop (effect vs cost)
 
 See `docs/ARCHITECTURE.md` for the state machine, budget and degradation
 design, and `docs/DECISIONS.md` for the ADR-style trade-offs.
+
+Design rationale: the missing piece is not retrieval — Elasticsearch is already
+strong — but the search-policy layer that decides what to search, where, whether
+it is enough, and when to change direction. This harness adds a budget-governed
+reflective loop on top of a deterministic hybrid retrieval backend, behind a
+two-method `SearchTool` protocol; the internal production retrieval service it
+abstracts from is not part of this repository.
 
 > Honesty note: an independent implementation with no company code or data;
 > the demo ships 16 fictional candidates and runs without any API key.
