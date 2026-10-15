@@ -257,6 +257,11 @@ def test_search_semantic_knn_returns_the_matching_doc(es_tool):
 
 
 @pytest.mark.es
+@pytest.mark.es
+def test_search_semantic_with_an_empty_query_returns_nothing(es_tool):
+    assert es_tool.search_semantic("", top_k=5) == []
+
+
 def test_search_semantic_respects_the_where_filter(es_tool):
     where = _leaf("work_years", "gte", [8])
     for doc_id, _ in es_tool.search_semantic("高并发 后端 架构", top_k=5, where=where):

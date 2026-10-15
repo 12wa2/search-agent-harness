@@ -8,7 +8,7 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-159%20offline%20%2B%2022%20ES-brightgreen)
+![Tests](https://img.shields.io/badge/tests-160%20offline%20%2B%2022%20ES-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![version](https://img.shields.io/badge/version-v0.1.0-blue)
@@ -32,7 +32,7 @@ understand → plan → execute → judge → evaluate → reflect → revise �
 - 全程可降级：任何一步失败都不会让整个请求崩掉
 
 ## 亮点（面试可展开讲的部分）
-- **显式状态机，不套框架**：8 个阶段各自是 `state in → state out` 的纯函数，`phase` 字段驱动流转；核心逻辑全部可单测（159 个离线测试，另 22 个 ES 集成测试）。同一批阶段还能编译成 LangGraph StateGraph（可选 extra），与默认循环行为等价（有对比测试）。
+- **显式状态机，不套框架**：8 个阶段各自是 `state in → state out` 的纯函数，`phase` 字段驱动流转；核心逻辑全部可单测（160 个离线测试，另 22 个 ES 集成测试）。同一批阶段还能编译成 LangGraph StateGraph（可选 extra），与默认循环行为等价（有对比测试）。
 - **Intent Signature 防重**：搜索意图做规范化 sha1 签名（大小写 / 顺序 / 权重归一），同一意图绝不重复执行——掐死 LLM「换个说法重跑一遍」的烧钱行为。
 - **预算是一等公民**：迭代数 / 路径数 / LLM 调用数 / 墙钟时间 4 维预算贯穿循环，5 种显式终止原因（达标 / 迭代上限 / 时间 / 调用预算 / 无进展）。
 - **降级矩阵，永不炸**：每个阶段失败都映射到预定义降级动作（返回基线单趟结果 / 降级单路径 / 跳过判断 / 跳过全局重排 / 立即收敛），`degradedReason` 透传到响应。
@@ -191,7 +191,7 @@ search-agent-harness/
 │   ├── eval.py              # 离线评测：单趟基线 vs 全循环（效果 / 成本对比）
 │   └── cli.py               # 命令行入口：demo / search / eval / serve
 │   ├── tools/embedding.py   # 确定性哈希向量（换真实模型只改这一个函数）
-├── tests/                   # 159 离线 + 22 ES 集成
+├── tests/                   # 160 离线 + 22 ES 集成
 ├── examples/                # custom_backend.py（最小接入）· es_end_to_end.py（真实 ES 全链路）· es_hybrid_recall.py（混合召回）
 ├── docs/                    # ARCHITECTURE.md · DECISIONS.md · demo.tape（演示录制脚本）
 ├── Dockerfile               # 多阶段镜像：wheel 构建 → 非 root 运行 + HEALTHCHECK
@@ -276,7 +276,7 @@ pytest -q -m es
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 159 个离线单元测试（+22 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest）
+- [x] 160 个离线单元测试（+22 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）

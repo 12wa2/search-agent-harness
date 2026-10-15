@@ -273,9 +273,12 @@ class ElasticsearchSearchTool:
         """Vector channel: kNN over the indexed ``dense_vector`` field."""
         if top_k <= 0:
             return []
+        vector = embed_text(query_text)
+        if not any(vector):  # cosine similarity rejects zero-magnitude vectors
+            return []
         body: dict[str, Any] = {
             "field": "semantic_vector",
-            "query_vector": embed_text(query_text),
+            "query_vector": vector,
             "k": int(top_k),
             "num_candidates": int(num_candidates or max(50, int(top_k) * 10)),
         }
