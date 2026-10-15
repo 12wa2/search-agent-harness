@@ -11,6 +11,7 @@
 ![Tests](https://img.shields.io/badge/tests-117%20passed-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
+![version](https://img.shields.io/badge/version-v0.1.0-blue)
 
 ## 这是什么
 
@@ -149,6 +150,7 @@ flowchart TD
 
 - 状态机、降级矩阵、预算与合并策略细节：见 `docs/ARCHITECTURE.md`
 - 关键设计取舍（ADR 风格）：见 `docs/DECISIONS.md`
+- 变更记录：见 `CHANGELOG.md`；贡献指南：见 `CONTRIBUTING.md`
 
 ## 项目结构
 
@@ -223,15 +225,32 @@ class SearchTool(Protocol):
 
 An eight-stage reflective retrieval agent harness for talent search:
 `understand → plan → execute → judge → evaluate → reflect → revise → finalize`.
-Pure Python (pydantic v2 only), budget-governed, degrades instead of crashing,
-deduplicates recall attempts via intent signatures, and grounds judgments in
-tool-provided facts. Offline runnable without any API key:
+
+Highlights:
+
+- Explicit state machine in pure Python (pydantic v2 is the only required
+  dependency); every stage is a `state in → state out` function, unit-testable
+  in isolation.
+- Budget-governed loop: iterations / paths / LLM calls / wall-clock, with five
+  explicit stop reasons.
+- Degradation matrix: any stage failure maps to a predefined fallback instead of
+  crashing; the reason is surfaced as `degradedReason`.
+- Intent signatures deduplicate recall paths; judgments are grounded in
+  tool-provided facts (no fabricated experience).
+- Optional extras: `openai` (real LLM), `api` (FastAPI `search-agent serve`),
+  `langgraph` (`LangGraphRunner`, verified equivalent to the plain loop),
+  `redis` (conversation memory / pagination).
+
+Offline runnable without any API key:
 
 ```bash
-pip install -e ".[dev]" && search-agent demo
+pip install -e ".[dev]"
+search-agent demo     # offline showcase: scripted LLM + synthetic candidates
+search-agent eval     # single-pass baseline vs the full loop (effect vs cost)
 ```
 
-See `docs/ARCHITECTURE.md` for the state machine, budget and degradation design.
+See `docs/ARCHITECTURE.md` for the state machine, budget and degradation
+design, and `docs/DECISIONS.md` for the ADR-style trade-offs.
 
 </details>
 
