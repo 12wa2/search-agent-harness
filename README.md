@@ -39,7 +39,7 @@ understand → plan → execute → judge → evaluate → reflect → revise �
 - **Grounding 防幻觉**：judge 阶段基于检索工具返回的硬事实（hardMatches）做能力判断，prompt 明确「不得编造经历」。
 - **收敛再搜**：反思循环把人才画像越描越准，finalize 用进化后的画像做决定性的「最后一发」检索，再做全局重排。
 - **并行执行 + 路径质量分级**：多路径用线程池并行调用后端；每条路径产出质量分级（rich / thin / empty）驱动后续策略。
-- **可替换检索后端**：`SearchTool` 协议下内置内存参考后端 + SQLite/FTS5 后端（标准库、无需外部服务）；where 树编译成 SQL，两个后端在同一语料上结果逐位一致（跨后端一致性测试钉住）。
+- **可替换检索后端（3 个）**：`SearchTool` 协议下内置内存参考后端、SQLite/FTS5 后端（标准库、无需外部服务）与 Elasticsearch 8 后端（`docker compose` 一键起）；where 树分别编译成 SQL / ES DSL，三个后端在同一语料上结果逐位一致（跨后端一致性测试钉住）。
 - **可观测性内建**：`event_sink` 时间线（下面 demo 里那 8 行）、`agentTrace`、5 组质量指标全部随响应返回。
 - **可选持久化**：多轮对话记忆 + 结果分页支持 Redis；不配也能完全无依赖地跑（内存实现兜底）。
 
@@ -175,8 +175,8 @@ search-agent-harness/
 │   ├── eval.py              # 离线评测：单趟基线 vs 全循环（效果 / 成本对比）
 │   └── cli.py               # 命令行入口：demo / search / eval / serve
 ├── tests/                   # 148 离线 + 17 ES 集成
-├── examples/                # 接入自定义后端的示例
-└── docs/                    # 架构与设计决策文档
+├── examples/                # custom_backend.py（最小接入示例）· es_end_to_end.py（真实 ES 全链路）
+├── docs/                    # ARCHITECTURE.md · DECISIONS.md · demo.tape（演示录制脚本）
 └── docker-compose.yml       # 单节点 Elasticsearch 8（端到端示例用）
 ```
 
@@ -193,7 +193,7 @@ class SearchTool(Protocol):
 实现这两个方法（ES / 向量库 / 内部检索服务皆可），组装
 `SearchAgentService(tool=..., llm_client=...)` 即可。参考实现见
 `src/search_agent/tools/memory.py`，最小示例见 `examples/custom_backend.py`。
-此外仓库内置 SQLite/FTS5 后端（`tools/sqlite_fts.py`，仅标准库）：与内存后端在同一语料上结果逐位一致（见 `tests/test_sqlite_fts.py`）。
+此外仓库内置三个后端：内存（`tools/memory.py`）、SQLite/FTS5（`tools/sqlite_fts.py`，仅标准库）与 Elasticsearch 8（`tools/elasticsearch.py`，见下节），在同一语料上结果逐位一致（`tests/test_sqlite_fts.py`、`tests/test_elasticsearch_backend.py`）。
 
 ## 接入真实后端（Elasticsearch）
 
@@ -235,13 +235,13 @@ pytest -q -m es
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）
 - [x] SQLite/FTS5 后端（`tools/sqlite_fts.py`，标准库）：where 树编译 SQL + 跨后端一致性测试。
-- [ ] Elasticsearch 真实后端 + `docker compose` 端到端示例（ES DSL 编译）。
-- [ ] 演示 GIF 与英文文档
+- [x] Elasticsearch 真实后端 + `docker compose` 端到端示例（ES DSL 编译，`examples/es_end_to_end.py`）。
+- [ ] 演示 GIF（`docs/demo.tape` 已就绪，待录制）与完整英文 README（现为 README 内折叠版）
 
 ## 诚实声明
 
-- 本仓库是**脱敏重构版**：不含任何公司代码、数据或内部文档；演示数据为 16 个虚构候选人（`c001`–`c016`）。
-- 生产级检索后端（ES / 向量库）**不在本仓库内**，通过 `SearchTool` 协议对接；仓库内置的内存后端用于离线演示与测试。
+- 本仓库代码为独立实现：不含任何公司代码、数据或内部文档；演示数据为 16 个虚构候选人（`c001`–`c016`），其中的公司 / 院校名仅作为行业背景用于演示，与真实个人无关。
+- 仓库内置内存 / SQLite / Elasticsearch 三个检索后端（前两个零依赖，ES 需 `docker compose`）；向量库等其它生产组件通过 `SearchTool` 协议对接，不在本仓库内。
 - 未在生产环境部署过；上面的耗时数字来自本机离线 demo（纯 CPU、单进程）。
 
 <details>
@@ -261,9 +261,11 @@ Highlights:
   crashing; the reason is surfaced as `degradedReason`.
 - Intent signatures deduplicate recall paths; judgments are grounded in
   tool-provided facts (no fabricated experience).
+- Three built-in retrieval backends (in-memory, SQLite/FTS5, Elasticsearch 8),
+  parity-tested against each other on the same corpus.
 - Optional extras: `openai` (real LLM), `api` (FastAPI `search-agent serve`),
   `langgraph` (`LangGraphRunner`, verified equivalent to the plain loop),
-  `redis` (conversation memory / pagination).
+  `es` (Elasticsearch backend), `redis` (conversation memory / pagination).
 
 Offline runnable without any API key:
 
@@ -275,6 +277,9 @@ search-agent eval     # single-pass baseline vs the full loop (effect vs cost)
 
 See `docs/ARCHITECTURE.md` for the state machine, budget and degradation
 design, and `docs/DECISIONS.md` for the ADR-style trade-offs.
+
+> Honesty note: an independent implementation with no company code or data;
+> the demo ships 16 fictional candidates and runs without any API key.
 
 </details>
 
