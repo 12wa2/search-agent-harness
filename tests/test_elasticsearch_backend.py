@@ -26,6 +26,7 @@ from search_agent.models.ir import (
 )
 from search_agent.tools.elasticsearch import ElasticsearchSearchTool, compile_where
 from search_agent.tools.memory import InMemorySearchTool, load_candidates
+from search_agent.tools.text import where_matches
 
 _SAMPLE = load_candidates(DEMO_DATA)
 ES_URL = os.environ.get("SEARCH_AGENT_ES_URL", "http://127.0.0.1:9200")
@@ -236,6 +237,53 @@ def test_search_text_bm25(es_tool):
     target = next(item for item in _SAMPLE if len(item.name or "") >= 2)
     hits = es_tool.search_text(target.name, top_k=5)
     assert target.docId in [doc_id for doc_id, _ in hits]
+
+
+@pytest.mark.es
+def test_search_text_honours_the_where_filter(es_tool):
+    where = _leaf("skill", "any", ["Spark"])
+    hits = es_tool.search_text("Spark", top_k=5, where=where)
+    assert hits
+    for doc_id, _ in hits:
+        item = next(entry for entry in _SAMPLE if entry.docId == doc_id)
+        assert where_matches(where, item)
+
+
+@pytest.mark.es
+def test_search_semantic_knn_returns_the_matching_doc(es_tool):
+    target = next(item for item in _SAMPLE if len(item.name or "") >= 2)
+    hits = es_tool.search_semantic(target.name, top_k=5)
+    assert target.docId in [doc_id for doc_id, _ in hits]
+
+
+@pytest.mark.es
+def test_search_semantic_respects_the_where_filter(es_tool):
+    where = _leaf("work_years", "gte", [8])
+    for doc_id, _ in es_tool.search_semantic("高并发 后端 架构", top_k=5, where=where):
+        item = next(entry for entry in _SAMPLE if entry.docId == doc_id)
+        assert float(item.workYears or 0) >= 8
+
+
+@pytest.mark.es
+def test_hybrid_recall_fuses_bm25_and_knn(es_tool):
+    target = next(item for item in _SAMPLE if len(item.name or "") >= 2)
+    rows = es_tool.hybrid_search(target.name, top_k=5)
+    assert rows
+    assert rows[0]["docId"] == target.docId
+    assert rows[0]["knnRank"] == 1 or rows[0]["bm25Rank"] == 1
+    assert rows[0]["score"] > 0
+    keyword_hits = [doc_id for doc_id, _ in es_tool.search_text(target.name, top_k=5)]
+    assert set(keyword_hits) <= {row["docId"] for row in rows} | set(keyword_hits)
+
+
+@pytest.mark.es
+def test_hybrid_recall_survives_a_zero_hit_keyword_query(es_tool):
+    query = "秒杀 大促 稳定性治理 高并发 架构 后端"
+    rows = es_tool.hybrid_search(query, top_k=5)
+    assert rows
+    if not es_tool.search_text(query, top_k=5):
+        assert all(row["bm25Rank"] is None for row in rows)
+        assert any(row["knnRank"] == 1 for row in rows)
 
 
 @pytest.mark.es

@@ -10,6 +10,8 @@ contract, the same explainable facts and the same rankings as
 * hits are re-verified and scored with the shared ``tools/text.py`` helpers,
   so swapping engines never changes the agent-visible result;
 * ``search_text`` exposes a BM25 channel over the indexed candidate text.
+* ``search_semantic`` / ``hybrid_search`` expose the recall funnel: kNN over an
+  indexed ``dense_vector`` field plus BM25+kNN fused by reciprocal rank fusion.
 
 The ``elasticsearch`` client package is imported lazily, so the DSL compiler
 and the offline unit tests work without it. Start a node with::
@@ -34,6 +36,7 @@ from search_agent.contract.tool import (
 )
 from search_agent.models.api import CandidateItem
 from search_agent.models.ir import StructuredConditionIR, WhereNode
+from search_agent.tools.embedding import EMBEDDING_DIMS, embed_text
 from search_agent.tools.memory import load_candidates
 from search_agent.tools.text import (
     TERM_FIELDS,
@@ -63,6 +66,12 @@ _MAPPINGS: dict[str, Any] = {
     "properties": {
         "doc_id": {"type": "keyword"},
         "text_blob": {"type": "text"},
+        "semantic_vector": {
+            "type": "dense_vector",
+            "dims": EMBEDDING_DIMS,
+            "index": True,
+            "similarity": "cosine",
+        },
         "work_years": {"type": "float"},
         "age": {"type": "float"},
         **{field: {"type": "keyword"} for field in TERM_FIELDS},
@@ -209,16 +218,25 @@ class ElasticsearchSearchTool:
             self._client.indices.delete(index=self._index)
         if not self._client.indices.exists(index=self._index):
             self._client.indices.create(index=self._index, mappings=_MAPPINGS)
+        else:
+            # Indexes created before the vector channel only need the one new field;
+            # the corpus is re-indexed below either way.
+            self._client.indices.put_mapping(
+                index=self._index,
+                properties={"semantic_vector": _MAPPINGS["properties"]["semantic_vector"]},
+            )
         for item in self._items:
             self._client.index(index=self._index, id=item.docId, document=self._document(item))
         self._client.indices.refresh(index=self._index)
 
     @staticmethod
     def _document(item: CandidateItem) -> dict[str, Any]:
+        blob = candidate_text(item)
         terms = normalized_terms(item)
         document: dict[str, Any] = {
             "doc_id": item.docId,
-            "text_blob": candidate_text(item),
+            "text_blob": blob,
+            "semantic_vector": embed_text(blob),
             "payload": item.model_dump(by_alias=True),
             "work_years": item.workYears if isinstance(item.workYears, (int, float)) else None,
             "age": item.age if isinstance(item.age, (int, float)) else None,
@@ -231,15 +249,80 @@ class ElasticsearchSearchTool:
 
     # -- extra channels ------------------------------------------------------
 
-    def search_text(self, query: str, *, top_k: int = 5) -> list[tuple[str, float]]:
+    def search_text(
+        self, query: str, *, top_k: int = 5, where: WhereNode | None = None
+    ) -> list[tuple[str, float]]:
         """Keyword channel: BM25 over the indexed candidate text."""
-        response = self._client.search(
-            index=self._index,
-            query={"match": {"text_blob": {"query": query, "operator": "and"}}},
-            size=max(0, int(top_k)),
-        )
+        match: dict[str, Any] = {"match": {"text_blob": {"query": query, "operator": "and"}}}
+        query_dsl: dict[str, Any] = match
+        if where is not None:
+            query_dsl = {"bool": {"must": [match], "filter": [compile_where(where)["query"]]}}
+        response = self._client.search(index=self._index, query=query_dsl, size=max(0, int(top_k)))
         return [
             (str(hit["_id"]), round(float(hit["_score"]), 4)) for hit in response["hits"]["hits"]
+        ]
+
+    def search_semantic(
+        self,
+        query_text: str,
+        *,
+        top_k: int = 5,
+        where: WhereNode | None = None,
+        num_candidates: int | None = None,
+    ) -> list[tuple[str, float]]:
+        """Vector channel: kNN over the indexed ``dense_vector`` field."""
+        if top_k <= 0:
+            return []
+        body: dict[str, Any] = {
+            "field": "semantic_vector",
+            "query_vector": embed_text(query_text),
+            "k": int(top_k),
+            "num_candidates": int(num_candidates or max(50, int(top_k) * 10)),
+        }
+        if where is not None:
+            body["filter"] = compile_where(where)["query"]
+        response = self._client.search(index=self._index, knn=body, size=int(top_k))
+        return [
+            (str(hit["_id"]), round(float(hit["_score"]), 4)) for hit in response["hits"]["hits"]
+        ]
+
+    def hybrid_search(
+        self,
+        query_text: str,
+        *,
+        top_k: int = 5,
+        where: WhereNode | None = None,
+        branch_k: int = 20,
+        rank_constant: int = 60,
+    ) -> list[dict[str, Any]]:
+        """Recall funnel: BM25 + kNN fused with reciprocal rank fusion (RRF).
+
+        ``score = sum(1 / (rank_constant + rank))`` over the branches that returned the
+        hit; every row keeps the per-branch rank and score, so a caller can explain
+        where a candidate came from.
+        """
+        branches = (
+            ("bm25", self.search_text(query_text, top_k=branch_k, where=where)),
+            ("knn", self.search_semantic(query_text, top_k=branch_k, where=where)),
+        )
+        merged: dict[str, dict[str, float]] = {}
+        for name, hits in branches:
+            for rank, (doc_id, score) in enumerate(hits, start=1):
+                row = merged.setdefault(doc_id, {})
+                row[f"{name}_rank"] = rank
+                row[f"{name}_score"] = float(score)
+                row["score"] = row.get("score", 0.0) + 1.0 / (rank_constant + rank)
+        ranked = sorted(merged.items(), key=lambda entry: (-entry[1]["score"], entry[0]))
+        return [
+            {
+                "docId": doc_id,
+                "score": round(float(values["score"]), 6),
+                "bm25Rank": values.get("bm25_rank"),
+                "bm25Score": values.get("bm25_score"),
+                "knnRank": values.get("knn_rank"),
+                "knnScore": values.get("knn_score"),
+            }
+            for doc_id, values in ranked[: max(0, int(top_k))]
         ]
 
     # -- WhereNode -> DSL ----------------------------------------------------

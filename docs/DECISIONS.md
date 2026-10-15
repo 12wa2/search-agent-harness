@@ -142,8 +142,6 @@ dev 依赖里带上它们以在 CI 跑接口测试；核心安装仍然只有 py
 保证（同一查询，两条路径结果一致）。
 
 **取舍**：多一条需要同步维护的执行路径（阶段改动时图边几乎不变）；换来「框架切换」
-的可行性被真实代码与测试证明，而不是口头承诺。
-
 
 ## D15. SQLite/FTS5 后端：where 树编译 SQL（跨后端结果一致）
 
@@ -176,4 +174,13 @@ dev 依赖里带上它们以在 CI 跑接口测试；核心安装仍然只有 py
 
 **影响**：`docker compose up -d --build` 之后 `/healthz` 报 `ElasticsearchSearchTool`，`POST /search` 的前三名与本地内存后端逐位一致，说明「换引擎不改结果」在容器里同样成立；后续加向量后端只需在 factory 里多一个分支。
 
+## D18. 向量通道：dense_vector + kNN，与 BM25 做 RRF 融合
+
+**背景**：三个后端逐位一致证明了「换引擎不改 Agent」，但召回手段只有关键词一条——真实的人才检索里，长查询在 AND 语义下 0 命中是常态，向量召回是刚需，也是面试必问。
+
+**选择**：新增 `tools/embedding.py`（blake2b 分桶的词袋向量 + 次线性 TF + L2 归一化，256 维，零依赖）；ES 映射加 `dense_vector`（cosine，`index: true`，旧索引启动时补 `put_mapping`）；新增 `search_semantic`（kNN，可带 `where` filter）与 `hybrid_search`（BM25 + kNN 各取 `branch_k`，按 RRF `1/(60+rank)` 融合，逐行保留两支路的 rank / score）。
+
+**取舍**：不引入 embedding 模型依赖——不下载权重、CI 可跑、零 API key，代价是「语义」只到词袋级别，因此代码与文档都明确写成「确定性向量，替换 `embed_text` 即可接真实模型」，不夸大效果。融合放在召回层（RRF）而不是打分层，`search_with_intent` 一行未动，三后端逐位一致的测试继续成立。
+
+**影响**：仓库现在覆盖「关键词 → 向量 → 混合召回」这条链路，`examples/es_hybrid_recall.py` 可直接演示「关键词 0 命中、向量召回 5 人、RRF 给出融合排序」；后续接 pgvector / Milvus 也只需再实现一个后端并复用 `embed_text`。
 

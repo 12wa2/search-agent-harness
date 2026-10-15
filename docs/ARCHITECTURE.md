@@ -187,3 +187,19 @@ compose 的 `api` 服务等待 `elasticsearch` 通过健康检查后才启动，
 ES 索引，再对外提供 HTTP + SSE。后端统一由 `tools/factory.py` 构造，CLI 的
 `--backend memory|sqlite|es` 与容器入口走同一条代码路径；`/healthz` 回显当前后端与 LLM
 类型，便于确认容器实际接的是哪一个。
+
+## 13. 召回层：关键词 / 向量 / 混合（RRF）
+
+`search_with_intent` 保持「引擎侧过滤 → Python 复检与打分」这唯一事实来源，所以三个后端逐位
+一致；召回层本身在 ES 后端上另开三条通道，供漏斗式检索与演示使用：
+
+| 通道 | 实现 | 说明 |
+|---|---|---|
+| `search_text` | BM25（`match` on `text_blob`，operator=and） | 关键词召回，可传 `where` 做过滤 |
+| `search_semantic` | kNN over `dense_vector`（cosine） | 向量召回，同样支持 `where` filter |
+| `hybrid_search` | 两通道各取 `branch_k`，RRF 融合（rank_constant=60） | 生产里常见的召回漏斗 |
+
+向量由 `tools/embedding.py` 生成：确定性哈希词袋 + 次线性 TF + L2 归一化，宽度
+`EMBEDDING_DIMS = 256`，必须与索引映射里的 `dense_vector.dims` 一致。它不下载模型、结果可
+复现；换成真实 embedding 模型只需替换 `embed_text` 并重建索引，mapping / kNN / RRF 都不用改。
+`hybrid_search` 的每一行都保留两条支路的 `rank` / `score`，便于解释某个候选是被哪一路召回的。
