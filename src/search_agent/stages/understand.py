@@ -1,0 +1,139 @@
+"""understand: query -> JobProfile + TalentProfile.
+
+Parsing is tolerant: the LLM gateway does not always enforce strict json_schema,
+so we coerce common shapes (string abilities, alias keys) and skip individual
+constraints that fail validation rather than aborting the whole stage. This
+keeps understand from failing the agent loop on a single malformed field.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from datetime import datetime
+from typing import Any
+
+from search_agent.llm.prompts import (
+    build_understand_payload,
+    understand_prompt,
+)
+from search_agent.models.artifacts import (
+    CandidateSource,
+    JobAbility,
+    JobProfile,
+    TalentProfile,
+)
+from search_agent.models.ir import (
+    SemanticConditionIR,
+    StructuredConditionIR,
+)
+from search_agent.stages.base import Deps
+
+logger = logging.getLogger(__name__)
+
+_DIFF_ALIASES = {"medium": "mid", "mid": "mid", "low": "low", "high": "high"}
+
+
+def _coerce_abilities(raw: Any) -> list[JobAbility]:
+    out: list[JobAbility] = []
+    for a in raw or []:
+        if isinstance(a, JobAbility):
+            out.append(a)
+        elif isinstance(a, str):
+            out.append(JobAbility(name=a))
+        elif isinstance(a, dict):
+            name = a.get("name") or a.get("ability") or a.get("skill")
+            if not name:
+                continue
+            try:
+                out.append(JobAbility.model_validate(a))
+            except Exception:
+                out.append(JobAbility(name=str(name)))
+    return out
+
+
+def _coerce_hard_constraints(raw: Any) -> list[StructuredConditionIR]:
+    if isinstance(raw, dict):
+        raw = [raw]
+    out: list[StructuredConditionIR] = []
+    for c in raw or []:
+        if isinstance(c, StructuredConditionIR):
+            out.append(c)
+            continue
+        if isinstance(c, dict):
+            try:
+                out.append(StructuredConditionIR.model_validate(c))
+            except Exception:
+                logger.debug("understand: skip invalid hard_constraint: %s", c)
+    return out
+
+
+def _coerce_soft_signals(raw: Any) -> list[SemanticConditionIR]:
+    out: list[SemanticConditionIR] = []
+    for s in raw or []:
+        if isinstance(s, dict):
+            try:
+                out.append(SemanticConditionIR.model_validate(s))
+            except Exception:
+                logger.debug("understand: skip invalid soft_signal: %s", s)
+    return out
+
+
+def _coerce_sources(raw: Any) -> list[CandidateSource]:
+    out: list[CandidateSource] = []
+    for s in raw or []:
+        if isinstance(s, dict):
+            try:
+                out.append(CandidateSource.model_validate(s))
+            except Exception:
+                logger.debug("understand: skip invalid source: %s", s)
+    return out
+
+
+def run_understand(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
+    system, schema = understand_prompt()
+    user = json.dumps(
+        build_understand_payload(
+            state["query"],
+            datetime.now().astimezone().isoformat(timespec="seconds"),
+            conversation_history=state.get("conversation_history"),
+        ),
+        ensure_ascii=False,
+    )
+    data = deps.llm.complete_json(
+        system=system, user=user, schema_name="agent_understand", schema=schema
+    )
+    deps.budget_state.record_llm()
+
+    # tolerate alias keys the model emits when strict mode is not enforced
+    diff_raw = data.get("subjective_difficulty") or data.get("difficulty_level") or "mid"
+    difficulty = _DIFF_ALIASES.get(str(diff_raw).strip().lower(), "mid")
+    tp = data.get("talent_profile") or data.get("initial_talent_profile") or {}
+
+    job = JobProfile(
+        raw_query=state["query"],
+        title=data.get("title"),
+        must_abilities=_coerce_abilities(data.get("must_abilities")),
+        nice_abilities=_coerce_abilities(data.get("nice_abilities")),
+        hard_constraints=_coerce_hard_constraints(data.get("hard_constraints")),
+        subjective_difficulty=difficulty,
+        difficulty_reason=data.get("difficulty_reason", "") or "",
+        needs_clarification=bool(data.get("needs_clarification", False)),
+        clarify_questions=data.get("clarify_questions", []) or [],
+    )
+    talent = TalentProfile(
+        source_hypotheses=_coerce_sources(tp.get("source_hypotheses")),
+        must_keywords=tp.get("must_keywords", []) or [],
+        soft_signals=_coerce_soft_signals(tp.get("soft_signals")),
+        risk_filters=tp.get("risk_filters", []) or [],
+    )
+
+    updates: dict[str, Any] = {"job_profile": job, "talent_profile": talent}
+    if job.needs_clarification:
+        updates.update({"need_clarify": True, "phase": "done"})
+    else:
+        updates["phase"] = "plan"
+    return updates
+
+
+__all__ = ["run_understand"]
