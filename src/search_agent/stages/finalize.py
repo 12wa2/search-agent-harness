@@ -185,7 +185,10 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     # search. The enriched semantic signals broaden vector recall, so people
     # keyword search could not find can now surface. Same LLM token cost as
     # rerank_pool (one rerank) plus one ES query.
-    enriched = bool(state.get("reflections")) and not state.get("fallback_baseline")
+    no_converged = bool(deps.ablation and deps.ablation.no_converged_search)
+    enriched = (
+        bool(state.get("reflections")) and not state.get("fallback_baseline") and not no_converged
+    )
     converged = _build_converged_intent(state) if enriched else None
     converged_semantic = (
         [(s.text, s.weight) for s in converged.semantic] if converged is not None else []

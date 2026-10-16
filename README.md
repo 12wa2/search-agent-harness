@@ -102,15 +102,18 @@ search-agent search "招聘推荐算法工程师，要求 5 年以上，有召�
 
 仓库内置两套**离线确定性**评测（脚本化 LLM + 合成语料，零 API key）：
 
-**口径 ①：效果 / 成本对比**（16 个演示候选人 · 3 个查询）——循环在「池子小、路径互补」时值多少钱：
+**口径 ①：成本 / 判定池对比**（16 个演示候选人 · 3 个查询）——循环多花多少钱、把候选池铺多宽：
 
 | 指标（3 个查询合计） | 单趟基线 | Agent 全循环 | 变化 |
 |---|---|---|---|
-| 合格候选人 | 30 人 | 48 人 | +18（+60%） |
-| 平均召回完成度 | 0.50 | 0.80 | +0.30 |
+| 判定候选（进入 judge 的池子） | 30 人 | 48 人 | +18（+60%） |
+| 平均召回完成度（池/目标） | 0.50 | 0.80 | +0.30 |
 | LLM 调用次数 | 6 次 | 15 次 | ×2.5 |
-| token 消耗 | ≈12.5k | ≈34.8k | ×2.8 |
-| 累计耗时 | 5.6 ms | 12.6 ms | ×2.3 |
+| token 消耗 | ≈12.5k | ≈35.1k | ×2.8 |
+| 累计耗时 | 6.5 ms | 13.2 ms | ×2.0 |
+
+> 「判定候选」是**池子规模**不是质量：全循环的语义放宽路径会把候选池铺得更宽，judge 自然判得更多。
+> 列表质量请看下面的 oracle 口径与消融表——这里只回答「多花了多少钱」。
 
 **口径 ②：Oracle 基准**（真值来自生成器，不靠 Agent 自评）——把当前实现的**天花板**量出来：
 
@@ -130,12 +133,13 @@ search-agent eval --generated 120 --seed 7 --markdown   # 种子化合成语料 
 | 仅语义可见召回 | 0.36 | 0.36 |
 | 仅全循环发现 | — | 平均每条查询多发现 9.0 人，其中合格 0.7 人（7.4%） |
 
-> **两张表一起看才是完整结论**：口径 ① 是常规演示语料，循环靠多路径 + 反思把
-> 合格候选人从 30 拉到 48；口径 ② 是刻意构造的对抗基准，它显示**只换关键词的
-> 多路径救不了词法天花板**——打分与 grounding 都是词法的，「项目语言 ↔ 能力词」
-> 的表述差跨不过去（仅语义可见召回是两套管线共同的上限）。把天花板量出来，
-> 才知道下一步要修哪里：真实 embedding（`dense_vector` + RRF 通道已就位，
-> 换掉 `tools/embedding.py` 的 `embed_text` 即可），而不是继续堆路径。
+> **三张表一起看才是完整结论**：口径 ① 给成本与池子规模；口径 ②（oracle 真值）说明
+> **只换关键词的多路径救不了词法天花板**——打分与 grounding 都是词法的，
+> 「项目语言 ↔ 能力词」的表述差跨不过去；消融表则把「哪个机制值多少钱」拆开：
+> 反思 + 收敛再搜是主要增益（-0.11），多路径在对抗语料上甚至是负收益。
+> 把天花板和负收益都量出来，才知道下一步要修哪里：真实 embedding
+> （`dense_vector` + RRF 通道已就位，换掉 `tools/embedding.py` 的 `embed_text` 即可），
+> 而不是继续堆路径数。
 
 > **实验设计（为什么基线是单趟 Agent，而不是传统关键词检索）**：基线是同一条 Agent 链路去掉
 > reflect + revise 的单趟版本（understand → plan → execute → judge），唯一变量就是反思闭环，
@@ -143,6 +147,35 @@ search-agent eval --generated 120 --seed 7 --markdown   # 种子化合成语料 
 > 反思的贡献会混在一起，效果差异说不清来自哪里。指标定义与「仅全循环发现」一致：
 > `A_only = A − B`（A = 全循环、B = 单趟基线），新增相关候选 = `|A_only ∩ R|`，
 > 独有候选相关率 = `|A_only ∩ R| / |A_only|`（R = 标注相关集）。
+
+### 消融：每个机制值多少钱
+
+```bash
+search-agent eval --generated 120 --seed 7 --ablate                                   # 六行对照表
+search-agent eval --generated 120 --seed 7 --ablate --baseline docs/eval_baseline.json # CI 门禁
+```
+
+同一语料、同一 seed，每行只关掉一个结构开关（`core/ablation.py`；消融默认把目标合格数抬到语料规模，
+强制循环真的迭代——否则首轮就达标，关掉 reflect 也看不出差别）：
+
+| 配置 | 召回 | 精确率 | 关键词可见 | 仅语义可见 | 仅该行发现（合格） | LLM 调用 | tokens |
+|---|---|---|---|---|---|---|---|
+| 完整八阶段循环 | 0.41 | 0.45 | 0.31 | 0.44 | 54 人（4 合格） | 29 | ~109.5k |
+| 去掉收敛再搜 | 0.30（-0.11） | 0.33 | 0.12 | 0.36 | 54 人（4 合格） | 29 | ~109.5k |
+| 去掉签名防重 | 0.41（+0.00） | 0.45 | 0.31 | 0.44 | 54 人（4 合格） | 30 | ~117.1k |
+| 只跑一轮（无 reflect / revise） | 0.30（-0.11） | 0.33 | 0.12 | 0.36 | 54 人（4 合格） | 23 | ~95.9k |
+| 每轮只规划 1 条路径（无多路径） | 0.42（+0.02） | 0.47 | 0.31 | 0.46 | — | 24 | ~69.9k |
+| 单趟基线 | 0.32（-0.09） | 0.35 | 0.19 | 0.36 | — | 12 | ~49.7k |
+
+怎么读这张表（结论不全是好消息——这才是它存在的意义）：
+
+- **反思闭环 + 收敛再搜是主要增益来源**：关掉任意一个，召回从 0.41 掉到 0.30（-0.11）；单趟基线 0.32。
+- **签名防重是廉价保险**：关掉后召回不变，但多 1 次 LLM、+7% tokens——它买的是「别重复做同一件事」。
+- **多路径在这个对抗语料上不划算**：每轮只规划 1 条路径召回反而略高（0.42）、成本减半（~70k vs ~110k）。
+  原因是词法打分下多路径召回的人群高度重叠，多出的路径只增加 judge 成本——这条直接写进 Roadmap：
+  多路径的收益要等真实 embedding（语义路径才有差异化召回），而不是继续堆路径数。
+- **可复现**：`docs/eval_baseline.json` 是门禁基线，CI 的 `eval-gate` 作业每次 push 比对——召回 / 精确率
+  掉超 0.02、成本涨超 10%、或多出一次降级，流水线直接变红。
 
 > 数字来自本机离线运行，毫秒级会有抖动；重新生成：`search-agent eval --markdown`、
 > `search-agent eval --generated 120 --seed 7 --markdown`（`--oracle DIR` 可读入
@@ -236,6 +269,7 @@ flowchart TD
     J -.->|LLM 失败| D2["降级：跳过判断，用工具事实排序"]
 ```
 
+- 一条 query 的完整走查（逐阶段真实中间产物 + 面试讲法）：见 `docs/CASE_STUDY.md`
 - 状态机、降级矩阵、预算与合并策略细节：见 `docs/ARCHITECTURE.md`
 - 关键设计取舍（ADR 风格）：见 `docs/DECISIONS.md`
 - 变更记录：见 `CHANGELOG.md`；贡献指南：见 `CONTRIBUTING.md`
@@ -251,7 +285,7 @@ search-agent-harness/
 │   ├── graph.py             # 可选：LangGraphRunner（同一批阶段 → StateGraph，行为等价）
 │   ├── server.py            # 可选：FastAPI HTTP 服务（SSE 阶段事件流）
 │   ├── stages/              # 8 个阶段（每个都是纯函数，可独立单测）
-│   ├── core/                # 签名 / 合并 / 预算 / 降级 / 难度路由 / 指标 / trace / 策略记忆（experience.py）
+│   ├── core/                # 签名 / 合并 / 预算 / 降级 / 难度路由 / 指标 / trace / 策略记忆 / 消融开关
 │   ├── contract/tool.py     # SearchTool 协议 —— 与检索后端的唯一边界
 │   ├── tools/memory.py      # 参考实现：内存检索后端（离线演示用）
 │   ├── tools/sqlite_fts.py  # 零依赖 SQLite/FTS5 后端（SQL 编译 where 树）
@@ -265,9 +299,9 @@ search-agent-harness/
 │   ├── oracle.py            # 去自证指标：交付列表打分 / 仅全循环发现增量
 │   ├── tools/embedding.py   # 确定性哈希向量（换真实模型只改这一个函数）
 │   └── cli.py               # 命令行入口：demo / corpus / search / eval / serve
-├── tests/                   # 218 离线 + 22 ES 集成
+├── tests/                   # 240 离线 + 22 ES 集成
 ├── examples/                # custom_backend.py（最小接入）· es_end_to_end.py（真实 ES 全链路）· es_hybrid_recall.py（混合召回）
-├── docs/                    # ARCHITECTURE.md · DECISIONS.md · demo.tape（演示录制脚本）
+├── docs/                    # ARCHITECTURE.md · DECISIONS.md · CASE_STUDY.md · eval_baseline.json · demo.tape
 ├── Dockerfile               # 多阶段镜像：wheel 构建 → 非 root 运行 + HEALTHCHECK
 └── docker-compose.yml       # 单节点 ES 8 + API 服务（docker compose up -d --build）
 ```
@@ -355,7 +389,7 @@ pytest -q -m es
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 218 个离线单元测试（+22 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest）
+- [x] 240 个离线单元测试（+22 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）
@@ -366,8 +400,10 @@ pytest -q -m es
 - [x] Oracle 基准：种子化合成语料 + 生成器真值，去自证评测（`search-agent eval --generated / --oracle`）。
 - [x] 宽召回池语义：每路径召回 `max(top_k*3, 30)`（`SEARCH_AGENT_RECALL_POOL_SIZE`），judge 全量池、交付 top_k。
 - [x] 策略记忆：按查询族累计「哪一类策略有效」，并作为先验注入 plan / reflect（`core/experience.py`，Redis 可选）。
+- [x] 消融实验 + 评测门禁：`eval --ablate` 单开关对照表；`docs/eval_baseline.json` 作为 CI 基线，回归即红。
 - [ ] 真实 embedding 接入：跨越「项目语言 ↔ 能力词」表述差，修掉 Oracle 基准量出的天花板。
-- [ ] 演示 GIF（`docs/demo.tape` 已就绪，待录制）与完整英文 README（现为 README 内折叠版）
+- [ ] 演示 GIF：录制脚本 `docs/demo.tape` 已就绪——装 [vhs](https://github.com/charmbracelet/vhs) 后跑 `vhs docs/demo.tape`（约 40 秒：demo 时间线 + 消融表），产物 `docs/demo.gif`
+- [ ] 完整英文 README（现为 README 内折叠版）
 
 ## 诚实声明
 

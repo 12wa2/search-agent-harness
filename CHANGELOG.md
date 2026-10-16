@@ -7,6 +7,18 @@
 
 ### Added
 
+- **案例研究**（`docs/CASE_STUDY.md`）：一条 query 的端到端走查——逐阶段贴真实中间产物
+  （画像 / 路径与签名 / 判决 / 反思 JSON / 收敛再搜与最终排名），并给出「这个案例没说明什么」
+  的诚实解读、60 秒面试口播稿与追问预案；`docs/demo.tape` 更新为演示录制脚本（demo + 消融表）。
+- **评测口径修正**（`eval.py`）：口径① 的「合格候选人」实为**进入 judge 的池子规模**，
+  已改标为「判定候选（judged）」并在表下注明它不是质量口径（质量看 oracle 与消融表）；
+  修复 `--markdown` 合计表里 Agent 行丢失 tokens 单元格的 bug。
+- **消融实验与评测门禁**（`core/ablation.py`、`eval.py`）：`search-agent eval --ablate` 在同一语料 /
+  同一 seed 上逐行只翻转一个结构开关（去收敛再搜 / 去签名防重 / 只跑一轮 / 只规划单路径 / 单趟基线），
+  输出 oracle 召回、精确率、关键词可见 vs 仅语义可见、独有发现与 LLM/token 成本对照表；
+  消融默认把目标合格数抬到语料规模以强制循环迭代（否则首轮达标会让开关不可区分）。
+  `--save-baseline` 落盘 `docs/eval_baseline.json`，`--baseline` 比对（比例指标容差 0.02、成本容差 10%、
+  降级即失败），CI 新增 `eval-gate` 作业；新增 22 个用例（`tests/test_ablation.py`，含跨轮确定性校验）。
 - **策略记忆**（`core/experience.py`）：每次运行后把合格候选人按来源路径归因
   （`SearchPath.origin`：`plan` / `default` / `fallback` / `loosen` / `tighten` / `add_path`，收敛再搜记 `converged`），
   按“must 能力集哈希”聚合的查询族累计 `runs / qualified / tokens`；

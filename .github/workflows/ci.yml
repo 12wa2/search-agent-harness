@@ -25,6 +25,19 @@ jobs:
       - name: Offline demo smoke test
         run: search-agent demo --top-k 5
 
+  eval-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Ablation gate (compare against docs/eval_baseline.json)
+        run: search-agent eval --generated 120 --seed 7 --ablate --baseline docs/eval_baseline.json
+
   es-integration:
     runs-on: ubuntu-latest
     services:

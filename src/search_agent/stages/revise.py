@@ -25,6 +25,8 @@ def _apply_action(
     tried: set[str],
     new_sigs: set[str],
     new_paths: list[SearchPath],
+    *,
+    dedup: bool = True,
 ) -> None:
     kind = action.kind
     if kind == "drop":
@@ -45,7 +47,7 @@ def _apply_action(
         sig = intent_signature(action.intent)
     except Exception:  # noqa: BLE001 - skip malformed intent
         return
-    if sig in tried or sig in new_sigs:
+    if dedup and (sig in tried or sig in new_sigs):
         return
     new_sigs.add(sig)
     base = len(tried) + len(new_paths)
@@ -82,7 +84,14 @@ def run_revise(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
             executable = True
             continue
         if action.kind in ("drop", "loosen", "tighten", "add_path"):
-            _apply_action(action, paths, tried, new_sigs, new_paths)
+            _apply_action(
+                action,
+                paths,
+                tried,
+                new_sigs,
+                new_paths,
+                dedup=not (deps.ablation and deps.ablation.no_signature_dedup),
+            )
             executable = True
 
     # merge new source hints + inferred soft signals into talent profile

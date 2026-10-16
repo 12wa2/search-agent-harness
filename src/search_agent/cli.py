@@ -229,6 +229,23 @@ def _build_parser() -> argparse.ArgumentParser:
     eval_cmd.add_argument(
         "--oracle", default=None, help="corpus directory written by `search-agent corpus`"
     )
+    eval_cmd.add_argument(
+        "--ablate",
+        action="store_true",
+        help="ablation grid: one structural switch flipped per row",
+    )
+    eval_cmd.add_argument(
+        "--save-baseline", default=None, help="write this run's ablation metrics to JSON"
+    )
+    eval_cmd.add_argument(
+        "--baseline", default=None, help="stored baseline JSON; exit 1 on regression"
+    )
+    eval_cmd.add_argument(
+        "--ablate-target",
+        type=int,
+        default=None,
+        help="override target_qualified for --ablate (default: corpus size)",
+    )
     serve_cmd = sub.add_parser("serve", help='optional HTTP service (pip install ".[api]")')
     serve_cmd.add_argument("--host", default="127.0.0.1")
     serve_cmd.add_argument("--port", type=int, default=8000)
@@ -333,6 +350,10 @@ def _run_eval_command(args: argparse.Namespace) -> int:
         top_k=args.top_k,
         markdown=args.markdown,
         corpus=corpus,
+        ablate=args.ablate,
+        save_baseline=args.save_baseline,
+        baseline_path=args.baseline,
+        ablate_target=args.ablate_target,
     )
 
 

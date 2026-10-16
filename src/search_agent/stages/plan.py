@@ -28,6 +28,11 @@ from search_agent.stages.base import Deps
 logger = logging.getLogger(__name__)
 
 
+def _dedup_disabled(deps: Deps) -> bool:
+    """True only for the ``no_signature_dedup`` ablation row (never in serving)."""
+    return bool(deps.ablation and deps.ablation.no_signature_dedup)
+
+
 def _default_path(state: dict[str, Any], tried: set[str]) -> SearchPath | None:
     """Build a single fallback path from understand's hard_constraints."""
     job = state.get("job_profile")
@@ -84,7 +89,7 @@ def run_plan(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
         except Exception:  # noqa: BLE001 - skip path with invalid intent
             logger.debug("plan: skip path with invalid intent: %s", raw)
             continue
-        if sig in tried or sig in new_sigs:
+        if not _dedup_disabled(deps) and (sig in tried or sig in new_sigs):
             continue
         try:
             new_paths.append(
