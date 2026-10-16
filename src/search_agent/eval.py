@@ -193,9 +193,10 @@ def run_ablation(
 ) -> int:
     """Run the whole grid on one corpus: one switch flipped per row.
 
-    Reports oracle recall / precision / semantic visibility per configuration
-    plus the discovery delta against the single-pass row, and can gate a stored
-    baseline (``--baseline``): any quality drop beyond tolerance exits non-zero.
+    Reports pool vs delivered oracle recall / precision / semantic visibility per
+    configuration plus the discovery delta against the single-pass row, and can
+    gate a stored baseline (``--baseline``): any quality drop beyond tolerance
+    exits non-zero.
     """
     out = stream or sys.stdout
     # Force the loop to iterate: an unmet target is what makes reflect / revise /
@@ -220,7 +221,9 @@ def run_ablation(
     scores = [
         _score_row(row, results[row.name], corpus, baseline_surfaced) for row in ABLATION_ROWS
     ]
-    _print_ablation(scores, corpus, markdown=markdown, stream=out, target_qualified=target)
+    _print_ablation(
+        scores, corpus, top_k=top_k, markdown=markdown, stream=out, target_qualified=target
+    )
 
     payload = baseline_payload(scores, corpus=corpus, top_k=top_k, target_qualified=target)
     if save_baseline:
@@ -433,12 +436,14 @@ def _run_oracle_eval(
         rows.append(
             (
                 spec,
-                score_against_oracle(corpus, spec, baseline.doc_ids),
-                score_against_oracle(corpus, spec, agent.doc_ids),
+                score_against_oracle(
+                    corpus, spec, baseline.doc_ids, surfaced_ids=baseline.surfaced_ids
+                ),
+                score_against_oracle(corpus, spec, agent.doc_ids, surfaced_ids=agent.surfaced_ids),
                 novelty(corpus, spec, baseline.surfaced_ids, agent.surfaced_ids),
             )
         )
-    print_oracle_report(corpus, rows, markdown=markdown, stream=stream)
+    print_oracle_report(corpus, rows, markdown=markdown, stream=stream, top_k=top_k)
     return 0
 
 
@@ -555,6 +560,9 @@ class AblationScore:
 
     name: str
     label: str
+    #: Exploration layer: relevant people the row ever saw (path pools + delivered).
+    pool_recall: float
+    #: Delivery layer: relevant people that survived into the top-k page.
     recall: float
     precision: float
     keyword_recall: float
@@ -569,6 +577,7 @@ class AblationScore:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "pool_recall": round(self.pool_recall, 4),
             "recall": round(self.recall, 4),
             "precision": round(self.precision, 4),
             "keyword_recall": round(self.keyword_recall, 4),
@@ -588,13 +597,14 @@ def _score_row(
     corpus: SyntheticCorpus,
     baseline_surfaced: list[tuple[str, ...]],
 ) -> AblationScore:
-    found = delivered = relevant = 0
+    pool_found = found = delivered = relevant = 0
     keyword_found = keyword_relevant = 0
     semantic_found = semantic_relevant = 0
     unique = unique_relevant = 0
     per_query = zip(corpus.queries, results, baseline_surfaced, strict=True)
     for spec, result, base_ids in per_query:
-        score = score_against_oracle(corpus, spec, result.doc_ids)
+        score = score_against_oracle(corpus, spec, result.doc_ids, surfaced_ids=result.surfaced_ids)
+        pool_found += score.pool_found
         found += score.found
         delivered += score.delivered
         relevant += score.relevant
@@ -608,6 +618,7 @@ def _score_row(
     return AblationScore(
         name=row.name,
         label=row.label,
+        pool_recall=pool_found / relevant if relevant else 0.0,
         recall=found / relevant if relevant else 0.0,
         precision=found / delivered if delivered else 0.0,
         keyword_recall=keyword_found / keyword_relevant if keyword_relevant else 0.0,
@@ -676,7 +687,7 @@ def compare_baseline(
             messages.append(f"! {name}: 基线里没有这一行（基线过期？）")
             ok = False
             continue
-        for key in ("recall", "precision", "keyword_recall", "semantic_recall"):
+        for key in ("pool_recall", "recall", "precision", "keyword_recall", "semantic_recall"):
             drop = float(base.get(key, 0.0)) - float(current[key])
             if drop > _RATIO_TOLERANCE:
                 messages.append(
@@ -708,6 +719,7 @@ def _print_ablation(
     scores: list[AblationScore],
     corpus: SyntheticCorpus,
     *,
+    top_k: int,
     markdown: bool,
     stream: TextIO,
     target_qualified: int,
@@ -715,11 +727,11 @@ def _print_ablation(
     reference = next((s for s in scores if s.name == REFERENCE_ROW), None)
     if markdown:
         print(
-            "\n| 配置 | 召回 | 精确率 | 关键词可见 | 仅语义可见 | 仅该行发现（合格） "
-            "| LLM 调用 | tokens | 耗时 |",
+            f"\n| 配置 | 池召回（探索层） | 召回（交付 top-{top_k}） | 精确率 | 关键词可见 "
+            "| 仅语义可见 | 仅该行发现（合格） | LLM 调用 | tokens | 耗时 |",
             file=stream,
         )
-        print("|---|---|---|---|---|---|---|---|---|", file=stream)
+        print("|---|---|---|---|---|---|---|---|---|---|", file=stream)
         for score in scores:
             delta = ""
             if reference is not None and score.name != REFERENCE_ROW:
@@ -727,8 +739,8 @@ def _print_ablation(
             tokens = f"~{score.tokens}" if score.tokens_estimated else str(score.tokens)
             found = f"{score.unique} 人（{score.unique_relevant} 合格）" if score.unique else "—"
             print(
-                f"| {score.label} `{score.name}` | {score.recall:.2f}{delta} "
-                f"| {score.precision:.2f} | "
+                f"| {score.label} `{score.name}` | {score.pool_recall:.2f} "
+                f"| {score.recall:.2f}{delta} | {score.precision:.2f} | "
                 f"{score.keyword_recall:.2f} | {score.semantic_recall:.2f} | {found} | "
                 f"{score.llm_calls} | {tokens} | {score.elapsed_ms:.0f} ms |",
                 file=stream,
@@ -736,6 +748,7 @@ def _print_ablation(
         print(
             f"\n语料 {corpus.size} 人 · {len(corpus.queries)} 个查询 · seed={corpus.seed} · "
             f"目标合格数 {target_qualified}（强制循环迭代）· "
+            f"池召回 = 探索层看到过的合格人 · 召回 = 交付 top-{top_k} 页里的合格人 · "
             f"「仅该行发现」= 该配置看到、单趟基线没看到的候选人（真值来自生成器）。",
             file=stream,
         )
@@ -748,6 +761,10 @@ def _print_ablation(
         f"目标合格数 {target_qualified}（强制循环迭代）· 「仅该行发现」相对单趟基线计算",
         file=stream,
     )
+    print(
+        f"  池召回 = 探索层看到过的合格人 · 召回 = 交付 top-{top_k} 页里的合格人",
+        file=stream,
+    )
     print("-" * 72, file=stream)
     for score in scores:
         delta = ""
@@ -756,10 +773,10 @@ def _print_ablation(
         tokens = f"~{score.tokens}" if score.tokens_estimated else str(score.tokens)
         found = f"独有 {score.unique}/{score.unique_relevant} 合格" if score.unique else "独有 —"
         print(
-            f"  {score.label:<22} {score.name:<20} 召回 {score.recall:.2f}{delta} · "
-            f"精确率 {score.precision:.2f} · 关键词 {score.keyword_recall:.2f} · "
-            f"仅语义 {score.semantic_recall:.2f} · {found} · LLM {score.llm_calls} · "
-            f"tokens {tokens} · {score.elapsed_ms:.0f} ms",
+            f"  {score.label:<22} {score.name:<20} 池召回 {score.pool_recall:.2f} · "
+            f"召回 {score.recall:.2f}{delta} · 精确率 {score.precision:.2f} · "
+            f"关键词 {score.keyword_recall:.2f} · 仅语义 {score.semantic_recall:.2f} · "
+            f"{found} · LLM {score.llm_calls} · tokens {tokens} · {score.elapsed_ms:.0f} ms",
             file=stream,
         )
     print("-" * 72, file=stream)

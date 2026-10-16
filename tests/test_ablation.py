@@ -178,6 +178,7 @@ class TestAggregation:
         ]
         score = _score_row(row, results, corpus, [r.surfaced_ids for r in results])
         assert 0.0 <= score.recall <= 1.0
+        assert score.pool_recall >= score.recall
         assert 0.0 <= score.precision <= 1.0
         assert score.llm_calls == sum(r.llm_calls for r in results)
         # comparing a row against itself: nothing is unique
@@ -188,6 +189,7 @@ class TestAggregation:
         score = AblationScore(
             name="full_loop",
             label="完整循环",
+            pool_recall=0.6,
             recall=0.5,
             precision=0.4,
             keyword_recall=0.3,
@@ -204,13 +206,15 @@ class TestAggregation:
         payload = baseline_payload([score], corpus=corpus, top_k=5, target_qualified=100)
         assert payload["size"] == corpus.size
         assert payload["seed"] == 3
-        assert json.loads(json.dumps(payload))["rows"]["full_loop"]["recall"] == 0.5
+        row = json.loads(json.dumps(payload))["rows"]["full_loop"]
+        assert row["recall"] == 0.5
+        assert row["pool_recall"] == 0.6
 
 
 # -- 4. the CI gate -------------------------------------------------------
 
 
-def _payload(*, recall=0.5, llm_calls=7, degraded=0) -> dict:
+def _payload(*, recall=0.5, pool_recall=0.7, llm_calls=7, degraded=0) -> dict:
     return {
         "version": 1,
         "size": 120,
@@ -219,6 +223,7 @@ def _payload(*, recall=0.5, llm_calls=7, degraded=0) -> dict:
         "target_qualified": 120,
         "rows": {
             "full_loop": {
+                "pool_recall": pool_recall,
                 "recall": recall,
                 "precision": 0.4,
                 "keyword_recall": 0.3,
@@ -250,6 +255,12 @@ class TestGate:
         current = _payload(recall=0.49)
         ok, _ = compare_baseline(current, _write(tmp_path, _payload()))
         assert ok is True
+
+    def test_pool_recall_drop_fails(self, tmp_path):
+        current = _payload(pool_recall=0.60)
+        ok, messages = compare_baseline(current, _write(tmp_path, _payload()))
+        assert ok is False
+        assert any("pool_recall" in m for m in messages)
 
     def test_recall_drop_fails(self, tmp_path):
         current = _payload(recall=0.40)

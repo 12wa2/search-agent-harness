@@ -26,6 +26,19 @@ __all__ = ["Novelty", "OracleScore", "novelty", "print_oracle_report", "score_ag
 
 _LABELS = ("单趟基线", "Agent 全循环")
 
+#: Read the pool / delivery split first: it says *where* quality is lost.
+_INTERPRETATION = (
+    "  注：先看「池召回 → 交付召回」的落差。池召回高、交付召回低 = 池子里有人但排不进前 k，\n"
+    "      瓶颈在打分与排序（当前打分是词法的，没有真实 embedding 参与）；两条管线同涨同跌时，\n"
+    "      说明差距来自检索层而不是循环。真实 embedding 是 Roadmap 里要修的那一步。"
+)
+
+_INTERPRETATION_MD = (
+    "> 先看「池召回 → 交付召回」的落差：池召回高、交付召回低 = 池子里有人，但排不进前 k，\n"
+    "> 瓶颈在打分与排序（当前打分是词法的、没有真实 embedding 参与）；两条管线同涨同跌，\n"
+    "> 说明差距来自检索层而不是循环。加深交付深度（`--top-k`）会抬高交付召回的上限。\n"
+)
+
 _LEGEND = (
     "  「关键词可见」= 合格候选人中，所需能力有技能/关键词证据的那部分\n"
     "  「仅语义可见」= 只有项目语言、没有任何关键词证据的那部分（词法策略的盲区）"
@@ -43,11 +56,24 @@ class OracleScore:
     keyword_found: int
     semantic_relevant: int
     semantic_found: int
+    #: Relevant people the pipeline ever *saw* (path recall pools + delivered),
+    #: i.e. the exploration layer; ``found`` is the delivery layer.
+    pool_found: int = 0
 
     @property
     def recall(self) -> float:
         """Share of all truly-qualified candidates that were delivered."""
         return self.found / self.relevant if self.relevant else 0.0
+
+    @property
+    def pool_recall(self) -> float:
+        """Share of all truly-qualified candidates the pipeline ever saw.
+
+        The gap against :attr:`recall` is what ranking / delivery depth costs:
+        when the pool is full but the page is not, the bottleneck is ordering,
+        not retrieval.
+        """
+        return self.pool_found / self.relevant if self.relevant else 0.0
 
     @property
     def precision(self) -> float:
@@ -69,9 +95,17 @@ def score_against_oracle(
     corpus: SyntheticCorpus,
     spec: QuerySpec,
     doc_ids: Iterable[str],
+    *,
+    surfaced_ids: Iterable[str] | None = None,
 ) -> OracleScore:
-    """Recall / precision of one delivered list against the generator's labels."""
+    """Recall / precision of one delivered list against the generator's labels.
+
+    Pass ``surfaced_ids`` (everything the pipeline ever saw) to also score the
+    exploration layer: ``pool_found`` counts relevant people who made it into a
+    recall pool, whether or not they survived ranking into the delivered page.
+    """
     delivered = {str(doc_id) for doc_id in doc_ids}
+    surfaced = {str(doc_id) for doc_id in surfaced_ids or ()}
     relevant = set(corpus.relevant(spec))
     semantic = set(corpus.semantic_only(spec))
     keyword = relevant - semantic
@@ -79,6 +113,7 @@ def score_against_oracle(
     return OracleScore(
         relevant=len(relevant),
         found=len(found),
+        pool_found=len((surfaced | delivered) & relevant),
         delivered=len(delivered),
         keyword_relevant=len(keyword),
         keyword_found=len(found & keyword),
@@ -135,6 +170,7 @@ def _micro(scores: Sequence[OracleScore]) -> dict[str, float]:
 
     return {
         "recall": ratio("found", "relevant"),
+        "pool": ratio("pool_found", "relevant"),
         "precision": ratio("found", "delivered"),
         "keyword": ratio("keyword_found", "keyword_relevant"),
         "semantic": ratio("semantic_found", "semantic_relevant"),
@@ -147,18 +183,21 @@ def print_oracle_report(
     *,
     markdown: bool,
     stream: TextIO,
+    top_k: int | None = None,
 ) -> None:
     """Print per-query scores for both pipelines plus micro totals."""
     if markdown:
-        _print_markdown(corpus, rows, stream)
+        _print_markdown(corpus, rows, stream, top_k=top_k)
     else:
-        _print_text(corpus, rows, stream)
+        _print_text(corpus, rows, stream, top_k=top_k)
 
 
 def _print_text(
     corpus: SyntheticCorpus,
     rows: Sequence[Row],
     stream: TextIO,
+    *,
+    top_k: int | None = None,
 ) -> None:
     print("=" * 72, file=stream)
     print(
@@ -177,6 +216,8 @@ def _print_text(
         for label, score in zip(_LABELS, (baseline, agent), strict=True):
             keyword = _rate(score.keyword_recall, score.keyword_found, score.keyword_relevant)
             semantic = _rate(score.semantic_recall, score.semantic_found, score.semantic_relevant)
+            pool = _rate(score.pool_recall, score.pool_found, score.relevant)
+            print(f"  {label}：池召回 {pool}", file=stream)
             print(
                 f"  {label}：召回 {_rate(score.recall, score.found, score.relevant)} · "
                 f"精确率 {score.precision:.2f} · 关键词可见召回 {keyword} · "
@@ -188,19 +229,28 @@ def _print_text(
             f"（独有候选相关率 {only_agent.relevance_rate:.2f}）",
             file=stream,
         )
-    _print_totals_text(rows, stream)
+    _print_totals_text(rows, stream, top_k=top_k)
 
 
 def _print_totals_text(
     rows: Sequence[Row],
     stream: TextIO,
+    *,
+    top_k: int | None = None,
 ) -> None:
     baseline = _micro([row[1] for row in rows])
     agent = _micro([row[2] for row in rows])
     print("=" * 72, file=stream)
     print(f"合计（{len(rows)} 个查询 · micro）", file=stream)
+    depth = f"top-{top_k}" if top_k else "交付列表"
     print(
-        f"  召回（交付列表）  : 单趟基线 {baseline['recall']:.2f} → 全循环 {agent['recall']:.2f}",
+        f"  池召回（探索层）  : 单趟基线 {baseline['pool']:.2f} → 全循环 {agent['pool']:.2f}"
+        "   ← 池子里有没有人",
+        file=stream,
+    )
+    print(
+        f"  召回（{depth}）: 单趟基线 {baseline['recall']:.2f} → 全循环 {agent['recall']:.2f}"
+        "   ← 有没有排进前 k",
         file=stream,
     )
     print(
@@ -227,30 +277,35 @@ def _print_totals_text(
         f"{per_query:.1f} 人 · 独有候选相关率 {rate:.1%}（{unique_relevant}/{unique_total}）",
         file=stream,
     )
-    print(
-        "  注：「仅语义可见」目前接近 0 是已知天花板——打分与 grounding 都是词法的，"
-        "换成真实 embedding 才能跨越项目语言与能力词之间的表述差异。",
-        file=stream,
-    )
+    print(_INTERPRETATION, file=stream)
 
 
 def _print_markdown(
     corpus: SyntheticCorpus,
     rows: Sequence[Row],
     stream: TextIO,
+    *,
+    top_k: int | None = None,
 ) -> None:
     print(
         f"### Oracle 指标（真值来自语料生成器 · {corpus.size} 条合成候选人 · "
         f"seed={corpus.seed}）\n",
         file=stream,
     )
-    print("| 查询 | 管线 | 召回 | 精确率 | 关键词可见召回 | 仅语义可见召回 |", file=stream)
-    print("|---|---|---|---|---|---|", file=stream)
+    depth = f"交付 top-{top_k}" if top_k else "交付列表"
+    print(
+        f"| 查询 | 管线 | 池召回（探索层） | 召回（{depth}） | 精确率 "
+        "| 关键词可见召回 | 仅语义可见召回 |",
+        file=stream,
+    )
+    print("|---|---|---|---|---|---|---|", file=stream)
     for index, row in enumerate(rows, 1):
         baseline, agent = row[1], row[2]
         for label, score in zip(_LABELS, (baseline, agent), strict=True):
             print(
-                f"| Q{index} | {label} | {_rate(score.recall, score.found, score.relevant)} | "
+                f"| Q{index} | {label} "
+                f"| {_rate(score.pool_recall, score.pool_found, score.relevant)} | "
+                f"{_rate(score.recall, score.found, score.relevant)} | "
                 f"{score.precision:.2f} | "
                 f"{_rate(score.keyword_recall, score.keyword_found, score.keyword_relevant)} | "
                 f"{_rate(score.semantic_recall, score.semantic_found, score.semantic_relevant)} |",
@@ -263,7 +318,13 @@ def _print_markdown(
     print("| 指标 | 单趟基线 | Agent 全循环 |", file=stream)
     print("|---|---|---|", file=stream)
     print(
-        f"| 召回（交付列表） | {baseline_totals['recall']:.2f} | {agent_totals['recall']:.2f} |",
+        f"| 池召回（探索层：看到过） | {baseline_totals['pool']:.2f} "
+        f"| {agent_totals['pool']:.2f} |",
+        file=stream,
+    )
+    print(
+        f"| 召回（{depth}：交付到手） | {baseline_totals['recall']:.2f} "
+        f"| {agent_totals['recall']:.2f} |",
         file=stream,
     )
     print(
@@ -298,9 +359,5 @@ def _print_markdown(
         f"独有候选相关率 **{rate:.1%}**（{unique_relevant}/{unique_total}）\n",
         file=stream,
     )
-    print(
-        "> 「仅语义可见」= 简历里只有项目语言、没有任何关键词证据的合格候选人。"
-        "当前实现（词法打分 + 无真实 embedding）几乎无法交付这部分人，"
-        "这是下一步要修的已知天花板，而不是被隐藏的短板。\n",
-        file=stream,
-    )
+    print("> 「仅语义可见」= 简历里只有项目语言、没有任何关键词证据的合格候选人。\n", file=stream)
+    print(_INTERPRETATION_MD, file=stream)

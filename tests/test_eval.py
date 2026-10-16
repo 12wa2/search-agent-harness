@@ -58,10 +58,17 @@ def test_oracle_score_counts_overlap():
     assert score.found == 2
     assert score.recall == 2 / len(relevant)
     assert score.precision == 1.0
+    assert score.pool_found == 2
+    assert score.pool_recall == score.recall
+
+    explored = score_against_oracle(corpus, spec, relevant[:2], surfaced_ids=[relevant[-1]])
+    assert explored.pool_found == 3
+    assert explored.pool_recall > explored.recall
 
     empty = score_against_oracle(corpus, spec, [])
     assert empty.recall == 0.0
     assert empty.precision == 0.0
+    assert empty.pool_recall == 0.0
 
 
 def test_run_eval_with_generated_corpus_reports_oracle_metrics():
@@ -71,12 +78,14 @@ def test_run_eval_with_generated_corpus_reports_oracle_metrics():
     assert run_eval(corpus=corpus, top_k=5, stream=text) == 0
     body = text.getvalue()
     assert "Oracle 评测" in body
+    assert "池召回" in body
     assert "仅语义可见" in body
     assert "单趟基线" in body and "Agent 全循环" in body
 
     markdown = io.StringIO()
     assert run_eval(corpus=corpus, top_k=5, markdown=True, stream=markdown) == 0
     md = markdown.getvalue()
+    assert "池召回（探索层）" in md
     assert "仅语义可见召回" in md
     assert "独有候选相关率" in md
     assert "仅全循环发现" in md
