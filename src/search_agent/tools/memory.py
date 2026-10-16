@@ -108,10 +108,11 @@ class InMemorySearchTool:
 
         scored.sort(key=lambda row: (-row[0], row[3].docId))
         total = len(scored)
-        page = scored[: max(0, int(req.top_k))]
+        page_size = int(req.recall_pool_size or req.top_k)
+        page = scored[: max(0, page_size)]
 
         items = [_build_tool_candidate(score, hard, soft, item) for score, hard, soft, item in page]
-        quality = _quality_label(len(items), total, int(req.top_k))
+        quality = _quality_label(len(items), total, page_size)
 
         es_query: dict[str, Any] | None = None
         if req.details:

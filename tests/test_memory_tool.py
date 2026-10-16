@@ -47,6 +47,20 @@ def test_hard_filter_work_years():
     assert all((item.item.workYears or 0) >= 8 for item in result.items)
 
 
+def test_recall_pool_size_returns_more_than_top_k():
+    req = SearchToolRequest(
+        intent=CandidateSearchIR(where=_leaf("work_years", "gte", [0])),
+        query_text="q",
+        company_id=1,
+        top_k=3,
+        recall_pool_size=8,
+        routing=1,
+    )
+    result = _tool().search_with_intent(req)
+    assert len(result.items) == 8
+    assert result.total == 16
+
+
 def test_skill_filter_and_exclude_doc_ids():
     req = SearchToolRequest(
         intent=CandidateSearchIR(where=_leaf("skill", "any", ["Spark"])),

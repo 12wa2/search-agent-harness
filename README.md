@@ -100,19 +100,46 @@ search-agent search "招聘推荐算法工程师，要求 5 年以上，有召�
 
 ## 评测：单趟基线 vs 全循环
 
-`search-agent eval` 在合成数据上用脚本化 LLM 做**离线确定性**对比：
-「单趟基线」（understand → 单条硬条件路径 → judge → 合并重排）与「Agent 全循环」
-（八阶段反思循环）跑同一批查询，输出合格候选人数、召回完成度与成本：
+仓库内置两套**离线确定性**评测（脚本化 LLM + 合成语料，零 API key）：
+
+**口径 ①：效果 / 成本对比**（16 个演示候选人 · 3 个查询）——循环在「池子小、路径互补」时值多少钱：
 
 | 指标（3 个查询合计） | 单趟基线 | Agent 全循环 | 变化 |
 |---|---|---|---|
-| 合格候选人 | 25 人 | 36 人 | +11（+44%） |
-| 平均召回完成度 | 0.42 | 0.60 | +0.18 |
-| LLM 调用次数 | 6 次 | 16 次 | ×2.7 |
-| 累计耗时 | 4.7 ms | 8.7 ms | ×1.9 |
+| 合格候选人 | 30 人 | 48 人 | +18（+60%） |
+| 平均召回完成度 | 0.50 | 0.80 | +0.30 |
+| LLM 调用次数 | 6 次 | 15 次 | ×2.5 |
+| 累计耗时 | 5.6 ms | 12.6 ms | ×2.3 |
 
-> 数字来自本机离线运行，毫秒级会有抖动；重新生成：`search-agent eval --markdown`。
-> 目的不是刷分，而是展示**效果与成本的定量权衡**，以及可回归的评测入口。
+**口径 ②：Oracle 基准**（真值来自生成器，不靠 Agent 自评）——把当前实现的**天花板**量出来：
+
+```bash
+search-agent eval --generated 120 --seed 7 --markdown   # 种子化合成语料 + oracle 真值
+```
+
+120 条合成候选人里，每条简历按能力逐个掷骰：一部分人用技能关键词表达能力，
+另一部分人**只用项目语言**表达（「订单系统 / 秒杀 / 支付系统」而不写「高并发」）——
+后者词法检索天然搜不到，是向量召回的主场：
+
+| 指标（6 个查询 · micro） | 单趟基线 | Agent 全循环 |
+|---|---|---|
+| 召回（交付列表） | 0.32 | 0.30 |
+| 精确率（交付列表） | 0.35 | 0.33 |
+| 关键词可见召回 | 0.19 | 0.12 |
+| 仅语义可见召回 | 0.36 | 0.36 |
+| 仅全循环发现 | — | 平均每条查询多发现 9.0 人，其中合格 0.7 人（7.4%） |
+
+> **两张表一起看才是完整结论**：口径 ① 是常规演示语料，循环靠多路径 + 反思把
+> 合格候选人从 30 拉到 48；口径 ② 是刻意构造的对抗基准，它显示**只换关键词的
+> 多路径救不了词法天花板**——打分与 grounding 都是词法的，「项目语言 ↔ 能力词」
+> 的表述差跨不过去（仅语义可见召回是两套管线共同的上限）。把天花板量出来，
+> 才知道下一步要修哪里：真实 embedding（`dense_vector` + RRF 通道已就位，
+> 换掉 `tools/embedding.py` 的 `embed_text` 即可），而不是继续堆路径。
+
+> 数字来自本机离线运行，毫秒级会有抖动；重新生成：`search-agent eval --markdown`、
+> `search-agent eval --generated 120 --seed 7 --markdown`（`--oracle DIR` 可读入
+> `search-agent corpus --out DIR` 落盘的固定语料）。目的不是刷分，而是展示
+> **效果与成本的定量权衡**与**可回归、去自证的评测入口**。
 
 ## HTTP 服务（可选）
 
@@ -195,9 +222,11 @@ search-agent-harness/
 │   ├── models/              # 意图 IR / 推理工件 / API 模型（pydantic v2）
 │   ├── demo.py              # 离线脚本化 LLM + 合成候选人数据
 │   ├── eval.py              # 离线评测：单趟基线 vs 全循环（效果 / 成本对比）
-│   └── cli.py               # 命令行入口：demo / search / eval / serve
+│   ├── corpus.py            # 合成语料生成器：种子化 + 生成器真值（oracle 标注）
+│   ├── oracle.py            # 去自证指标：交付列表打分 / 仅全循环发现增量
 │   ├── tools/embedding.py   # 确定性哈希向量（换真实模型只改这一个函数）
-├── tests/                   # 160 离线 + 22 ES 集成
+│   └── cli.py               # 命令行入口：demo / corpus / search / eval / serve
+├── tests/                   # 176 离线 + 22 ES 集成
 ├── examples/                # custom_backend.py（最小接入）· es_end_to_end.py（真实 ES 全链路）· es_hybrid_recall.py（混合召回）
 ├── docs/                    # ARCHITECTURE.md · DECISIONS.md · demo.tape（演示录制脚本）
 ├── Dockerfile               # 多阶段镜像：wheel 构建 → 非 root 运行 + HEALTHCHECK
@@ -275,6 +304,7 @@ pytest -q -m es
 | `SEARCH_AGENT_TARGET_QUALIFIED` | `max(top_k*2, 20)` | 合格候选人目标数 |
 | `SEARCH_AGENT_TIME_BUDGET_SEC` | `12.0` | 单次请求墙钟预算（秒） |
 | `SEARCH_AGENT_LLM_CALL_BUDGET` | `40` | 单次请求 LLM 调用上限 |
+| `SEARCH_AGENT_RECALL_POOL_SIZE` | `max(top_k*3, 30)` | 每路径召回池大小（池内全量 judge，最终交付 top_k） |
 | `SEARCH_AGENT_REDIS_URL` / `REDIS_URL` | — | 可选：会话记忆 / 结果分页 |
 | `SEARCH_AGENT_ES_URL` | `http://127.0.0.1:9200` | Elasticsearch 后端地址（`tools/elasticsearch.py`） |
 
@@ -282,7 +312,7 @@ pytest -q -m es
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 160 个离线单元测试（+22 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest）
+- [x] 176 个离线单元测试（+22 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）
@@ -290,6 +320,9 @@ pytest -q -m es
 - [x] Elasticsearch 真实后端 + `docker compose` 端到端示例（ES DSL 编译，`examples/es_end_to_end.py`）。
 - [x] 向量通道：`dense_vector` + kNN，与 BM25 做 RRF 混合召回（`examples/es_hybrid_recall.py`）。
 - [x] Docker 全栈：多阶段镜像 + compose（`api` 等待 ES 健康后启动，自动灌入演示语料）。
+- [x] Oracle 基准：种子化合成语料 + 生成器真值，去自证评测（`search-agent eval --generated / --oracle`）。
+- [x] 宽召回池语义：每路径召回 `max(top_k*3, 30)`（`SEARCH_AGENT_RECALL_POOL_SIZE`），judge 全量池、交付 top_k。
+- [ ] 真实 embedding 接入：跨越「项目语言 ↔ 能力词」表述差，修掉 Oracle 基准量出的天花板。
 - [ ] 演示 GIF（`docs/demo.tape` 已就绪，待录制）与完整英文 README（现为 README 内折叠版）
 
 ## 诚实声明
@@ -297,6 +330,9 @@ pytest -q -m es
 - 本仓库代码为独立实现：不含任何公司代码、数据或内部文档；演示数据为 16 个虚构候选人（`c001`–`c016`），其中的公司 / 院校名仅作为行业背景用于演示，与真实个人无关。
 - 仓库内置内存 / SQLite / Elasticsearch 三个检索后端（前两个零依赖，ES 需 `docker compose`）；向量库等其它生产组件通过 `SearchTool` 协议对接，不在本仓库内。
 - 未在生产环境部署过；上面的耗时数字来自本机离线 demo（纯 CPU、单进程）。
+- 简历 / 汇报口径里的「平均每条 Query 新增 13.4 个相关候选、独有候选相关率 79.8%」来自**原系统内部环境**
+  （真实简历库 + 公司检索工具 + 真实 LLM），不在本仓库复现；本仓库复现的是机制（八阶段循环、
+  `SearchTool` 协议、确定性离线评测），并公开自己合成基准上的真实数字——两者口径不同，数值不可直接对比。
 
 <details>
 <summary>English</summary>
@@ -310,6 +346,7 @@ Offline runnable without any API key:
 pip install -e ".[dev]"
 search-agent demo     # offline showcase: scripted LLM + synthetic candidates
 search-agent eval     # single-pass baseline vs the full loop (effect vs cost)
+search-agent eval --generated 120 --seed 7   # oracle-labeled benchmark (no self-grading)
 ```
 
 See `docs/ARCHITECTURE.md` for the state machine, budget and degradation

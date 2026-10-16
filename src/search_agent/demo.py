@@ -24,7 +24,7 @@ DEMO_QUERIES = [
     "数据工程师，熟悉 Spark 和 Flink，3 年以上经验",
 ]
 
-_ABILITY_LIBRARY: list[dict[str, Any]] = [
+ABILITY_LIBRARY: list[dict[str, Any]] = [
     {
         "keys": ["高并发", "大流量", "性能"],
         "name": "高并发系统设计",
@@ -104,7 +104,7 @@ def _loose_years_condition() -> dict[str, Any]:
 
 
 def _ability_keywords(name: str) -> list[str]:
-    for entry in _ABILITY_LIBRARY:
+    for entry in ABILITY_LIBRARY:
         if entry["name"] == name:
             return [str(hint).lower() for hint in entry["hints"]]
     lowered = name.lower()
@@ -158,7 +158,7 @@ class ScriptedLlmClient:
         lowered = query.lower()
         abilities: list[dict[str, Any]] = []
         soft_signals: list[dict[str, Any]] = []
-        for entry in _ABILITY_LIBRARY:
+        for entry in ABILITY_LIBRARY:
             if any(str(key).lower() in lowered for key in entry["keys"]):
                 abilities.append(
                     {
@@ -384,6 +384,7 @@ def run_demo(
 
 
 __all__ = [
+    "ABILITY_LIBRARY",
     "DEMO_DATA",
     "DEMO_QUERIES",
     "ScriptedLlmClient",

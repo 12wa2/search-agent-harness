@@ -7,6 +7,15 @@
 
 ### Added
 
+- **Oracle 基准与去自证评测**（`corpus.py` / `oracle.py`）：种子化合成语料（每条简历按能力逐个掷骰，
+  决定「技能关键词可见」还是「只用项目语言表达」），真值来自生成器而非 Agent 自评；
+  `search-agent eval --generated N --seed S` / `--oracle DIR`，`search-agent corpus --out DIR` 落盘语料；
+  报告给出交付列表召回 / 精确率、关键词可见 vs 仅语义可见召回、以及「仅全循环发现」增量指标（新增 15 个测试）。
+- **宽召回池语义**：`SearchToolRequest.recall_pool_size` 落地到三个后端——每路径召回
+  `max(top_k*3, 30)`（`SEARCH_AGENT_RECALL_POOL_SIZE` 可调），judge 全量池、最终只交付 top_k；
+  单路径构造器（计划降级 / single_pass 路由 / 评测基线）补上人才画像的关键词与软信号，
+  避免大语料上退化成按 docId 抽签。
+- **修复**：无硬约束查询的单趟基线路径此前会构建失败（`loose_fallback`），评测里会直接抛错。
 - **SQLite/FTS5 后端**（`tools/sqlite_fts.py`，仅标准库）：`WhereNode` 树编译为 SQL（归一化表 + FTS5 虚表），
   过滤后由共享语义层复检与打分；与内存后端在同一语料上结果逐位一致（新增 27 个测试）。
 - **共享语义层**（`tools/text.py`）：分词 / 条件匹配 / 软打分 / 结果组装集中一处，所有后端复用同一公式（行为不变重构）。

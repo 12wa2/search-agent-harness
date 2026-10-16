@@ -18,6 +18,7 @@ Usage::
 
     search-agent eval                  # printable report
     search-agent eval --markdown       # markdown tables (for README)
+    search-agent eval --generated 120  # oracle-labeled corpus, no self-grading
     python -m search_agent.eval --markdown
 """
 
@@ -29,15 +30,23 @@ import time
 from dataclasses import dataclass
 from typing import Any, Iterable, TextIO
 
-from search_agent.config import budget_from_env
+from search_agent.config import budget_from_env, recall_pool_size_from_env
 from search_agent.contract.tool import SearchTool
 from search_agent.core.budget import BudgetState
 from search_agent.core.metrics import collect_metrics
+from search_agent.corpus import QuerySpec, SyntheticCorpus, generate_corpus, load_corpus
 from search_agent.demo import DEMO_DATA, DEMO_QUERIES, ScriptedLlmClient
 from search_agent.harness import single_path_from_hard_constraints
 from search_agent.llm.client import LlmClient
 from search_agent.models.api import SearchRequest
 from search_agent.models.artifacts import Budget
+from search_agent.oracle import (
+    Novelty,
+    OracleScore,
+    novelty,
+    print_oracle_report,
+    score_against_oracle,
+)
 from search_agent.service import SearchAgentService
 from search_agent.stages.base import Deps
 from search_agent.stages.execute import run_execute
@@ -66,6 +75,10 @@ class PipelineResult:
     elapsed_ms: float
     final_count: int
     degraded_reason: str | None = None
+    #: Doc ids actually delivered; used for oracle scoring (empty if unavailable).
+    doc_ids: tuple[str, ...] = ()
+    #: Doc ids any path surfaced this session; drives discovery-level novelty.
+    surfaced_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -90,11 +103,27 @@ def _initial_state(query: str, top_k: int, budget: Budget) -> dict[str, Any]:
         "permission": None,
         "routing": 1,
         "top_k": top_k,
-        "recall_pool_size": None,
+        "recall_pool_size": recall_pool_size_from_env(top_k),
         "details": False,
         "conversation_history": [],
         "budget": budget,
     }
+
+
+def _surfaced_ids(state: dict[str, Any]) -> tuple[str, ...]:
+    """Doc ids any path result returned so far (deduped, first-seen order)."""
+    seen: set[str] = set()
+    ids: list[str] = []
+    for pr in state.get("path_results") or []:
+        for candidate in pr.tool_result.items:
+            if candidate.doc_id not in seen:
+                seen.add(candidate.doc_id)
+                ids.append(candidate.doc_id)
+    for candidate in state.get("final_items") or []:
+        if candidate.doc_id not in seen:
+            seen.add(candidate.doc_id)
+            ids.append(candidate.doc_id)
+    return tuple(ids)
 
 
 def run_single_pass(
@@ -112,9 +141,9 @@ def run_single_pass(
     started = time.perf_counter()
 
     state.update(run_understand(state, deps))
-    path = single_path_from_hard_constraints(state)
-    if path is None:
-        raise ValueError("single-pass baseline needs at least one hard constraint")
+    path = single_path_from_hard_constraints(state, loose_fallback=True)
+    if path is None:  # pragma: no cover - loose_fallback always yields a path
+        raise ValueError("single-pass baseline could not build a path")
     state["paths"] = [path]
     state["tried_signatures"] = {path.signature}
     state["phase"] = "execute"
@@ -133,6 +162,8 @@ def run_single_pass(
         elapsed_ms=elapsed_ms,
         final_count=state.get("final_total", 0),
         degraded_reason=metrics.degraded_reason,
+        doc_ids=tuple(tc.doc_id for tc in state.get("final_items") or []),
+        surfaced_ids=_surfaced_ids(state),
     )
 
 
@@ -159,6 +190,8 @@ def run_agent(
         elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
         final_count=resp.total,
         degraded_reason=meta.get("degradedReason"),
+        doc_ids=tuple(item.docId for item in resp.items),
+        surfaced_ids=tuple(recall.get("surfacedDocIds") or ()),
     )
 
 
@@ -275,6 +308,31 @@ def _print_markdown(rows: list[tuple[str, PipelineResult, PipelineResult]], stre
     print("\n重新生成：`search-agent eval --markdown`", file=stream)
 
 
+def _run_oracle_eval(
+    corpus: SyntheticCorpus,
+    *,
+    top_k: int,
+    markdown: bool,
+    stream: TextIO,
+) -> int:
+    """Corpus-driven run: relevance comes from the generator, not the judge."""
+    tool = InMemorySearchTool(corpus.records())
+    rows: list[tuple[QuerySpec, OracleScore, OracleScore, Novelty]] = []
+    for spec in corpus.queries:
+        baseline = run_single_pass(ScriptedLlmClient(), tool, spec.text, top_k=top_k)
+        agent = run_agent(ScriptedLlmClient(), tool, spec.text, top_k=top_k)
+        rows.append(
+            (
+                spec,
+                score_against_oracle(corpus, spec, baseline.doc_ids),
+                score_against_oracle(corpus, spec, agent.doc_ids),
+                novelty(corpus, spec, baseline.surfaced_ids, agent.surfaced_ids),
+            )
+        )
+    print_oracle_report(corpus, rows, markdown=markdown, stream=stream)
+    return 0
+
+
 def run_eval(
     queries: Iterable[str] | None = None,
     *,
@@ -282,9 +340,18 @@ def run_eval(
     top_k: int = 10,
     markdown: bool = False,
     stream: TextIO | None = None,
+    corpus: SyntheticCorpus | None = None,
 ) -> int:
-    """Run both pipelines over ``queries`` and print the comparison report."""
+    """Run both pipelines over ``queries`` and print the comparison report.
+
+    Pass ``corpus`` (see :mod:`search_agent.corpus`) to run the generated benchmark:
+    queries come from the corpus and the report adds oracle metrics -- ground truth
+    from the generator instead of the agent grading itself.
+    """
     out = stream or sys.stdout
+    if corpus is not None:
+        return _run_oracle_eval(corpus, top_k=top_k, markdown=markdown, stream=out)
+
     tool = InMemorySearchTool(data_path or DEMO_DATA)
     rows: list[tuple[str, PipelineResult, PipelineResult]] = []
     for query in list(queries or DEMO_QUERIES):
@@ -304,13 +371,29 @@ def main(argv: list[str] | None = None, *, stream: TextIO | None = None) -> int:
     parser.add_argument("--data", default=None, help="candidate JSONL path")
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--markdown", action="store_true", help="markdown tables (for README)")
+    parser.add_argument(
+        "--generated",
+        type=int,
+        default=0,
+        help="generate N synthetic candidates and run the oracle benchmark",
+    )
+    parser.add_argument("--seed", type=int, default=7, help="seed for --generated")
+    parser.add_argument(
+        "--oracle", default=None, help="corpus directory written by `search-agent corpus`"
+    )
     args = parser.parse_args(argv)
+    corpus = None
+    if args.generated:
+        corpus = generate_corpus(size=args.generated, seed=args.seed)
+    elif args.oracle:
+        corpus = load_corpus(args.oracle)
     return run_eval(
         args.query or None,
         data_path=args.data,
         top_k=args.top_k,
         markdown=args.markdown,
         stream=stream,
+        corpus=corpus,
     )
 
 

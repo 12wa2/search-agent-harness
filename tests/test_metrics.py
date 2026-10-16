@@ -268,6 +268,7 @@ def test_metrics_to_dict_structure():
     assert "reflection" in d
     assert "meta" in d
     assert d["recall"]["rate"] == 0.5
+    assert d["recall"]["surfacedDocIds"] == []
 
 
 # ── harness integration: metrics in state ──

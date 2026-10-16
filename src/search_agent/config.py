@@ -36,4 +36,15 @@ def budget_from_env(top_k: int) -> Budget:
     )
 
 
-__all__ = ["budget_from_env"]
+def recall_pool_size_from_env(top_k: int) -> int:
+    """Per-path recall pool: recall wide for judging, then deliver ``top_k``.
+
+    Mirrors the original funnel (``max(top_k, scan window)``): each path returns
+    a pool of candidates, all of them get judged, and finalize only delivers
+    ``top_k``. Set ``SEARCH_AGENT_RECALL_POOL_SIZE`` to override; ``0`` restores
+    the narrow (pool == top_k) behaviour.
+    """
+    return _env_int("SEARCH_AGENT_RECALL_POOL_SIZE", max(top_k * 3, 30))
+
+
+__all__ = ["budget_from_env", "recall_pool_size_from_env"]

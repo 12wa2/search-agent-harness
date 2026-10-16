@@ -28,6 +28,8 @@ class AgentMetrics:
     truly_matched: int = 0
     target_qualified: int = 0
     quality_distribution: dict[str, int] = field(default_factory=dict)
+    #: Doc ids any path returned this session (deduped); feeds discovery metrics.
+    surfaced_doc_ids: list[str] = field(default_factory=list)
 
     # 2. Search rounds
     iterations: int = 0
@@ -58,6 +60,7 @@ class AgentMetrics:
                 "trulyMatched": self.truly_matched,
                 "target": self.target_qualified,
                 "qualityDistribution": self.quality_distribution,
+                "surfacedDocIds": self.surfaced_doc_ids,
             },
             "rounds": {
                 "iterations": self.iterations,
@@ -152,12 +155,25 @@ def collect_metrics(state: dict[str, Any], bs: Any) -> AgentMetrics:
     for i in range(1, len(qualified_per_round)):
         reflection_gain.append(qualified_per_round[i] - qualified_per_round[i - 1])
 
+    surfaced_doc_ids: list[str] = []
+    seen_surfaced: set[str] = set()
+    for pr in path_results:
+        for candidate in pr.tool_result.items:
+            if candidate.doc_id not in seen_surfaced:
+                seen_surfaced.add(candidate.doc_id)
+                surfaced_doc_ids.append(candidate.doc_id)
+    for candidate in state.get("final_items") or []:
+        if candidate.doc_id not in seen_surfaced:
+            seen_surfaced.add(candidate.doc_id)
+            surfaced_doc_ids.append(candidate.doc_id)
+
     return AgentMetrics(
         recall_rate=recall_rate,
         judged_count=judged_count,
         truly_matched=truly_matched,
         target_qualified=target,
         quality_distribution=quality_dist,
+        surfaced_doc_ids=surfaced_doc_ids,
         iterations=iterations,
         new_qualified_per_round=qualified_per_round,
         matched_ability_coverage=matched_cov,

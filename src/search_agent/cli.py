@@ -6,6 +6,8 @@ Examples::
     search-agent search "高并发 后端" --offline
     search-agent search "高并发 后端"        # needs SEARCH_AGENT_API_KEY
     search-agent eval --markdown            # single-pass baseline comparison
+    search-agent eval --generated 120       # oracle-labeled benchmark corpus
+    search-agent corpus --out data/bench    # write a seeded corpus + oracle labels
     search-agent serve --offline            # optional HTTP service (.[api])
     search-agent serve --backend es         # same service on a real Elasticsearch
 """
@@ -20,6 +22,7 @@ import unicodedata
 from typing import Any, Callable, TextIO
 
 from search_agent import __version__
+from search_agent.corpus import generate_corpus, load_corpus, write_corpus
 from search_agent.demo import DEMO_QUERIES, ScriptedLlmClient, run_demo
 from search_agent.eval import run_eval
 from search_agent.llm.client import OpenAILlmClient
@@ -210,11 +213,22 @@ def _build_parser() -> argparse.ArgumentParser:
     eval_cmd.add_argument("--data", default=None, help="candidate JSONL path")
     eval_cmd.add_argument("--top-k", type=int, default=10)
     eval_cmd.add_argument("--markdown", action="store_true", help="markdown tables")
+    eval_cmd.add_argument(
+        "--generated", type=int, default=0, help="generate N candidates for an oracle-labeled run"
+    )
+    eval_cmd.add_argument("--seed", type=int, default=7, help="seed for --generated")
+    eval_cmd.add_argument(
+        "--oracle", default=None, help="corpus directory written by `search-agent corpus`"
+    )
     serve_cmd = sub.add_parser("serve", help='optional HTTP service (pip install ".[api]")')
     serve_cmd.add_argument("--host", default="127.0.0.1")
     serve_cmd.add_argument("--port", type=int, default=8000)
     serve_cmd.add_argument("--offline", action="store_true", help="force the scripted demo LLM")
     _add_backend_flags(serve_cmd)
+    corpus_cmd = sub.add_parser("corpus", help="write a seeded synthetic corpus with oracle labels")
+    corpus_cmd.add_argument("--out", required=True, help="output directory")
+    corpus_cmd.add_argument("--size", type=int, default=120)
+    corpus_cmd.add_argument("--seed", type=int, default=7)
     return parser
 
 
@@ -267,12 +281,28 @@ def _run_search_command(args: argparse.Namespace) -> int:
 
 
 def _run_eval_command(args: argparse.Namespace) -> int:
+    corpus = None
+    if args.generated:
+        corpus = generate_corpus(size=args.generated, seed=args.seed)
+    elif args.oracle:
+        corpus = load_corpus(args.oracle)
     return run_eval(
         args.query or None,
         data_path=args.data,
         top_k=args.top_k,
         markdown=args.markdown,
+        corpus=corpus,
     )
+
+
+def _run_corpus_command(args: argparse.Namespace) -> int:
+    corpus = generate_corpus(size=args.size, seed=args.seed)
+    candidates_path, oracle_path = write_corpus(corpus, args.out)
+    print(f"已生成 {corpus.size} 条合成候选人（seed={args.seed}）")
+    print(f"  候选人: {candidates_path}")
+    print(f"  oracle: {oracle_path}")
+    print("  提示：search-agent eval --oracle <dir> 可直接用这份语料跑 oracle 评测")
+    return 0
 
 
 def _run_serve_command(args: argparse.Namespace) -> int:
@@ -316,6 +346,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_search_command(args)
     if args.command == "eval":
         return _run_eval_command(args)
+    if args.command == "corpus":
+        return _run_corpus_command(args)
     if args.command == "serve":
         return _run_serve_command(args)
     parser.print_help()

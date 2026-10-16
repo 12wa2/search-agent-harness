@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from search_agent.config import budget_from_env
+from search_agent.config import budget_from_env, recall_pool_size_from_env
 from search_agent.contract.tool import SearchTool, ToolCandidate
 from search_agent.conversation_memory import (
     ConversationStore,
@@ -75,7 +75,7 @@ class SearchAgentService:
             "permission": perm_dict,
             "routing": req.companyId,
             "top_k": req.topK,
-            "recall_pool_size": req.recallPoolSize,
+            "recall_pool_size": req.recallPoolSize or recall_pool_size_from_env(req.topK),
             "details": req.details,
             "budget": budget,
             "conversation_history": conversation_history,

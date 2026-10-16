@@ -27,6 +27,8 @@ class SearchToolRequest(BaseModel):
     hr_id: int | None = None
     permission: dict[str, Any] | None = None
     top_k: int
+    #: Candidates this path returns for judging (recall pool). The loop recalls
+    #: wide and delivers narrow; None (or 0) falls back to ``top_k``.
     recall_pool_size: int | None = None
     routing: int
     exclude_doc_ids: list[str] = Field(default_factory=list)

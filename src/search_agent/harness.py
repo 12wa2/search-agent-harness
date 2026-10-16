@@ -29,6 +29,8 @@ from search_agent.core.trace import (
 from search_agent.models.artifacts import SearchPath
 from search_agent.models.ir import (
     CandidateSearchIR,
+    SemanticConditionIR,
+    StructuredConditionIR,
     WhereNode,
 )
 from search_agent.stages.base import Deps
@@ -272,24 +274,71 @@ class Harness:
         return state
 
 
-def single_path_from_hard_constraints(state: dict[str, Any]) -> SearchPath | None:
+def _profile_semantic(state: dict[str, Any]) -> list[SemanticConditionIR]:
+    """Semantic conditions for the one-shot path: profile keywords + signals.
+
+    A degraded / single-pass run still has the understanding stage's talent
+    profile. Anchoring the path on ``where`` alone would rank every surviving
+    candidate by doc id (score 0), which is empirically a lottery on any corpus
+    larger than the page; the profile's keywords and soft signals are what makes
+    the single path an honest one-shot search.
+    """
+    talent = state.get("talent_profile")
+    if talent is None:
+        return []
+    conditions: list[SemanticConditionIR] = []
+    seen: set[str] = set()
+    for keyword in list(getattr(talent, "must_keywords", []) or [])[:3]:
+        text = str(keyword).strip()
+        if text and text not in seen:
+            seen.add(text)
+            conditions.append(
+                SemanticConditionIR(text=text, fields=["work_vector", "project_vector"], weight=1.2)
+            )
+    for signal in getattr(talent, "soft_signals", []) or []:
+        if signal.text and signal.text not in seen:
+            seen.add(signal.text)
+            conditions.append(signal)
+    return conditions[:4]
+
+
+def single_path_from_hard_constraints(
+    state: dict[str, Any], *, loose_fallback: bool = False
+) -> SearchPath | None:
     """Build the single-path fallback from a job profile's hard constraints.
 
     This is the harness's own one-shot path constructor: used when plan is
     degraded or difficulty routes to ``single_pass``, and reused by the offline
-    evaluation (``search_agent.eval``) as its single-pass baseline path.
-    Returns ``None`` when there is nothing to anchor the ``where`` clause.
+    evaluation (``search_agent.eval``) as its single-pass baseline path. The
+    intent carries the talent profile's keywords / soft signals so the single
+    path ranks by relevance instead of falling back to doc-id order.
+
+    Returns ``None`` when there is nothing to anchor the ``where`` clause, unless
+    ``loose_fallback`` is set: the evaluation needs a comparable baseline for every
+    query, including ones like "找后端工程师，最好来自大厂" that carry no hard
+    constraint at all -- there the path anchors on ``work_years >= 0``.
     """
     job = state.get("job_profile")
-    if not job or not job.hard_constraints:
-        return None
-    leaves = [WhereNode(type="leaf", condition=c) for c in job.hard_constraints]
+    constraints = list(job.hard_constraints) if job else []
+    if not constraints:
+        if not loose_fallback:
+            return None
+        constraints = [
+            StructuredConditionIR(
+                field="work_years", operator="gte", values=[0], required=True, weight=1.0
+            )
+        ]
+    leaves = [WhereNode(type="leaf", condition=c) for c in constraints]
     where = leaves[0] if len(leaves) == 1 else WhereNode(type="and", children=leaves)
-    intent = CandidateSearchIR(where=where, semantic=[])
+    intent = CandidateSearchIR(where=where, semantic=_profile_semantic(state))
     sig = intent_signature(intent)
     return SearchPath(
         id="p1",
-        rationale="fallback single path (plan degraded)",
+        rationale=(
+            "fallback single path (plan degraded)"
+            if job and job.hard_constraints
+            else "loose single path (no hard constraint in query)"
+        ),
         intent=intent,
         signature=sig,
         status="pending",
