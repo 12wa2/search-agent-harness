@@ -137,10 +137,48 @@ search-agent eval --generated 120 --seed 7 --markdown   # 种子化合成语料 
 > 才知道下一步要修哪里：真实 embedding（`dense_vector` + RRF 通道已就位，
 > 换掉 `tools/embedding.py` 的 `embed_text` 即可），而不是继续堆路径。
 
+> **实验设计（为什么基线是单趟 Agent，而不是传统关键词检索）**：基线是同一条 Agent 链路去掉
+> reflect + revise 的单趟版本（understand → plan → execute → judge），唯一变量就是反思闭环，
+> 收益因此可以归因到具体模块；若直接对比「Agent vs 传统检索」，query 理解 / 多路径 / 语义检索 /
+> 反思的贡献会混在一起，效果差异说不清来自哪里。指标定义与「仅全循环发现」一致：
+> `A_only = A − B`（A = 全循环、B = 单趟基线），新增相关候选 = `|A_only ∩ R|`，
+> 独有候选相关率 = `|A_only ∩ R| / |A_only|`（R = 标注相关集）。
+
 > 数字来自本机离线运行，毫秒级会有抖动；重新生成：`search-agent eval --markdown`、
 > `search-agent eval --generated 120 --seed 7 --markdown`（`--oracle DIR` 可读入
 > `search-agent corpus --out DIR` 落盘的固定语料）。目的不是刷分，而是展示
 > **效果与成本的定量权衡**与**可回归、去自证的评测入口**。
+
+## 策略记忆：跨请求复用「哪一类策略有效」
+
+循环解决「这一次怎么搜」，策略记忆回答「这类岗位下次先试哪一招」。每次运行结束后，每个合格候选人
+按来源路径归因（每条判断计一次，落在它第一个来源路径的 `origin` 上：`plan` / `loosen` / `tighten` /
+`add_path` / `default` / `fallback`，收敛再搜记 `converged`），按查询族累计：
+
+```bash
+search-agent demo --repeat 3 --top-k 5     # 同一查询跑 3 次，打印策略记忆快照
+```
+
+```text
+  策略记忆（查询族 → 策略 → runs / qualified / avg）:
+    a847d082898f  plan       runs=3 qualified=15 avg=5.0
+```
+
+下一次同类岗位运行时，plan / reflect 的 prompt 多一个字段（没有观测时整键省略）：
+
+```json
+"strategyPriors": [{"strategy": "plan", "runs": 2, "avg_qualified": 5.0}]
+```
+
+- **族键 = must 能力集哈希**（能力名排序后 sha1 取前 12 位），不是查询原文：近似 JD 共享先验，
+  且没有任何查询文本 / 候选人数据离开进程。
+- **存储可降级**：配置 `SEARCH_AGENT_REDIS_URL` / `REDIS_URL` 时用 Redis 字段计数器（30 天 TTL，
+  跨进程 / 跨重启共享）；否则进程内。任何读写异常只记日志，绝不影响本次搜索。
+- **只给先验、不做决策**：prompt 约定样本不足（`runs < 2`）时忽略该行；取舍仍由 LLM 在当次上下文里
+  完成，工程层只保证「有证据可参考」，不引入第二个决策者。
+
+离线回归见 `tests/test_experience.py`（24 个用例：族键稳定性、归因口径、Redis 降级、注入链路）。
+脚本化 LLM 是规则替身，离线 demo 里会忽略 `strategyPriors`——验证的是归因与注入链路，不是学习效果。
 
 ## HTTP 服务（可选）
 
@@ -213,7 +251,7 @@ search-agent-harness/
 │   ├── graph.py             # 可选：LangGraphRunner（同一批阶段 → StateGraph，行为等价）
 │   ├── server.py            # 可选：FastAPI HTTP 服务（SSE 阶段事件流）
 │   ├── stages/              # 8 个阶段（每个都是纯函数，可独立单测）
-│   ├── core/                # 签名 / 合并 / 预算 / 降级 / 难度路由 / 指标 / trace
+│   ├── core/                # 签名 / 合并 / 预算 / 降级 / 难度路由 / 指标 / trace / 策略记忆（experience.py）
 │   ├── contract/tool.py     # SearchTool 协议 —— 与检索后端的唯一边界
 │   ├── tools/memory.py      # 参考实现：内存检索后端（离线演示用）
 │   ├── tools/sqlite_fts.py  # 零依赖 SQLite/FTS5 后端（SQL 编译 where 树）
@@ -227,7 +265,7 @@ search-agent-harness/
 │   ├── oracle.py            # 去自证指标：交付列表打分 / 仅全循环发现增量
 │   ├── tools/embedding.py   # 确定性哈希向量（换真实模型只改这一个函数）
 │   └── cli.py               # 命令行入口：demo / corpus / search / eval / serve
-├── tests/                   # 193 离线 + 22 ES 集成
+├── tests/                   # 218 离线 + 22 ES 集成
 ├── examples/                # custom_backend.py（最小接入）· es_end_to_end.py（真实 ES 全链路）· es_hybrid_recall.py（混合召回）
 ├── docs/                    # ARCHITECTURE.md · DECISIONS.md · demo.tape（演示录制脚本）
 ├── Dockerfile               # 多阶段镜像：wheel 构建 → 非 root 运行 + HEALTHCHECK
@@ -310,14 +348,14 @@ pytest -q -m es
 | `SEARCH_AGENT_LLM_RETRIES` | `2` | 瞬时错误重试次数（超时 / 429 / 5xx，指数退避 + 抖动） |
 | `SEARCH_AGENT_LLM_JSON_REPAIRS` | `1` | 非法 JSON 的修复重试轮数（回传模型输出要求重写） |
 | `SEARCH_AGENT_LLM_BACKOFF_SEC` | `0.5` | 退避基数（秒，逐次翻倍） |
-| `SEARCH_AGENT_REDIS_URL` / `REDIS_URL` | — | 可选：会话记忆 / 结果分页 |
+| `SEARCH_AGENT_REDIS_URL` / `REDIS_URL` | — | 可选：会话记忆 / 结果分页 / 策略记忆（跨进程共享） |
 | `SEARCH_AGENT_ES_URL` | `http://127.0.0.1:9200` | Elasticsearch 后端地址（`tools/elasticsearch.py`） |
 
 ## Roadmap
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 193 个离线单元测试（+22 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest）
+- [x] 218 个离线单元测试（+22 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）
@@ -327,6 +365,7 @@ pytest -q -m es
 - [x] Docker 全栈：多阶段镜像 + compose（`api` 等待 ES 健康后启动，自动灌入演示语料）。
 - [x] Oracle 基准：种子化合成语料 + 生成器真值，去自证评测（`search-agent eval --generated / --oracle`）。
 - [x] 宽召回池语义：每路径召回 `max(top_k*3, 30)`（`SEARCH_AGENT_RECALL_POOL_SIZE`），judge 全量池、交付 top_k。
+- [x] 策略记忆：按查询族累计「哪一类策略有效」，并作为先验注入 plan / reflect（`core/experience.py`，Redis 可选）。
 - [ ] 真实 embedding 接入：跨越「项目语言 ↔ 能力词」表述差，修掉 Oracle 基准量出的天花板。
 - [ ] 演示 GIF（`docs/demo.tape` 已就绪，待录制）与完整英文 README（现为 README 内折叠版）
 
@@ -336,8 +375,14 @@ pytest -q -m es
 - 仓库内置内存 / SQLite / Elasticsearch 三个检索后端（前两个零依赖，ES 需 `docker compose`）；向量库等其它生产组件通过 `SearchTool` 协议对接，不在本仓库内。
 - 未在生产环境部署过；上面的耗时数字来自本机离线 demo（纯 CPU、单进程）。
 - 简历 / 汇报口径里的「平均每条 Query 新增 13.4 个相关候选、独有候选相关率 79.8%」来自**原系统内部环境**
-  （真实简历库 + 公司检索工具 + 真实 LLM），不在本仓库复现；本仓库复现的是机制（八阶段循环、
-  `SearchTool` 协议、确定性离线评测），并公开自己合成基准上的真实数字——两者口径不同，数值不可直接对比。
+  （真实简历库 + 公司检索工具 + 真实 LLM），不在本仓库复现。该对照是一次**消融实验**：基线 = 同一套
+  understand → plan → execute → judge 的单趟链路，唯一变量是关掉 reflect + revise，因此新增收益可归因到
+  反思闭环；指标口径为 `A_only = A − B`、新增相关候选 = `|A_only ∩ R|` 的均值、独有候选相关率 =
+  `|A_only ∩ R| / |A_only|`（R = 人工标注相关集）。
+- 本仓库用**同一套消融设计、同一对指标定义**离线复现（`search-agent eval --generated 120 --seed 7` 报告里的
+  「仅全循环发现」就是这两个指标），但语料是刻意构造的对抗性合成语料、LLM 是规则替身，所以复现出的数字
+  低得多（9.0 人 / 7.4%）——这一步的目的是**量出当前实现的天花板**并把短板写进 Roadmap，
+  两边口径不同，数值不可直接对比。
 
 <details>
 <summary>English</summary>
@@ -350,6 +395,7 @@ Offline runnable without any API key:
 ```bash
 pip install -e ".[dev]"
 search-agent demo     # offline showcase: scripted LLM + synthetic candidates
+search-agent demo --repeat 3   # strategy memory: same query x3, then priors
 search-agent eval     # single-pass baseline vs the full loop (effect vs cost)
 search-agent eval --generated 120 --seed 7   # oracle-labeled benchmark (no self-grading)
 ```

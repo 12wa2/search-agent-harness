@@ -7,6 +7,13 @@
 
 ### Added
 
+- **策略记忆**（`core/experience.py`）：每次运行后把合格候选人按来源路径归因
+  （`SearchPath.origin`：`plan` / `default` / `fallback` / `loosen` / `tighten` / `add_path`，收敛再搜记 `converged`），
+  按“must 能力集哈希”聚合的查询族累计 `runs / qualified / tokens`；
+  plan / reflect 的 prompt 新增可选 `strategyPriors`（无观测时整键省略）。
+  存储同 `conversation_memory` 一样可降级：配 `SEARCH_AGENT_REDIS_URL` / `REDIS_URL` 走 Redis 字段计数器（30 天 TTL），
+  否则进程内；读写异常只记日志，不影响本次搜索。CLI 新增 `search-agent demo --repeat N`（跑 N 次同一查询并打印策略记忆快照）；
+  新增 24 个用例（`tests/test_experience.py`）与一个 CLI smoke。
 - **Token / 成本记账**（`llm/client.py`、`core/budget.py`）：`LlmUsage` 精确读取 provider 的
   `prompt_tokens` / `completion_tokens`（网关不返回 usage 时退回字符估算并标记 `tokensEstimated`）；
   `MeteredLlmClient` 把每次调用记进预算，`Budget.max_tokens`（`SEARCH_AGENT_TOKEN_BUDGET`，0 = 只记账）

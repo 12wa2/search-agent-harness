@@ -3,6 +3,7 @@
 Examples::
 
     search-agent demo                       # zero-config offline showcase
+    search-agent demo --repeat 3            # same query x3, then strategy-memory priors
     search-agent search "高并发 后端" --offline
     search-agent search "高并发 后端"        # needs SEARCH_AGENT_API_KEY
     search-agent eval --markdown            # single-pass baseline comparison
@@ -22,8 +23,9 @@ import unicodedata
 from typing import Any, Callable, TextIO
 
 from search_agent import __version__
+from search_agent.core.experience import ExperienceStore
 from search_agent.corpus import generate_corpus, load_corpus, write_corpus
-from search_agent.demo import DEMO_QUERIES, ScriptedLlmClient, run_demo
+from search_agent.demo import DEMO_DATA, DEMO_QUERIES, ScriptedLlmClient, run_demo
 from search_agent.eval import run_eval
 from search_agent.llm.client import OpenAILlmClient
 from search_agent.models.api import SearchRequest, SearchResponse
@@ -34,6 +36,7 @@ from search_agent.tools.factory import (
     ES_INDEX_ENV,
     build_search_tool,
 )
+from search_agent.tools.memory import InMemorySearchTool
 
 
 def _display_width(text: str) -> int:
@@ -198,6 +201,12 @@ def _build_parser() -> argparse.ArgumentParser:
     demo.add_argument("--data", default=None, help="candidate JSONL path")
     demo.add_argument("--top-k", type=int, default=10)
     demo.add_argument("--json", action="store_true", help="print raw JSON response")
+    demo.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help="run each query N times and print the strategy-memory snapshot",
+    )
 
     search = sub.add_parser("search", help="run a real search (needs an LLM API key)")
     search.add_argument("query")
@@ -236,6 +245,9 @@ def _run_demo_command(args: argparse.Namespace) -> int:
     queries = args.query or DEMO_QUERIES
     for index, query in enumerate(queries, 1):
         print(f"\n{'=' * 72}\n查询 {index}: {query}\n{'=' * 72}")
+        if args.repeat > 1:
+            _run_demo_repeat(query, args)
+            continue
         started = time.perf_counter()
         resp = run_demo(
             query,
@@ -251,6 +263,35 @@ def _run_demo_command(args: argparse.Namespace) -> int:
             print_metrics(resp)
             print(f"  用时 {elapsed * 1000:.0f} ms")
     return 0
+
+
+def _run_demo_repeat(query: str, args: argparse.Namespace) -> None:
+    """Run one query N times on a shared strategy memory, then show the priors."""
+    store = ExperienceStore()
+    service = SearchAgentService(
+        tool=InMemorySearchTool(args.data or DEMO_DATA),
+        llm_client=ScriptedLlmClient(),
+        experience=store,
+    )
+    for run in range(1, args.repeat + 1):
+        started = time.perf_counter()
+        resp = service.search(SearchRequest(query=query, topK=args.top_k, details=not args.json))
+        elapsed = (time.perf_counter() - started) * 1000
+        print(f"  第 {run}/{args.repeat} 次: 交付 {resp.total} 人 · {elapsed:.0f} ms")
+
+    snapshot = store.snapshot()
+    if not snapshot:
+        print("  策略记忆: 本次没有合格候选可归因")
+        return
+    print("\n  策略记忆（查询族 → 策略 → runs / qualified / avg）:")
+    for family, bucket in snapshot.items():
+        for strategy, stat in sorted(bucket.items(), key=lambda kv: -kv[1]["qualified"]):
+            avg = stat["qualified"] / stat["runs"] if stat["runs"] else 0.0
+            print(
+                f"    {family}  {_pad(strategy, 10)} runs={stat['runs']} "
+                f"qualified={stat['qualified']} avg={avg:.1f}"
+            )
+    print("  同类岗位下一次运行时，plan / reflect 的 prompt 会带上这些先验。")
 
 
 def _run_search_command(args: argparse.Namespace) -> int:

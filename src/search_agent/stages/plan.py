@@ -12,6 +12,7 @@ import json
 import logging
 from typing import Any
 
+from search_agent.core.experience import query_family
 from search_agent.core.signature import intent_signature
 from search_agent.llm.prompts import (
     build_plan_payload,
@@ -44,6 +45,7 @@ def _default_path(state: dict[str, Any], tried: set[str]) -> SearchPath | None:
         id="p1",
         rationale="default path (plan produced no valid paths)",
         intent=intent,
+        origin="default",
         signature=sig,
         status="pending",
     )
@@ -52,12 +54,14 @@ def _default_path(state: dict[str, Any], tried: set[str]) -> SearchPath | None:
 def run_plan(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     system, schema = plan_prompt()
     tried = set(state.get("tried_signatures", set()))
+    priors = deps.experience.hints(query_family(state["job_profile"])) if deps.experience else []
     user = json.dumps(
         build_plan_payload(
             state["job_profile"],
             state["talent_profile"],
             sorted(tried),
             deps.budget_state.budget.max_paths_per_iteration,
+            experience=priors,
         ),
         ensure_ascii=False,
     )

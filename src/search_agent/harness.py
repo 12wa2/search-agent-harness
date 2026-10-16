@@ -340,6 +340,7 @@ def single_path_from_hard_constraints(
             else "loose single path (no hard constraint in query)"
         ),
         intent=intent,
+        origin="fallback",
         signature=sig,
         status="pending",
     )

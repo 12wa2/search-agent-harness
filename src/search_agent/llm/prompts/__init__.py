@@ -38,7 +38,7 @@ def understand_prompt() -> tuple[str, dict[str, Any]]:
     return sys, schema
 
 
-_PLAN_RULES = '你的角色：搜索路径规划。根据岗位画像 + 人才画像，产出 1~N 条搜索路径（N 不超过 max_paths），每条是一个不同的召回意图。\n必须严格按以下 JSON 结构输出（不要输出 paths 以外的顶层字段）：\n{\n  "paths": [\n    {\n      "rationale": "这条路径的意图说明",\n      "source_refs": ["s1"],\n      "expected_yield": "high",\n      "intent": {\n        "where": {\n          "type": "and",\n          "children": [\n            {"type": "leaf", "condition": {"field": "skill", "operator": "any", "values": ["Python"], "required": true, "weight": 1.0, "softText": null}},\n            {"type": "leaf", "condition": {"field": "work_years", "operator": "gte", "values": [3], "required": true, "weight": 1.0, "softText": null}}\n          ]\n        },\n        "semantic": [\n          {"text": "分布式系统经验", "fields": ["work_vector", "project_vector"], "weight": 1.5}\n        ],\n        "meta": {}\n      }\n    }\n  ]\n}\n规则：\n- intent.where 是布尔树。type 取值：and（children 数组）/ or（children 数组 + 可选 minimumShouldMatch）/ not（单个 child）/ leaf（单个 condition）。\n- leaf.condition 即结构化硬条件：{field, operator, values, required, weight, softText}。field/operator 取值与 understand 相同；数值字段（work_years/age/graduation_year）用 gte/lte/range + 数字 values，文本字段（skill/company/position 等）用 any/all + 字符串 values。\n- intent.semantic 是语义条件数组：每条为 {text, fields, weight}（必用 text，不要用 query）。fields 必须是 work_vector/project_vector/education_vector/self_evaluation_vector/skills_vector 之一或多个。\n- intent.meta 可为空对象 {}。\n- expected_yield 只能是：high, mid, low, exploratory。\n- source_refs 引用人才画像里的 source id（如 s1），没有就空数组 []。\n- 多条路径必须沿不同维度搜索（Wide Talent Search），不要所有路径都是同一维度的精度调整或语义放宽。\n- 维度参考：岗位名(position含上下游/相似岗位)、公司(company/latest_company)、行业(semantic on work_vector)、产品类型(semantic on project_vector)、项目经验、技能组合、可迁移背景、相似业务场景。\n- 当 max_paths >= 2 时，至少一条路径必须是来源维度路径：用 company/position 硬条件或行业/产品类语义信号召回，source_refs 引用对应 source hypothesis。\n- 其余路径可走精准硬条件或语义放宽，但各路径召回意图必须不同。\n- 单条叶子条件也可直接作为 where（type=leaf）。'
+_PLAN_RULES = '你的角色：搜索路径规划。根据岗位画像 + 人才画像，产出 1~N 条搜索路径（N 不超过 max_paths），每条是一个不同的召回意图。\n必须严格按以下 JSON 结构输出（不要输出 paths 以外的顶层字段）：\n{\n  "paths": [\n    {\n      "rationale": "这条路径的意图说明",\n      "source_refs": ["s1"],\n      "expected_yield": "high",\n      "intent": {\n        "where": {\n          "type": "and",\n          "children": [\n            {"type": "leaf", "condition": {"field": "skill", "operator": "any", "values": ["Python"], "required": true, "weight": 1.0, "softText": null}},\n            {"type": "leaf", "condition": {"field": "work_years", "operator": "gte", "values": [3], "required": true, "weight": 1.0, "softText": null}}\n          ]\n        },\n        "semantic": [\n          {"text": "分布式系统经验", "fields": ["work_vector", "project_vector"], "weight": 1.5}\n        ],\n        "meta": {}\n      }\n    }\n  ]\n}\n规则：\n- intent.where 是布尔树。type 取值：and（children 数组）/ or（children 数组 + 可选 minimumShouldMatch）/ not（单个 child）/ leaf（单个 condition）。\n- leaf.condition 即结构化硬条件：{field, operator, values, required, weight, softText}。field/operator 取值与 understand 相同；数值字段（work_years/age/graduation_year）用 gte/lte/range + 数字 values，文本字段（skill/company/position 等）用 any/all + 字符串 values。\n- intent.semantic 是语义条件数组：每条为 {text, fields, weight}（必用 text，不要用 query）。fields 必须是 work_vector/project_vector/education_vector/self_evaluation_vector/skills_vector 之一或多个。\n- intent.meta 可为空对象 {}。\n- expected_yield 只能是：high, mid, low, exploratory。\n- source_refs 引用人才画像里的 source id（如 s1），没有就空数组 []。\n- 多条路径必须沿不同维度搜索（Wide Talent Search），不要所有路径都是同一维度的精度调整或语义放宽。\n- 维度参考：岗位名(position含上下游/相似岗位)、公司(company/latest_company)、行业(semantic on work_vector)、产品类型(semantic on project_vector)、项目经验、技能组合、可迁移背景、相似业务场景。\n- 当 max_paths >= 2 时，至少一条路径必须是来源维度路径：用 company/position 硬条件或行业/产品类语义信号召回，source_refs 引用对应 source hypothesis。\n- 其余路径可走精准硬条件或语义放宽，但各路径召回意图必须不同。\n- 单条叶子条件也可直接作为 where（type=leaf）。\n- strategyPriors（可选）：历史同类岗位的策略收益先验 [{strategy, runs, avg_qualified}]。runs >= 2 时优先复刻 avg_qualified 高的策略；样本不足则忽略。'
 
 
 def plan_prompt() -> tuple[str, dict[str, Any]]:
@@ -60,7 +60,7 @@ def judge_prompt() -> tuple[str, dict[str, Any]]:
     return sys, schema
 
 
-_REFLECT_RULES = '你的角色：结果分析师。你会看到上一轮的 gaps、当前人才画像（soft_signals / source_hypotheses）、本轮路径结果与 top 判断。从好结果反推共同特征、识别能力缺口、给出 path_actions（加路径/放宽/收紧/丢弃/澄清）与 inferred_soft_signals（反推的语义信号，会沉淀进人才画像 soft_signals），让下一轮搜索更精准。\n必须严格按以下 JSON 结构输出（不要输出额外顶层字段）：\n{\n  "common_traits": ["好候选的共同特征"],\n  "gaps": ["当前结果的能力缺口"],\n  "inferred_soft_signals": [{"text": "金融科技", "fields": ["work_vector", "project_vector"], "weight": 1.5}],\n  "new_source_hints": [{"id": "s2", "kind": "company", "value": "某公司", "rationale": "理由", "transfer_from": []}],\n  "path_actions": [\n    {"kind": "add_path", "target_path_id": null, "rationale": "新增一条路径", "intent": {"where": {"type": "leaf", "condition": {"field": "skill", "operator": "any", "values": ["Go"], "required": true, "weight": 1.0, "softText": null}}, "semantic": [], "meta": {}}},\n    {"kind": "loosen", "target_path_id": "p1", "rationale": "放宽 p1 的硬条件", "intent": {"where": {"type": "leaf", "condition": {"field": "skill", "operator": "any", "values": ["Python", "Go"], "required": true, "weight": 1.0, "softText": null}}, "semantic": [], "meta": {}}},\n    {"kind": "drop", "target_path_id": "p2", "rationale": "丢弃无效路径", "intent": null}\n  ]\n}\n规则：\n- common_traits / gaps 是字符串数组。\n- inferred_soft_signals 是从好结果反推出的语义信号，每项 {text, fields, weight}；fields 只能是 work_vector/project_vector/education_vector/self_evaluation_vector/skills_vector；weight 0.1~5.0；不要与 talent_profile 已有 soft_signals 重复；没有就返回空数组 []。\n- prior_gaps 是上一轮识别的缺口，path_actions 应优先尝试弥补这些缺口。\n- new_source_hints 的 kind 只能是：company, industry, role, product, project, skill_combo, transferable。\n- new_source_hints 是 Wide Talent Search 的核心机制：从 top 候选人的真实公司/职位/项目背景中归纳可泛化的来源维度，用于扩大下一轮搜索的人才来源空间，找到关键词搜不到的可迁移人才。请认真分析 top 候选人的 company/title/skills，主动发现共同来源模式并输出以下维度：\n  · industry：候选人集中来自的行业类别（如「互联网/SaaS」「金融科技」「电商平台」），输出类别而非具体公司名\n  · role：能力可迁移的相似或上下游岗位（如「技术负责人」「基础架构工程师」）\n  · product：候选人参与过的产品/系统类型（如「高并发交易系统」「分布式中间件」），输出类型而非具体产品名\n  · skill_combo：多人共有的技能组合模式（如「Java+Spring Cloud+K8s」）\n  · company：仅限知名大厂/独角兽（如「字节跳动」「美团」），禁止单个冷门公司名\n  · transferable：可迁移背景（如「从传统行业转互联网」）\n每个 hint 须与岗位 must_abilities 相关且有归纳依据（来自候选人背景的共同模式）。首轮若候选人来源多样，仍应输出 industry 或 product 类别作为探索方向。确实无可泛化来源时才返回 []。\n- path_actions.kind 只能是：add_path, loosen, tighten, drop, clarify。\n- add_path / loosen / tighten 必须带 intent（一个完整的 CandidateSearchIR）；drop / clarify 的 intent 为 null。\n- intent 结构：{where: 布尔树, semantic: [语义条件], meta: {}}。where 用 type=and/or/not/leaf；leaf.condition={field,operator,values,required,weight,softText}（field/operator 同 understand；数值字段用 gte/lte/range+数字，文本字段用 any/all+字符串）。semantic 的 fields 必须是 work_vector/project_vector/education_vector/self_evaluation_vector/skills_vector 之一或多个。\n- target_path_id 引用现有路径 id（如 p1）；add_path 时为 null。\n- 没有改进空间时返回空 path_actions 数组 []，不要编造。'
+_REFLECT_RULES = '你的角色：结果分析师。你会看到上一轮的 gaps、当前人才画像（soft_signals / source_hypotheses）、本轮路径结果与 top 判断。从好结果反推共同特征、识别能力缺口、给出 path_actions（加路径/放宽/收紧/丢弃/澄清）与 inferred_soft_signals（反推的语义信号，会沉淀进人才画像 soft_signals），让下一轮搜索更精准。\n必须严格按以下 JSON 结构输出（不要输出额外顶层字段）：\n{\n  "common_traits": ["好候选的共同特征"],\n  "gaps": ["当前结果的能力缺口"],\n  "inferred_soft_signals": [{"text": "金融科技", "fields": ["work_vector", "project_vector"], "weight": 1.5}],\n  "new_source_hints": [{"id": "s2", "kind": "company", "value": "某公司", "rationale": "理由", "transfer_from": []}],\n  "path_actions": [\n    {"kind": "add_path", "target_path_id": null, "rationale": "新增一条路径", "intent": {"where": {"type": "leaf", "condition": {"field": "skill", "operator": "any", "values": ["Go"], "required": true, "weight": 1.0, "softText": null}}, "semantic": [], "meta": {}}},\n    {"kind": "loosen", "target_path_id": "p1", "rationale": "放宽 p1 的硬条件", "intent": {"where": {"type": "leaf", "condition": {"field": "skill", "operator": "any", "values": ["Python", "Go"], "required": true, "weight": 1.0, "softText": null}}, "semantic": [], "meta": {}}},\n    {"kind": "drop", "target_path_id": "p2", "rationale": "丢弃无效路径", "intent": null}\n  ]\n}\n规则：\n- common_traits / gaps 是字符串数组。\n- inferred_soft_signals 是从好结果反推出的语义信号，每项 {text, fields, weight}；fields 只能是 work_vector/project_vector/education_vector/self_evaluation_vector/skills_vector；weight 0.1~5.0；不要与 talent_profile 已有 soft_signals 重复；没有就返回空数组 []。\n- prior_gaps 是上一轮识别的缺口，path_actions 应优先尝试弥补这些缺口。\n- new_source_hints 的 kind 只能是：company, industry, role, product, project, skill_combo, transferable。\n- new_source_hints 是 Wide Talent Search 的核心机制：从 top 候选人的真实公司/职位/项目背景中归纳可泛化的来源维度，用于扩大下一轮搜索的人才来源空间，找到关键词搜不到的可迁移人才。请认真分析 top 候选人的 company/title/skills，主动发现共同来源模式并输出以下维度：\n  · industry：候选人集中来自的行业类别（如「互联网/SaaS」「金融科技」「电商平台」），输出类别而非具体公司名\n  · role：能力可迁移的相似或上下游岗位（如「技术负责人」「基础架构工程师」）\n  · product：候选人参与过的产品/系统类型（如「高并发交易系统」「分布式中间件」），输出类型而非具体产品名\n  · skill_combo：多人共有的技能组合模式（如「Java+Spring Cloud+K8s」）\n  · company：仅限知名大厂/独角兽（如「字节跳动」「美团」），禁止单个冷门公司名\n  · transferable：可迁移背景（如「从传统行业转互联网」）\n每个 hint 须与岗位 must_abilities 相关且有归纳依据（来自候选人背景的共同模式）。首轮若候选人来源多样，仍应输出 industry 或 product 类别作为探索方向。确实无可泛化来源时才返回 []。\n- path_actions.kind 只能是：add_path, loosen, tighten, drop, clarify。\n- add_path / loosen / tighten 必须带 intent（一个完整的 CandidateSearchIR）；drop / clarify 的 intent 为 null。\n- intent 结构：{where: 布尔树, semantic: [语义条件], meta: {}}。where 用 type=and/or/not/leaf；leaf.condition={field,operator,values,required,weight,softText}（field/operator 同 understand；数值字段用 gte/lte/range+数字，文本字段用 any/all+字符串）。semantic 的 fields 必须是 work_vector/project_vector/education_vector/self_evaluation_vector/skills_vector 之一或多个。\n- target_path_id 引用现有路径 id（如 p1）；add_path 时为 null。\n- 没有改进空间时返回空 path_actions 数组 []，不要编造。\n- strategyPriors（可选）：历史同类岗位的策略收益先验 [{strategy, runs, avg_qualified}]，用于选择 path_actions 的 kind；样本不足（runs < 2）则忽略。'
 
 
 def reflect_prompt() -> tuple[str, dict[str, Any]]:
@@ -109,9 +109,14 @@ def build_plan_payload(
     talent_profile: Any,
     tried_signatures: list[str],
     max_paths: int,
+    experience: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Trimmed plan input: only abilities + hard_constraints + sources."""
-    return {
+    """Trimmed plan input: only abilities + hard_constraints + sources.
+
+    ``experience`` carries strategy priors from previous runs of the same job
+    family (see ``core/experience.py``); the key is omitted when unknown.
+    """
+    payload: dict[str, Any] = {
         "job": {
             "title": job_profile.title,
             "must_abilities": [a.name for a in job_profile.must_abilities],
@@ -127,6 +132,9 @@ def build_plan_payload(
         "tried_signatures": tried_signatures,
         "max_paths": max_paths,
     }
+    if experience:
+        payload["strategyPriors"] = experience
+    return payload
 
 
 def _trim_snapshot(item: Any) -> dict[str, Any]:
@@ -211,6 +219,7 @@ def build_reflect_payload(
     query: str = "",
     paths: list[Any] | None = None,
     candidate_lookup: dict[str, Any] | None = None,
+    experience: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Reflect input: query + path intents + candidate backgrounds.
 
@@ -247,7 +256,7 @@ def build_reflect_payload(
             entry["candidate"] = _candidate_brief(candidate_lookup[j.doc_id])
         tj_list.append(entry)
 
-    return {
+    payload: dict[str, Any] = {
         "query": query,
         "iteration": iteration,
         "currentTime": current_time,
@@ -264,6 +273,9 @@ def build_reflect_payload(
             else None
         ),
     }
+    if experience:
+        payload["strategyPriors"] = experience
+    return payload
 
 
 __all__ = ["judge_prompt", "plan_prompt", "reflect_prompt", "understand_prompt"]

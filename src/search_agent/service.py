@@ -7,6 +7,7 @@ No loop logic here -- that lives in the Harness.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 from search_agent.config import budget_from_env, recall_pool_size_from_env
@@ -16,11 +17,14 @@ from search_agent.conversation_memory import (
     ConversationTurn,
 )
 from search_agent.core.budget import BudgetState
+from search_agent.core.experience import ExperienceStore, attribute_qualified, query_family
 from search_agent.llm.client import LlmClient, MeteredLlmClient, OpenAILlmClient
 from search_agent.models.api import CandidateItem, SearchRequest, SearchResponse
 from search_agent.models.artifacts import Budget
 from search_agent.runner import HarnessRunner, LoopRunner
 from search_agent.stages.base import Deps
+
+logger = logging.getLogger(__name__)
 
 
 def _budget_from_settings(top_k: int) -> Budget:
@@ -39,6 +43,7 @@ class SearchAgentService:
         runner: HarnessRunner | None = None,
         fallback_fn: Callable[[SearchRequest], SearchResponse] | None = None,
         event_sink: Callable[[str, dict[str, Any]], None] | None = None,
+        experience: ExperienceStore | None = None,
     ) -> None:
         self._tool = tool
         self._llm = llm_client or OpenAILlmClient()
@@ -46,6 +51,7 @@ class SearchAgentService:
         self._fallback_fn = fallback_fn
         self._event_sink = event_sink
         self._conversation_store = ConversationStore()
+        self._experience = experience or ExperienceStore()
 
     def search(self, req: SearchRequest) -> SearchResponse:
         budget = _budget_from_settings(req.topK)
@@ -55,6 +61,7 @@ class SearchAgentService:
             tool=self._tool,
             budget_state=bs,
             event_sink=self._event_sink,
+            experience=self._experience,
         )
 
         perm_dict = req.permission.model_dump() if req.permission else None
@@ -82,6 +89,7 @@ class SearchAgentService:
         }
 
         state = self._runner.run(initial_state, deps)
+        self._record_experience(state)
 
         if conv_id:
             try:
@@ -139,6 +147,27 @@ class SearchAgentService:
             items=[],
             debug=self._build_debug(state, req),
         )
+
+    def _record_experience(self, state: dict[str, Any]) -> None:
+        """Remember which moves paid off for this job family (never breaks a run)."""
+        try:
+            job = state.get("job_profile")
+            if job is None or self._experience is None:
+                return
+            counts = attribute_qualified(state)
+            if not counts:
+                return
+            family = query_family(job)
+            for strategy, qualified in counts.items():
+                self._experience.record(family, strategy, qualified=qualified)
+            logger.debug("experience recorded: family=%s %s", family, counts)
+        except Exception:  # noqa: BLE001 - strategy memory is best-effort
+            logger.debug("experience recording failed", exc_info=True)
+
+    @property
+    def experience(self) -> ExperienceStore:
+        """The strategy-memory store this service records into."""
+        return self._experience
 
     @staticmethod
     def _build_debug(state: dict[str, Any], req: SearchRequest) -> dict[str, Any] | None:

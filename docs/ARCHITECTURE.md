@@ -203,3 +203,21 @@ ES 索引，再对外提供 HTTP + SSE。后端统一由 `tools/factory.py` 构�
 `EMBEDDING_DIMS = 256`，必须与索引映射里的 `dense_vector.dims` 一致。它不下载模型、结果可
 复现；换成真实 embedding 模型只需替换 `embed_text` 并重建索引，mapping / kNN / RRF 都不用改。
 `hybrid_search` 的每一行都保留两条支路的 `rank` / `score`，便于解释某个候选是被哪一路召回的。
+
+## 14. 策略记忆（跨请求）
+
+循环解决「这一次怎么搜」，`core/experience.py` 解决「这类岗位下次先试哪一招」。
+存储与会话记忆同构：`ExperienceStore` 未配 Redis 时退化为进程内字典，
+读写异常只记日志（策略记忆属增强，不能成为新的故障点）。
+
+数据流三步：
+
+1. **归因**：运行结束后 `attribute_qualified(state)` 把每条真正合格的判断计一次，
+   落在它第一来源路径的 `origin`（`plan` / `default` / `fallback` / `loosen` / `tighten` /
+   `add_path`，收敛再搜记 `converged`）。
+2. **聚合**：按查询族（must 能力名排序后 sha1 取前 12 位）累计
+   `runs / qualified / tokens`——族键不含查询原文与候选人数据。
+3. **回馈**：plan / reflect 构造 payload 时取 `hints(family)`（按 `avg_qualified` 排序的前 N 条）
+   注入 `strategyPriors`；无观测时整键省略，prompt 约定 `runs < 2` 忽略。
+
+工程层只提供证据，决策仍在 LLM；取舍详见 `docs/DECISIONS.md` D23。

@@ -64,6 +64,9 @@ class SearchPath(BaseModel):
     intent: CandidateSearchIR
     source_refs: list[str] = Field(default_factory=list)
     expected_yield: PathYield = "mid"
+    #: Which move produced this path -- plan / default / fallback / loosen /
+    #: tighten / add_path; feeds strategy memory (``core/experience.py``).
+    origin: str = "plan"
     signature: str = ""
     status: PathStatus = "pending"
 

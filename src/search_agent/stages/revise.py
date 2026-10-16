@@ -55,6 +55,7 @@ def _apply_action(
             rationale=action.rationale or f"revised ({kind})",
             intent=action.intent,
             expected_yield="mid",
+            origin=kind,
             signature=sig,
             status="pending",
         )

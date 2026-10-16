@@ -49,6 +49,14 @@ def test_scripted_client_implements_all_four_roles():
     assert roles == {"agent_understand", "agent_plan", "agent_judge", "agent_reflect"}
 
 
+def test_cli_demo_repeat_shows_strategy_memory(capsys):
+    exit_code = main(["demo", DEMO_QUERIES[0], "--top-k", "5", "--repeat", "2"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "第 2/2 次" in out
+    assert "runs=2" in out
+
+
 def test_cli_search_offline(capsys):
     exit_code = main(["search", "高并发 后端工程师", "--offline", "--top-k", "5"])
     assert exit_code == 0

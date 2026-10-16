@@ -12,6 +12,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from search_agent.core.experience import query_family
 from search_agent.llm.prompts import (
     build_reflect_payload,
     reflect_prompt,
@@ -92,6 +93,9 @@ def run_reflect(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
             if did:
                 candidate_lookup[did] = item
 
+    priors = (
+        deps.experience.hints(query_family(state.get("job_profile"))) if deps.experience else []
+    )
     user = json.dumps(
         build_reflect_payload(
             state.get("iteration", 0),
@@ -104,6 +108,7 @@ def run_reflect(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
             query=state.get("query", ""),
             paths=state.get("paths", []),
             candidate_lookup=candidate_lookup,
+            experience=priors,
         ),
         ensure_ascii=False,
     )
