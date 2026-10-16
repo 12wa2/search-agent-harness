@@ -7,6 +7,14 @@
 
 ### Added
 
+- **Token / 成本记账**（`llm/client.py`、`core/budget.py`）：`LlmUsage` 精确读取 provider 的
+  `prompt_tokens` / `completion_tokens`（网关不返回 usage 时退回字符估算并标记 `tokensEstimated`）；
+  `MeteredLlmClient` 把每次调用记进预算，`Budget.max_tokens`（`SEARCH_AGENT_TOKEN_BUDGET`，0 = 只记账）
+  命中即终止（`token_budget`）；评测报告与指标新增 token 列（`agentMetrics.meta.totalTokens`）。
+- **LLM 客户端韧性**（`llm/client.py`）：瞬时错误（超时 / 连接中断 / 429 / 5xx）按
+  `SEARCH_AGENT_LLM_RETRIES` 指数退避 + 抖动重试；非法 JSON 先剥离代码块与前后文，
+  再走 `SEARCH_AGENT_LLM_JSON_REPAIRS` 修复轮；重试次数进入指标（`llmRetries`）；
+  新增 `tests/test_llm_client.py`（注入假 `openai` 模块，零网络覆盖重试 / 退避 / 修复）。
 - **Oracle 基准与去自证评测**（`corpus.py` / `oracle.py`）：种子化合成语料（每条简历按能力逐个掷骰，
   决定「技能关键词可见」还是「只用项目语言表达」），真值来自生成器而非 Agent 自评；
   `search-agent eval --generated N --seed S` / `--oracle DIR`，`search-agent corpus --out DIR` 落盘语料；

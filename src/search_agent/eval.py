@@ -37,7 +37,7 @@ from search_agent.core.metrics import collect_metrics
 from search_agent.corpus import QuerySpec, SyntheticCorpus, generate_corpus, load_corpus
 from search_agent.demo import DEMO_DATA, DEMO_QUERIES, ScriptedLlmClient
 from search_agent.harness import single_path_from_hard_constraints
-from search_agent.llm.client import LlmClient
+from search_agent.llm.client import LlmClient, MeteredLlmClient
 from search_agent.models.api import SearchRequest
 from search_agent.models.artifacts import Budget
 from search_agent.oracle import (
@@ -79,6 +79,9 @@ class PipelineResult:
     doc_ids: tuple[str, ...] = ()
     #: Doc ids any path surfaced this session; drives discovery-level novelty.
     surfaced_ids: tuple[str, ...] = ()
+    #: Tokens spent this run (exact when the provider reports usage).
+    tokens: int = 0
+    tokens_estimated: bool = False
 
 
 @dataclass(frozen=True)
@@ -90,6 +93,9 @@ class _Totals:
     agent_rate: float
     baseline_llm: int
     agent_llm: int
+    baseline_tokens: int
+    agent_tokens: int
+    tokens_estimated: bool
     baseline_ms: float
     agent_ms: float
 
@@ -136,7 +142,7 @@ def run_single_pass(
     """One-shot baseline: understand, search once, judge, merge + rerank."""
     budget = budget_from_env(top_k)
     bs = BudgetState(budget=budget)
-    deps = Deps(llm=llm, tool=tool, budget_state=bs)
+    deps = Deps(llm=MeteredLlmClient(llm, bs), tool=tool, budget_state=bs)
     state = _initial_state(query, top_k, budget)
     started = time.perf_counter()
 
@@ -164,6 +170,8 @@ def run_single_pass(
         degraded_reason=metrics.degraded_reason,
         doc_ids=tuple(tc.doc_id for tc in state.get("final_items") or []),
         surfaced_ids=_surfaced_ids(state),
+        tokens=bs.tokens_used,
+        tokens_estimated=bs.tokens_estimated,
     )
 
 
@@ -192,6 +200,8 @@ def run_agent(
         degraded_reason=meta.get("degradedReason"),
         doc_ids=tuple(item.docId for item in resp.items),
         surfaced_ids=tuple(recall.get("surfacedDocIds") or ()),
+        tokens=int(meta.get("totalTokens") or 0),
+        tokens_estimated=bool(meta.get("tokensEstimated")),
     )
 
 
@@ -205,16 +215,25 @@ def _totals(rows: list[tuple[str, PipelineResult, PipelineResult]]) -> _Totals:
         agent_rate=sum(r[2].recall_rate for r in rows) / count,
         baseline_llm=sum(r[1].llm_calls for r in rows),
         agent_llm=sum(r[2].llm_calls for r in rows),
+        baseline_tokens=sum(r[1].tokens for r in rows),
+        agent_tokens=sum(r[2].tokens for r in rows),
+        tokens_estimated=any(r[1].tokens_estimated or r[2].tokens_estimated for r in rows),
         baseline_ms=sum(r[1].elapsed_ms for r in rows),
         agent_ms=sum(r[2].elapsed_ms for r in rows),
     )
 
 
+def _fmt_tokens(tokens: int, estimated: bool) -> str:
+    return f"~{tokens}" if estimated else str(tokens)
+
+
 def _summary(result: PipelineResult) -> str:
+    tokens = _fmt_tokens(result.tokens, result.tokens_estimated)
     return (
         f"合格 {result.qualified}/{result.target} · "
         f"召回完成度 {result.recall_rate:.2f} · "
         f"LLM {result.llm_calls} 次 · "
+        f"tokens {tokens} · "
         f"{result.elapsed_ms:.1f} ms · "
         f"最终 {result.final_count} 人 · "
         f"降级={result.degraded_reason or '无'}"
@@ -241,6 +260,7 @@ def _print_report(
         print(
             f"  对比         : 合格 {agent.qualified - baseline.qualified:+d} 人 · "
             f"LLM 调用 {agent.llm_calls - baseline.llm_calls:+d} 次 · "
+            f"tokens {agent.tokens - baseline.tokens:+d} · "
             f"耗时 {agent.elapsed_ms - baseline.elapsed_ms:+.1f} ms",
             file=stream,
         )
@@ -250,38 +270,45 @@ def _print_report(
     gain = t.agent_qualified - t.baseline_qualified
     pct = (gain / t.baseline_qualified * 100) if t.baseline_qualified else 0.0
     llm_x = (t.agent_llm / t.baseline_llm) if t.baseline_llm else 0.0
+    tokens_x = (t.agent_tokens / t.baseline_tokens) if t.baseline_tokens else 0.0
     ms_x = (t.agent_ms / t.baseline_ms) if t.baseline_ms else 0.0
+    baseline_tokens = _fmt_tokens(t.baseline_tokens, t.tokens_estimated)
+    agent_tokens = _fmt_tokens(t.agent_tokens, t.tokens_estimated)
     print("=" * 72, file=stream)
     print(f"合计（{t.count} 个查询）", file=stream)
     print(
         f"  单趟基线     : 合格 {t.baseline_qualified} 人 · "
         f"平均完成度 {t.baseline_rate:.2f} · LLM {t.baseline_llm} 次 · "
-        f"累计 {t.baseline_ms:.1f} ms",
+        f"tokens {baseline_tokens} · 累计 {t.baseline_ms:.1f} ms",
         file=stream,
     )
     print(
         f"  Agent 全循环 : 合格 {t.agent_qualified} 人 · "
         f"平均完成度 {t.agent_rate:.2f} · LLM {t.agent_llm} 次 · "
-        f"累计 {t.agent_ms:.1f} ms",
+        f"tokens {agent_tokens} · 累计 {t.agent_ms:.1f} ms",
         file=stream,
     )
     print(
         f"  提升：合格候选人 {gain:+d}（{pct:+.0f}%） · "
-        f"成本：LLM 调用 ×{llm_x:.1f} · 耗时 ×{ms_x:.1f}",
+        f"成本：LLM 调用 ×{llm_x:.1f} · tokens ×{tokens_x:.1f} · 耗时 ×{ms_x:.1f}",
         file=stream,
     )
 
 
 def _print_markdown(rows: list[tuple[str, PipelineResult, PipelineResult]], stream: TextIO) -> None:
     print("### 单趟基线 vs Agent 全循环（合成数据 · 离线确定性）\n", file=stream)
-    print("| 查询 | 管线 | 合格/目标 | 召回完成度 | LLM 调用 | 耗时 | 最终结果 |", file=stream)
-    print("|---|---|---|---|---|---|---|", file=stream)
+    print(
+        "| 查询 | 管线 | 合格/目标 | 召回完成度 | LLM 调用 | tokens | 耗时 | 最终结果 |",
+        file=stream,
+    )
+    print("|---|---|---|---|---|---|---|---|", file=stream)
     for index, (_, baseline, agent) in enumerate(rows, 1):
         for result in (baseline, agent):
             print(
                 f"| Q{index} | {_LABELS[result.name]} | {result.qualified}/{result.target} | "
-                f"{result.recall_rate:.2f} | {result.llm_calls} | {result.elapsed_ms:.1f} ms | "
-                f"{result.final_count} 人 |",
+                f"{result.recall_rate:.2f} | {result.llm_calls} | "
+                f"{_fmt_tokens(result.tokens, result.tokens_estimated)} | "
+                f"{result.elapsed_ms:.1f} ms | {result.final_count} 人 |",
                 file=stream,
             )
 
@@ -289,11 +316,15 @@ def _print_markdown(rows: list[tuple[str, PipelineResult, PipelineResult]], stre
     gain = t.agent_qualified - t.baseline_qualified
     pct = (gain / t.baseline_qualified * 100) if t.baseline_qualified else 0.0
     print(f"\n### 合计（{t.count} 个查询）\n", file=stream)
-    print("| 管线 | 合格候选人 | 平均召回完成度 | LLM 调用 | 累计耗时 |", file=stream)
-    print("|---|---|---|---|---|", file=stream)
+    print(
+        "| 管线 | 合格候选人 | 平均召回完成度 | LLM 调用 | tokens | 累计耗时 |",
+        file=stream,
+    )
+    print("|---|---|---|---|---|---|", file=stream)
     print(
         f"| 单趟基线 | {t.baseline_qualified} | {t.baseline_rate:.2f} | "
-        f"{t.baseline_llm} | {t.baseline_ms:.1f} ms |",
+        f"{t.baseline_llm} | {_fmt_tokens(t.baseline_tokens, t.tokens_estimated)} | "
+        f"{t.baseline_ms:.1f} ms |",
         file=stream,
     )
     print(

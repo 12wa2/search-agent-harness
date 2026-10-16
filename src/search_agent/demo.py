@@ -14,6 +14,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
 
+from search_agent.llm.client import LlmUsage, estimated_usage
 from search_agent.models.api import SearchRequest, SearchResponse
 
 DEMO_DATA = Path(__file__).resolve().parent / "data" / "demo_candidates.jsonl"
@@ -131,6 +132,8 @@ class ScriptedLlmClient:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
+        self.usage = LlmUsage()
+        self.last_usage: LlmUsage | None = None
 
     def complete_json(
         self,
@@ -149,7 +152,10 @@ class ScriptedLlmClient:
             "agent_judge": self._judge,
             "agent_reflect": self._reflect,
         }.get(schema_name)
-        return handler(payload) if handler else {}
+        result = handler(payload) if handler else {}
+        self.last_usage = estimated_usage(system, user, result)
+        self.usage.add(self.last_usage)
+        return result
 
     # -- the four roles ------------------------------------------------------
 

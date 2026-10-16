@@ -109,6 +109,7 @@ search-agent search "招聘推荐算法工程师，要求 5 年以上，有召�
 | 合格候选人 | 30 人 | 48 人 | +18（+60%） |
 | 平均召回完成度 | 0.50 | 0.80 | +0.30 |
 | LLM 调用次数 | 6 次 | 15 次 | ×2.5 |
+| token 消耗 | ≈12.5k | ≈34.8k | ×2.8 |
 | 累计耗时 | 5.6 ms | 12.6 ms | ×2.3 |
 
 **口径 ②：Oracle 基准**（真值来自生成器，不靠 Agent 自评）——把当前实现的**天花板**量出来：
@@ -226,7 +227,7 @@ search-agent-harness/
 │   ├── oracle.py            # 去自证指标：交付列表打分 / 仅全循环发现增量
 │   ├── tools/embedding.py   # 确定性哈希向量（换真实模型只改这一个函数）
 │   └── cli.py               # 命令行入口：demo / corpus / search / eval / serve
-├── tests/                   # 176 离线 + 22 ES 集成
+├── tests/                   # 193 离线 + 22 ES 集成
 ├── examples/                # custom_backend.py（最小接入）· es_end_to_end.py（真实 ES 全链路）· es_hybrid_recall.py（混合召回）
 ├── docs/                    # ARCHITECTURE.md · DECISIONS.md · demo.tape（演示录制脚本）
 ├── Dockerfile               # 多阶段镜像：wheel 构建 → 非 root 运行 + HEALTHCHECK
@@ -304,7 +305,11 @@ pytest -q -m es
 | `SEARCH_AGENT_TARGET_QUALIFIED` | `max(top_k*2, 20)` | 合格候选人目标数 |
 | `SEARCH_AGENT_TIME_BUDGET_SEC` | `12.0` | 单次请求墙钟预算（秒） |
 | `SEARCH_AGENT_LLM_CALL_BUDGET` | `40` | 单次请求 LLM 调用上限 |
+| `SEARCH_AGENT_TOKEN_BUDGET` | `0` | 单次请求 token 上限；`0` = 只记账不设限，命中即 `token_budget` 终止 |
 | `SEARCH_AGENT_RECALL_POOL_SIZE` | `max(top_k*3, 30)` | 每路径召回池大小（池内全量 judge，最终交付 top_k） |
+| `SEARCH_AGENT_LLM_RETRIES` | `2` | 瞬时错误重试次数（超时 / 429 / 5xx，指数退避 + 抖动） |
+| `SEARCH_AGENT_LLM_JSON_REPAIRS` | `1` | 非法 JSON 的修复重试轮数（回传模型输出要求重写） |
+| `SEARCH_AGENT_LLM_BACKOFF_SEC` | `0.5` | 退避基数（秒，逐次翻倍） |
 | `SEARCH_AGENT_REDIS_URL` / `REDIS_URL` | — | 可选：会话记忆 / 结果分页 |
 | `SEARCH_AGENT_ES_URL` | `http://127.0.0.1:9200` | Elasticsearch 后端地址（`tools/elasticsearch.py`） |
 
@@ -312,7 +317,7 @@ pytest -q -m es
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 176 个离线单元测试（+22 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest）
+- [x] 193 个离线单元测试（+22 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）

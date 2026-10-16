@@ -55,3 +55,20 @@ def test_record_llm_and_exceeded():
     assert not bs.llm_exceeded()
     bs.record_llm()
     assert bs.llm_exceeded()
+
+
+def test_token_accounting_drives_token_budget():
+    bs = _bs(max_tokens=100)
+    bs.record_llm_tokens(prompt=80, completion=30, estimated=True)
+    assert bs.tokens_used == 110
+    assert bs.tokens_estimated is True
+    assert bs.token_exceeded()
+    fin, reason = should_finalize(qualified_count=0, has_pending_paths=True, bs=bs)
+    assert fin and reason == "token_budget"
+
+
+def test_token_cap_unset_never_terminates():
+    bs = _bs()
+    bs.record_llm_tokens(prompt=10**7, completion=10**7)
+    fin, reason = should_finalize(qualified_count=0, has_pending_paths=True, bs=bs)
+    assert not fin and reason is None

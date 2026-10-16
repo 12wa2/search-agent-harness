@@ -16,7 +16,7 @@ from search_agent.conversation_memory import (
     ConversationTurn,
 )
 from search_agent.core.budget import BudgetState
-from search_agent.llm.client import LlmClient, OpenAILlmClient
+from search_agent.llm.client import LlmClient, MeteredLlmClient, OpenAILlmClient
 from search_agent.models.api import CandidateItem, SearchRequest, SearchResponse
 from search_agent.models.artifacts import Budget
 from search_agent.runner import HarnessRunner, LoopRunner
@@ -51,7 +51,7 @@ class SearchAgentService:
         budget = _budget_from_settings(req.topK)
         bs = BudgetState(budget=budget)
         deps = Deps(
-            llm=self._llm,
+            llm=MeteredLlmClient(self._llm, bs),
             tool=self._tool,
             budget_state=bs,
             event_sink=self._event_sink,

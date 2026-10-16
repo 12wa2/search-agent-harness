@@ -184,3 +184,55 @@ dev 依赖里带上它们以在 CI 跑接口测试；核心安装仍然只有 py
 
 **影响**：仓库现在覆盖「关键词 → 向量 → 混合召回」这条链路，`examples/es_hybrid_recall.py` 可直接演示「关键词 0 命中、向量召回 5 人、RRF 给出融合排序」；后续接 pgvector / Milvus 也只需再实现一个后端并复用 `embed_text`。
 
+## D19. 宽召回池、窄交付（对齐原系统漏斗）
+
+**背景**：多路径的价值取决于每条路径能看到多少人。早期实现里每条路径只回
+`top_k`，多路径退化成「同一批人换关键词重排」，评测里几乎看不到增量。
+
+**选择**：`SearchToolRequest.recall_pool_size` 落地到三个后端——每路径默认召回
+`max(top_k*3, 30)`（`SEARCH_AGENT_RECALL_POOL_SIZE` 可调），judge 全量池、
+finalize 只交付 `top_k`；单路径构造器（计划降级 / single_pass / 评测基线）
+带上人才画像的关键词与软信号，避免大语料下退化成按 docId 抽签。
+
+**取舍**：judge 的 LLM 调用覆盖更大候选集、token 成本上升（所以 D20 的 token
+记账要先有）；换来的是「多路径」这件事在数据上真正成立。
+
+## D20. Token 记账进入预算，而不是事后统计
+
+**背景**：成本如果只存在于账单里，循环就无法「按钱停」；对照实验显示全循环的
+token 消耗约为单趟的 2.8 倍，这个交易需要被显式量化。
+
+**选择**：`LlmUsage` 从 provider response 读 `prompt_tokens/completion_tokens`
+（网关不返回 usage 时退回字符估算，并标记 `tokensEstimated`）；`MeteredLlmClient`
+把每次调用记进 `BudgetState`；`Budget.max_tokens`（`SEARCH_AGENT_TOKEN_BUDGET`，
+0 = 只记账不设限）命中即终止（`token_budget`）。不可解析但已产生的调用同样记账。
+
+**取舍**：预算模型多一维；换来「效果 vs 成本」可以在同一次评测里被量化。
+
+## D21. LLM 客户端韧性：重试与 JSON 修复都在边界层
+
+**背景**：真实网关会出现超时、429、5xx、连接中断，以及「返回 markdown 代码块
+或夹带解释」的 JSON。这些都不该让循环感知。
+
+**选择**：`OpenAILlmClient` 对瞬时错误（超时 / 连接 / 408 / 429 / 5xx）按
+`SEARCH_AGENT_LLM_RETRIES` 指数退避 + 抖动重试；解析失败先剥离代码块与前后文，
+再用一轮 `SEARCH_AGENT_LLM_JSON_REPAIRS` 把模型自己的输出回传要求重写；重试次数
+进入指标（`llmRetries`）。整条路径用注入的假 `openai` 模块单测覆盖，零网络。
+
+**取舍**：重试会放大延迟与成本，因此有次数上限、只对瞬时错误生效；「非法 JSON
+直接失败」的严格模式留给未来配置项。
+
+## D22. 评测去自证：真值来自生成器，而不是 Agent 的 judge
+
+**背景**：用 Agent 自己的 judge 评自己会系统性高估——judge 的判定就是交付依据。
+对外展示的数字需要一个外部真值。
+
+**选择**：`corpus.py` 生成种子化合成语料——每条简历按能力逐个掷骰，决定该能力
+用技能关键词还是只用项目语言表达；`oracle.py` 以生成器的 `relevant()` /
+`semantic_only()` 为真值打分（交付列表召回 / 精确率、关键词可见 vs 仅语义可见
+召回），并统计「仅全循环发现」的增量。`search-agent corpus --out DIR` 落盘固定
+语料，`eval --oracle DIR` 读入复跑，`eval --generated N --seed S` 即时生成。
+
+**取舍**：合成语料不能替代真实数据——它的价值是「量出天花板」：词法打分 +
+无真实 embedding 时「仅语义可见」召回接近 0，多路径救不了；这个结论直接指向
+Roadmap 里的真实 embedding，而不是把短板藏起来。

@@ -47,6 +47,7 @@ def test_run_eval_text_and_markdown_reports():
     markdown = io.StringIO()
     assert run_eval([QUERY], top_k=5, markdown=True, stream=markdown) == 0
     assert "| Q1 |" in markdown.getvalue()
+    assert "tokens" in markdown.getvalue()
 
 
 def test_oracle_score_counts_overlap():

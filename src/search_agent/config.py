@@ -33,6 +33,7 @@ def budget_from_env(top_k: int) -> Budget:
         target_qualified=_env_int("SEARCH_AGENT_TARGET_QUALIFIED", max(top_k * 2, 20)),
         time_budget_sec=_env_float("SEARCH_AGENT_TIME_BUDGET_SEC", 12.0),
         max_llm_calls=_env_int("SEARCH_AGENT_LLM_CALL_BUDGET", 40),
+        max_tokens=_env_int("SEARCH_AGENT_TOKEN_BUDGET", 0),
     )
 
 

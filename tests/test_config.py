@@ -11,6 +11,13 @@ def test_budget_scales_with_top_k(monkeypatch):
     assert budget_from_env(50).target_qualified == 100
 
 
+def test_token_budget_env(monkeypatch):
+    monkeypatch.setenv("SEARCH_AGENT_TOKEN_BUDGET", "12345")
+    assert budget_from_env(10).max_tokens == 12345
+    monkeypatch.delenv("SEARCH_AGENT_TOKEN_BUDGET")
+    assert budget_from_env(10).max_tokens == 0
+
+
 def test_recall_pool_size_scales_with_top_k(monkeypatch):
     monkeypatch.delenv("SEARCH_AGENT_RECALL_POOL_SIZE", raising=False)
     assert recall_pool_size_from_env(10) == 30

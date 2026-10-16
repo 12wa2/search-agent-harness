@@ -47,6 +47,10 @@ class AgentMetrics:
 
     # Meta
     total_llm_calls: int = 0
+    llm_retries: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    tokens_estimated: bool = False
     total_elapsed_ms: int = 0
     degraded_reason: str | None = None
     rerank_used: bool = False
@@ -78,6 +82,11 @@ class AgentMetrics:
             },
             "meta": {
                 "llmCalls": self.total_llm_calls,
+                "llmRetries": self.llm_retries,
+                "promptTokens": self.prompt_tokens,
+                "completionTokens": self.completion_tokens,
+                "totalTokens": self.prompt_tokens + self.completion_tokens,
+                "tokensEstimated": self.tokens_estimated,
                 "elapsedMs": self.total_elapsed_ms,
                 "degradedReason": self.degraded_reason,
                 "rerankUsed": self.rerank_used,
@@ -181,6 +190,10 @@ def collect_metrics(state: dict[str, Any], bs: Any) -> AgentMetrics:
         source_conversion=source_conversion,
         reflection_gain=reflection_gain,
         total_llm_calls=bs.llm_calls,
+        llm_retries=bs.llm_retries,
+        prompt_tokens=bs.prompt_tokens,
+        completion_tokens=bs.completion_tokens,
+        tokens_estimated=bs.tokens_estimated,
         total_elapsed_ms=int(bs.elapsed_sec() * 1000),
         degraded_reason=state.get("degraded_reason"),
         rerank_used=bool(state.get("rerank_used", False)),

@@ -104,6 +104,8 @@ class Reflection(BaseModel):
 class Budget(BaseModel):
     max_iterations: int = 3
     max_llm_calls: int = 40
+    #: Token cap for one request; 0 = no cap (usage is still recorded).
+    max_tokens: int = 0
     max_paths_per_iteration: int = 4
     time_budget_sec: float = 12.0
     target_qualified: int = 20
