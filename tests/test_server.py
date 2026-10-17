@@ -139,3 +139,80 @@ def test_stream_emits_error_frame_when_worker_fails(monkeypatch: pytest.MonkeyPa
 
     assert "event: error" in text
     assert "worker exploded" in text
+
+
+class _ExplodingLlm:
+    """Fail if a non-search request accidentally reaches the Harness."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def complete_json(self, **_kwargs):
+        self.calls += 1
+        raise RuntimeError("intent-routed request must not call the LLM")
+
+
+def _frames(text: str) -> list[str]:
+    return [frame.strip() for frame in text.split("\n\n") if frame.strip()]
+
+
+def _event_payload(frame: str) -> tuple[str, dict]:
+    event = ""
+    data = []
+    for line in frame.splitlines():
+        if line.startswith("event: "):
+            event = line.removeprefix("event: ")
+        elif line.startswith("data: "):
+            data.append(line.removeprefix("data: "))
+    return event, json.loads("\n".join(data))
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+@pytest.mark.parametrize(
+    ("query", "intent"),
+    [
+        ("你好", "GREETING"),
+        ("你能做什么？", "HELP"),
+        ("帮我写一首诗", "OUT_OF_SCOPE"),
+    ],
+)
+def test_non_search_requests_return_one_reply_without_calling_llm(
+    method: str, query: str, intent: str
+) -> None:
+    llm = _ExplodingLlm()
+    app = create_app(llm_client=llm)
+    kwargs = (
+        {"params": {"query": query, "topK": 5}}
+        if method == "GET"
+        else {"json": {"query": query, "topK": 5, "details": True}}
+    )
+    with TestClient(app) as routed:
+        with routed.stream(method, "/search/stream", **kwargs) as resp:
+            assert resp.status_code == 200
+            text = "".join(resp.iter_text())
+
+    frames = _frames(text)
+    assert len(frames) == 1, text
+    event, payload = _event_payload(frames[0])
+    assert event == "reply"
+    assert payload["intent"] == intent
+    assert payload["searchStarted"] is False
+    assert payload["suggestions"]
+    assert llm.calls == 0
+    assert "event: stage" not in text
+    assert "event: result" not in text
+    assert "event: error" not in text
+
+
+def test_greeting_plus_recruitment_still_runs_the_agent(client: TestClient) -> None:
+    with client.stream(
+        "POST",
+        "/search/stream",
+        json={"query": "你好，帮我找 Python 工程师", "topK": 5, "details": True},
+    ) as resp:
+        assert resp.status_code == 200
+        text = "".join(resp.iter_text())
+
+    assert "event: reply" not in text
+    assert '"stage": "understand"' in text
+    assert "event: result" in text

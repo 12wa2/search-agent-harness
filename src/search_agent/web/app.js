@@ -334,6 +334,61 @@ function showError(message) {
   resultsEmpty.hidden = true;
 }
 
+const INTENT_LABEL = {
+  GREETING: "问候",
+  HELP: "能力说明",
+  OUT_OF_SCOPE: "范围说明",
+};
+
+function addRoutingNote() {
+  const li = el("li", "routing-note");
+  const body = el("div", "routing-copy");
+  body.append(
+    el("strong", "", "意图路由已完成"),
+    el("span", "", "本次输入未启动八阶段 Agent，也未调用 LLM。"),
+  );
+  li.append(el("span", "routing-dot"), body);
+  timeline.append(li);
+  timeline.scrollTop = timeline.scrollHeight;
+}
+
+function renderAssistantReply(payload) {
+  results.replaceChildren();
+  resultsEmpty.hidden = true;
+  metrics.hidden = true;
+  traceWrap.hidden = true;
+  resultsHint.textContent = "未启动 Agent";
+
+  const card = el("li", "assistant-card");
+  const head = el("div", "assistant-head");
+  const title = el("div", "assistant-title");
+  title.append(
+    el("strong", "", "Search Agent"),
+    el("span", "assistant-intent", INTENT_LABEL[payload.intent] || payload.intent || "提示"),
+  );
+  head.append(el("span", "assistant-mark", "SA"), title);
+  card.append(head, el("p", "assistant-message", payload.message || ""));
+
+  const suggestions = payload.suggestions || [];
+  if (suggestions.length) {
+    const actions = el("div", "reply-suggestions");
+    for (const item of suggestions) {
+      const button = el("button", "reply-suggestion", item.label || item.query || "示例需求");
+      button.type = "button";
+      button.title = item.query || "";
+      button.addEventListener("click", () => {
+        queryInput.value = item.query || "";
+        queryInput.focus();
+        runHint.classList.remove("error");
+        runHint.textContent = "已填入示例需求，点击“运行 Agent”开始搜索。";
+      });
+      actions.append(button);
+    }
+    card.append(el("p", "suggestion-label", "可以试试"), actions);
+  }
+  results.append(card);
+}
+
 async function runSearch(query, topK) {
   if (state.running) return;
   resetUI();
@@ -345,6 +400,7 @@ async function runSearch(query, topK) {
   const controller = new AbortController();
   state.controller = controller;
   let sawResult = false;
+  let sawReply = false;
   let sawError = false;
   let sawCancelled = false;
 
@@ -373,6 +429,12 @@ async function runSearch(query, topK) {
         const { event, payload } = parsed;
         if (event === "stage") {
           addEvent(payload.stage, payload.detail);
+        } else if (event === "reply") {
+          sawReply = true;
+          removeWaiting();
+          addRoutingNote();
+          renderAssistantReply(payload);
+          timelineHint.textContent = "已回复 · Agent 未启动";
         } else if (event === "result") {
           sawResult = true;
           sawCancelled = Boolean(payload.debug && payload.debug.cancelled);
@@ -389,11 +451,13 @@ async function runSearch(query, topK) {
         }
       }
     }
-    if (!sawResult && !sawError && state.running) {
+    if (!sawResult && !sawReply && !sawError && state.running) {
       showError("连接已结束，但没有收到最终结果。");
     }
     if (sawResult && sawCancelled) {
       runHint.textContent = "已取消。后端会在当前阶段结束后停止后续工作。";
+    } else if (sawReply) {
+      runHint.textContent = "已回复。此请求不需要启动搜索 Agent。";
     } else if (sawResult) {
       runHint.textContent = "完成。可修改需求后重新运行。";
     }

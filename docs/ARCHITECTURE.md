@@ -17,6 +17,25 @@
    编译成 StateGraph，与默认循环行为等价（`tests/test_langgraph_runner.py`），阶段代码不改动。
 5. **唯一协议边界**：`contract/tool.py` 的 `SearchTool`。换检索后端 = 换一个实现类。
 
+## 1.1 Harness 之前的请求路由
+
+`server.py` 在两个 `/search/stream` 入口先调用 `intent_router.py::IntentRouter.route(query)`，
+再决定是否构造 `SearchAgentService`。这一步不依赖 LLM，也不访问 `SearchTool`：
+
+| 意图 | 触发条件 | 行为 |
+|---|---|---|
+| `GREETING` | 完整匹配问候语 | 返回能力介绍 + 推荐招聘需求 |
+| `HELP` | 询问能力、使用方法或如何搜索候选人 | 返回能力边界 + 输入建议 |
+| `OUT_OF_SCOPE` | 明确的写诗 / 翻译 / 天气 / 通用知识任务 | 说明只处理招聘搜索，不伪造结果 |
+| `SEARCH` | 招聘需求，或无法确定 | 进入八阶段 Harness |
+
+规则顺序是：空输入 → 问候 → 帮助 → 明确无关任务 → 默认搜索。只有「明确」的无关任务会被拒绝；
+模糊输入默认放行，避免「帮我找一下手机」这类不常见表达因为缺少职位关键词被误判。非搜索请求只发送
+一帧终止 `reply`，没有 `stage` / `result` / `metrics` / `trace`，因此不会消耗模型或检索预算。
+
+`IntentRouter` 是无状态规则层，不保存对话上下文；它的职责是能力边界与成本保护，不是通用聊天。
+`POST /search` 仍保持纯搜索契约；需要能力路由的交互入口是 `/search/stream` 和 Web 控制台。
+
 ## 2. 八个阶段
 
 | # | 阶段 | 输入 | 输出 | 依赖 |

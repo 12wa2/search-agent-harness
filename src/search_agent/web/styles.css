@@ -426,6 +426,80 @@ textarea { min-height: 104px; }
   color: #fca5a5; border-radius: 10px; font-size: 12.5px;
 }
 
+.timeline .routing-note {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0;
+}
+.routing-dot {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 12px;
+  height: 12px;
+  margin: 9px 0 0 4px;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 2px solid var(--accent-2);
+  box-shadow: 0 0 10px rgba(139, 157, 255, 0.32);
+}
+.routing-copy {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(139, 157, 255, 0.2);
+  border-radius: 10px;
+  background: rgba(139, 157, 255, 0.045);
+}
+.routing-copy strong { display: block; color: var(--text); font-size: 12.5px; }
+.routing-copy span { display: block; margin-top: 4px; color: var(--muted); font-size: 11.5px; }
+
+.assistant-card {
+  padding: 14px;
+  border: 1px solid rgba(139, 157, 255, 0.28);
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, rgba(139, 157, 255, 0.08), transparent 55%),
+    var(--panel-2);
+}
+.assistant-head { display: flex; align-items: center; gap: 10px; }
+.assistant-mark {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: rgba(139, 157, 255, 0.16);
+  color: #c5ceff;
+  font: 700 10.5px var(--mono);
+}
+.assistant-title { display: flex; flex-direction: column; gap: 1px; }
+.assistant-title strong { font-size: 13px; font-weight: 650; }
+.assistant-intent { color: #aebaff; font: 10.5px var(--mono); letter-spacing: 0.4px; }
+.assistant-message {
+  margin: 12px 0 0;
+  color: var(--text);
+  font-size: 12.8px;
+  line-height: 1.7;
+  white-space: pre-line;
+}
+.suggestion-label { margin: 14px 0 7px; color: var(--faint); font-size: 11px; }
+.reply-suggestions { display: flex; flex-wrap: wrap; gap: 6px; }
+.reply-suggestion {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--muted);
+  font: 11.5px inherit;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.reply-suggestion:hover {
+  color: var(--accent);
+  border-color: rgba(94, 234, 212, 0.4);
+  background: rgba(94, 234, 212, 0.06);
+}
+
 .foot {
   display: flex; justify-content: space-between; gap: 12px;
   padding: 9px 22px;

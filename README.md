@@ -8,7 +8,7 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-252%20offline%20%2B%2023%20ES-brightgreen)
+![Tests](https://img.shields.io/badge/tests-289%20offline%20%2B%2023%20ES-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![version](https://img.shields.io/badge/version-v0.1.0-blue)
@@ -31,6 +31,24 @@ search-agent serve --offline
 
 页面上的“停止”会断开 SSE 连接并通知后端取消：后端会在当前阶段结束后、下一次 LLM 调用前
 或进入下一阶段检索前停止后续工作。已经在途的模型请求不会被强杀，因此界面文案使用“已请求停止”，不宣称立即终止。
+
+### 有边界的请求路由
+
+Web 控制台和两个 `/search/stream` 入口会先经过确定性的 `IntentRouter`，再决定是否启动八阶段 Agent：
+
+| 输入类型 | 路由 | 行为 | LLM / 检索 |
+|---|---|---|---|
+| “你好” / “Hello” | `GREETING` | 返回能力介绍与示例需求 | 0 次 |
+| “你能做什么？” / “怎么使用？” | `HELP` | 返回能力边界与输入建议 | 0 次 |
+| 写诗 / 翻译 / 天气 / 通用知识 | `OUT_OF_SCOPE` | 说明只处理招聘搜索，不伪造成 Agent 结果 | 0 次 |
+| 招聘需求，或无法确定 | `SEARCH` | 进入 `understand → … → finalize` | 正常预算 |
+
+设计上刻意保守：只有**明确**的问候、帮助问题和无关任务会在 Harness 之前被拦下；其余输入默认交给
+Agent，避免把不常见但真实的招聘表达误判成聊天。路由是规则匹配，不调用 LLM，也不保留会话记忆——
+这是能力边界，不是通用聊天机器人。
+
+SSE 的 `reply` 是终止帧，也是唯一一帧：不会出现 `stage`、`result`、`metrics` 或 `trace`。
+`POST /search` 仍保持纯搜索契约，假定调用方传入的就是招聘需求。
 
 ## 这是什么
 
@@ -251,9 +269,18 @@ search-agent serve --offline    # http://127.0.0.1:8000；浏览器打开即 Web
 |---|---|
 | `GET /` | 内置 Web 控制台（零构建静态页：输入需求 → 实时八阶段时间线 → 候选人证据） |
 | `POST /search` | `SearchRequest` → `SearchResponse`（camelCase JSON；`details=true` 附带 `agentTrace` / `agentMetrics`） |
-| `GET /search/stream?query=…&topK=10` | SSE 事件流：每个阶段一帧，最后 `result` 帧返回完整结果 |
+| `GET /search/stream?query=…&topK=10` | SSE：非搜索请求返回单帧 `reply`；搜索请求逐阶段推送，最后 `result` 帧返回完整结果 |
 | `POST /search/stream` | 同一 SSE 流的 JSON body 版本（查询不进 URL / 访问日志）；客户端断开即请求后端取消 |
 | `GET /healthz` | 健康检查：版本 / 模式 / 后端与 LLM 类型 |
+
+SSE 事件协议：
+
+| `event` | 何时出现 | 载荷 | 是否终止 |
+|---|---|---|---|
+| `stage` | 搜索请求每完成一个阶段 | `stage` + `detail` | 否 |
+| `reply` | 问候 / 帮助 / 明确无关任务 | `type` / `intent` / `message` / `suggestions` / `searchStarted=false` | 是，且为唯一一帧 |
+| `result` | 搜索完成（含协作取消终态） | 完整 `SearchResponse` | 是 |
+| `error` | Harness 抛出未预期异常 | `message` | 是 |
 
 ```bash
 curl -s http://127.0.0.1:8000/search -H "Content-Type: application/json" \
@@ -313,6 +340,7 @@ search-agent-harness/
 │   ├── runner.py            # 可替换执行后端（默认 LoopRunner）
 │   ├── graph.py             # 可选：LangGraphRunner（同一批阶段 → StateGraph，行为等价）
 │   ├── server.py            # 可选：FastAPI HTTP 服务（SSE 阶段事件流）
+│   ├── intent_router.py     # Harness 之前的确定性请求路由（问候 / 帮助 / 无关任务 / 搜索）
 │   ├── stages/              # 8 个阶段（每个都是纯函数，可独立单测）
 │   ├── core/                # 签名 / 合并 / 预算 / 降级 / 难度路由 / 指标 / trace / 策略记忆 / 消融开关
 │   ├── contract/tool.py     # SearchTool 协议 —— 与检索后端的唯一边界
@@ -329,7 +357,7 @@ search-agent-harness/
 │   ├── tools/embedding.py   # 确定性哈希向量（换真实模型只改这一个函数）
 │   ├── web/                 # 内置 Web 控制台（HTML/CSS/JS，零构建；FastAPI 托管 GET /）
 │   └── cli.py               # 命令行入口：demo / corpus / search / eval / serve
-├── tests/                   # 242 离线 + 23 ES 集成
+├── tests/                   # 289 离线 + 23 ES 集成
 ├── examples/                # custom_backend.py（最小接入）· es_end_to_end.py（真实 ES 全链路）· es_hybrid_recall.py（混合召回）
 ├── docs/                    # ARCHITECTURE.md · DECISIONS.md · CASE_STUDY.md · eval_baseline.json · demo.tape
 ├── Dockerfile               # 多阶段镜像：wheel 构建 → 非 root 运行 + HEALTHCHECK
@@ -419,7 +447,7 @@ pytest -q -m es
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 252 个离线单元测试（+23 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
+- [x] 289 个离线单元测试（+23 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] Web 控制台：零构建单页（八阶段时间线 / 候选人匹配证据 / metrics / trace），`GET /` 直接托管，
@@ -433,6 +461,8 @@ pytest -q -m es
 - [x] 宽召回池语义：每路径召回 `max(top_k*3, 30)`（`SEARCH_AGENT_RECALL_POOL_SIZE`），judge 全量池、交付 top_k。
 - [x] 策略记忆：按查询族累计「哪一类策略有效」，并作为先验注入 plan / reflect（`core/experience.py`，Redis 可选）。
 - [x] 消融实验 + 评测门禁：`eval --ablate` 单开关对照表；`docs/eval_baseline.json` 作为 CI 基线，回归即红。
+- [x] 能力感知请求路由：问候 / 帮助 / 明确无关任务在 Harness 之前返回单帧 `reply`（零 LLM、零检索），
+      模糊输入默认走搜索；前端展示能力卡片与可填入的推荐需求。
 - [ ] 真实 embedding 接入：跨越「项目语言 ↔ 能力词」表述差，修掉 Oracle 基准量出的天花板。
 - [ ] 演示 GIF：录制脚本 `docs/demo.tape` 已就绪——装 [vhs](https://github.com/charmbracelet/vhs) 后跑 `vhs docs/demo.tape`（约 40 秒：demo 时间线 + 消融表），产物 `docs/demo.gif`
 - [ ] 完整英文 README（现为 README 内折叠版）
@@ -468,6 +498,11 @@ search-agent eval     # single-pass baseline vs the full loop (effect vs cost)
 search-agent eval --generated 120 --seed 7   # oracle-labeled benchmark (no self-grading)
 search-agent serve --offline   # HTTP API + zero-build web console on :8000
 ```
+
+The streaming endpoints route greetings, help questions and clearly unrelated
+tasks to a single terminal `reply` frame before the Harness starts: zero LLM
+calls, zero retrieval calls. Ambiguous inputs deliberately fall through to the
+search Agent so an unusual recruiting query is never rejected by keyword rules.
 
 See `docs/ARCHITECTURE.md` for the state machine, budget and degradation
 design, and `docs/DECISIONS.md` for the ADR-style trade-offs.

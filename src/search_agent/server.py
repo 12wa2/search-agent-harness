@@ -4,8 +4,10 @@ Endpoints:
 
 - ``GET  /``              -- the bundled web console (static assets, when present).
 - ``POST /search``        -- JSON ``SearchRequest`` in, ``SearchResponse`` out.
-- ``GET  /search/stream`` -- Server-Sent Events driven by the ``event_sink``
-  hook: one frame per harness stage, then a final ``result`` frame.
+- ``GET  /search/stream`` -- Server-Sent Events. Requests are routed before
+  the Harness: greetings, help questions and clearly unrelated tasks receive a
+  single terminal ``reply`` frame; searches stream one frame per stage and a
+  final ``result`` frame.
 - ``POST /search/stream`` -- the same stream from a JSON body, keeping queries
   out of URLs and access logs.
 - ``GET  /healthz``       -- version, mode and backend class names.
@@ -36,6 +38,7 @@ from fastapi.staticfiles import StaticFiles
 from search_agent import __version__
 from search_agent.contract.tool import SearchTool
 from search_agent.demo import DEMO_DATA, ScriptedLlmClient
+from search_agent.intent_router import Intent, IntentRouter, RouteDecision
 from search_agent.llm.client import LlmClient, OpenAILlmClient
 from search_agent.models.api import SearchRequest, SearchResponse
 from search_agent.service import SearchAgentService
@@ -98,6 +101,11 @@ def _sse(event: str, payload: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+async def _stream_reply(decision: RouteDecision) -> AsyncIterator[str]:
+    """Yield one terminal reply frame without starting the search Harness."""
+    yield _sse("reply", decision.to_payload())
+
+
 async def _stream_search(
     tool: SearchTool,
     llm: LlmClient,
@@ -147,10 +155,12 @@ def create_app(
     llm_client: LlmClient | None = None,
     data_path: str | None = None,
     offline: bool = True,
+    intent_router: IntentRouter | None = None,
 ) -> FastAPI:
     """Build the HTTP app. Defaults to the zero-key offline stack."""
     resolved_tool = tool or InMemorySearchTool(str(data_path or DEMO_DATA))
     resolved_llm = llm_client or (ScriptedLlmClient() if offline else OpenAILlmClient())
+    router = intent_router or IntentRouter()
     service = SearchAgentService(tool=resolved_tool, llm_client=resolved_llm)
 
     app = FastAPI(
@@ -177,8 +187,14 @@ def create_app(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     def stream_response(req: SearchRequest) -> StreamingResponse:
+        decision = router.route(req.query)
+        body = (
+            _stream_search(resolved_tool, resolved_llm, req)
+            if decision.intent is Intent.SEARCH
+            else _stream_reply(decision)
+        )
         return StreamingResponse(
-            _stream_search(resolved_tool, resolved_llm, req),
+            body,
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
