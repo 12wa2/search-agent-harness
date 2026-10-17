@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0a0e14">
+<title>Search Agent Harness · Agent Console</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235eead4'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%230a0e14'%3ESA%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">SA</span>
+    <div class="brand-text">
+      <h1>Search Agent <em>Harness</em></h1>
+      <p>八阶段反思检索 · 可观察的 Agent 控制台</p>
+    </div>
+  </div>
+  <div class="statuses">
+    <span class="chip chip-live" id="mode-chip"><i></i> connecting</span>
+    <span class="chip" id="backend-chip">backend —</span>
+    <span class="chip" id="version-chip">v—</span>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="panel query-panel">
+    <div class="panel-head">
+      <h2>Search request</h2>
+      <span class="hint">自然语言 → IR → 检索</span>
+    </div>
+
+    <form id="search-form" autocomplete="off">
+      <label class="field-label" for="query">招聘需求</label>
+      <textarea id="query" rows="5" placeholder="例如：找有 3 年以上经验、做过高并发系统的后端工程师，最好来自大厂"></textarea>
+
+      <div class="examples" id="examples">
+        <button type="button" class="example" data-q="找有 3 年以上经验、做过高并发系统的后端工程师，最好来自大厂">高并发后端 · 3 年+</button>
+        <button type="button" class="example" data-q="推荐算法工程师，要求 3 年以上推荐系统与机器学习经验">推荐算法 · 3 年+</button>
+        <button type="button" class="example" data-q="数据工程师，熟悉 Spark 和 Flink，做过数据平台架构，3 年以上经验">数据平台 · Spark/Flink</button>
+      </div>
+
+      <div class="row">
+        <label class="field-label" for="top-k">交付人数 topK</label>
+        <input id="top-k" type="number" min="1" max="50" value="5">
+      </div>
+
+      <div class="actions">
+        <button id="run" class="run-btn" type="submit"><span aria-hidden="true">▶</span> 运行 Agent</button>
+        <button id="stop" class="stop-btn" type="button" hidden><span aria-hidden="true">■</span> 停止</button>
+      </div>
+      <p class="run-hint" id="run-hint">离线模式：脚本化 LLM + 合成候选人，零 API key · Ctrl+Enter 运行。</p>
+    </form>
+
+    <section class="metrics" id="metrics" hidden>
+      <div class="metric"><span id="m-calls">—</span><small>LLM 调用</small></div>
+      <div class="metric"><span id="m-tokens">—</span><small>tokens</small></div>
+      <div class="metric"><span id="m-iterations">—</span><small>迭代轮数</small></div>
+      <div class="metric"><span id="m-elapsed">—</span><small>耗时</small></div>
+      <div class="metric"><span id="m-judged">—</span><small>判定候选</small></div>
+      <div class="metric"><span id="m-degraded">—</span><small>降级</small></div>
+    </section>
+
+    <section class="trace-wrap" id="trace-wrap" hidden>
+      <details>
+        <summary>原始 <code>agentTrace</code> / <code>agentMetrics</code></summary>
+        <pre id="trace-json"></pre>
+      </details>
+    </section>
+  </aside>
+
+  <section class="panel timeline-panel">
+    <div class="panel-head">
+      <h2>Agent timeline</h2>
+      <span class="hint" id="timeline-hint">等待运行</span>
+    </div>
+
+    <div class="stage-rail" id="stage-rail"></div>
+
+    <div class="empty" id="timeline-empty">
+      <div class="pulse" aria-hidden="true"></div>
+      <p>提交一条招聘需求后，这里会实时显示<br><code>understand → plan → execute → … → finalize</code></p>
+    </div>
+    <ol id="timeline" class="timeline" aria-live="polite"></ol>
+  </section>
+
+  <section class="panel results-panel">
+    <div class="panel-head">
+      <h2>Delivered candidates</h2>
+      <span class="hint" id="results-hint">—</span>
+    </div>
+    <div class="empty" id="results-empty">
+      <p>最终交付的候选人、匹配证据与来源路径会显示在这里。</p>
+    </div>
+    <ul id="results" class="results"></ul>
+  </section>
+</main>
+
+<footer class="foot">
+  <span><code>SearchTool</code> · memory / SQLite / Elasticsearch</span>
+  <span>SSE live events · budget-governed loop</span>
+</footer>
+
+<noscript><div class="err-card">这个控制台需要启用 JavaScript。</div></noscript>
+<script src="/app.js"></script>
+</body>
+</html>

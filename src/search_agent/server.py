@@ -2,9 +2,12 @@
 
 Endpoints:
 
+- ``GET  /``              -- the bundled web console (static assets, when present).
 - ``POST /search``        -- JSON ``SearchRequest`` in, ``SearchResponse`` out.
 - ``GET  /search/stream`` -- Server-Sent Events driven by the ``event_sink``
   hook: one frame per harness stage, then a final ``result`` frame.
+- ``POST /search/stream`` -- the same stream from a JSON body, keeping queries
+  out of URLs and access logs.
 - ``GET  /healthz``       -- version, mode and backend class names.
 
 ``create_app`` accepts ``tool`` / ``llm_client`` so the same server can front
@@ -23,10 +26,12 @@ import asyncio
 import json
 import queue
 import threading
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from search_agent import __version__
 from search_agent.contract.tool import SearchTool
@@ -35,6 +40,9 @@ from search_agent.llm.client import LlmClient, OpenAILlmClient
 from search_agent.models.api import SearchRequest, SearchResponse
 from search_agent.service import SearchAgentService
 from search_agent.tools.memory import InMemorySearchTool
+
+#: Console assets live inside the package so wheels and the Docker image both ship them.
+_WEB_DIR = Path(__file__).resolve().parent / "web"
 
 
 def _stage_payload(event: str, state: dict[str, Any]) -> dict[str, Any]:
@@ -152,18 +160,29 @@ def create_app(
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    def stream_response(req: SearchRequest) -> StreamingResponse:
+        return StreamingResponse(
+            _stream_search(resolved_tool, resolved_llm, req),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     @app.get("/search/stream")
     def search_stream(
         query: str = Query(..., min_length=1),
         topK: int = Query(10, ge=1, le=5000),
         details: bool = Query(False),
     ) -> StreamingResponse:
-        req = SearchRequest(query=query, topK=topK, details=details)
-        return StreamingResponse(
-            _stream_search(resolved_tool, resolved_llm, req),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
+        return stream_response(SearchRequest(query=query, topK=topK, details=details))
+
+    @app.post("/search/stream")
+    def search_stream_post(req: SearchRequest) -> StreamingResponse:
+        """POST variant: keeps the query out of URLs and access logs."""
+        return stream_response(req)
+
+    if _WEB_DIR.is_dir():
+        # Mounted last so every API route above keeps precedence.
+        app.mount("/", StaticFiles(directory=str(_WEB_DIR), html=True), name="web")
 
     return app
 

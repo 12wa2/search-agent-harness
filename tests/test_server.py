@@ -69,3 +69,31 @@ def test_search_stream_emits_stage_and_result_frames(client: TestClient) -> None
     payload = json.loads(data_line.removeprefix("data: "))
     assert payload["total"] > 0
     assert payload["items"]
+
+
+def test_root_serves_the_web_console(client: TestClient) -> None:
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    assert "Search Agent" in resp.text
+    assert "app.js" in resp.text
+
+
+def test_post_search_stream_emits_stage_and_result_frames(client: TestClient) -> None:
+    with client.stream(
+        "POST",
+        "/search/stream",
+        json={"query": QUERY, "topK": 5, "details": True},
+    ) as resp:
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        text = "".join(resp.iter_text())
+
+    assert '"stage": "understand"' in text
+    assert '"stage": "finalize"' in text
+    result_frames = [c for c in text.split("\n\n") if c.startswith("event: result")]
+    assert result_frames, text[:500]
+    data_line = next(line for line in result_frames[0].splitlines() if line.startswith("data: "))
+    payload = json.loads(data_line.removeprefix("data: "))
+    assert payload["items"]
+    assert payload["debug"]["agentTrace"]

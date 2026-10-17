@@ -8,10 +8,15 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-240%20offline%20%2B%2023%20ES-brightgreen)
+![Tests](https://img.shields.io/badge/tests-242%20offline%20%2B%2023%20ES-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![version](https://img.shields.io/badge/version-v0.1.0-blue)
+
+![Web console](docs/console.png)
+
+> 内置 Web 控制台（零构建，FastAPI 直接托管）：`search-agent serve --offline` → <http://127.0.0.1:8000>。
+> 左侧提交招聘需求，中间实时展示八阶段时间线，右侧是交付候选人、命中能力与来源路径。
 
 ## 这是什么
 
@@ -58,7 +63,7 @@ pip install -e ".[dev]"
 
 search-agent demo        # 离线演示：脚本化 LLM + 16 个合成候选人，零 API key
 search-agent eval        # 离线评测：单趟基线 vs Agent 全循环（确定性、可复现）
-search-agent serve --offline   # 可选：HTTP 服务（需 pip install -e ".[api]"）
+search-agent serve --offline   # 可选：HTTP 服务 + Web 控制台 → http://127.0.0.1:8000（需 .[api]）
 ```
 
 接入真实 LLM（任何 OpenAI 兼容端点：OpenAI / Qwen / DeepSeek / vLLM …）：
@@ -224,13 +229,15 @@ search-agent demo --repeat 3 --top-k 5     # 同一查询跑 3 次，打印策�
 
 ```bash
 pip install -e ".[api]"
-search-agent serve --offline    # http://127.0.0.1:8000；不传 --offline 时按环境变量走真实 LLM
+search-agent serve --offline    # http://127.0.0.1:8000；浏览器打开即 Web 控制台
 ```
 
 | 端点 | 说明 |
 |---|---|
+| `GET /` | 内置 Web 控制台（零构建静态页：输入需求 → 实时八阶段时间线 → 候选人证据） |
 | `POST /search` | `SearchRequest` → `SearchResponse`（camelCase JSON；`details=true` 附带 `agentTrace` / `agentMetrics`） |
 | `GET /search/stream?query=…&topK=10` | SSE 事件流：每个阶段一帧，最后 `result` 帧返回完整结果 |
+| `POST /search/stream` | 同一 SSE 流的 JSON body 版本（查询不进 URL / 访问日志） |
 | `GET /healthz` | 健康检查：版本 / 模式 / 后端与 LLM 类型 |
 
 ```bash
@@ -305,8 +312,9 @@ search-agent-harness/
 │   ├── corpus.py            # 合成语料生成器：种子化 + 生成器真值（oracle 标注）
 │   ├── oracle.py            # 去自证指标：交付列表打分 / 仅全循环发现增量
 │   ├── tools/embedding.py   # 确定性哈希向量（换真实模型只改这一个函数）
+│   ├── web/                 # 内置 Web 控制台（HTML/CSS/JS，零构建；FastAPI 托管 GET /）
 │   └── cli.py               # 命令行入口：demo / corpus / search / eval / serve
-├── tests/                   # 240 离线 + 23 ES 集成
+├── tests/                   # 242 离线 + 23 ES 集成
 ├── examples/                # custom_backend.py（最小接入）· es_end_to_end.py（真实 ES 全链路）· es_hybrid_recall.py（混合召回）
 ├── docs/                    # ARCHITECTURE.md · DECISIONS.md · CASE_STUDY.md · eval_baseline.json · demo.tape
 ├── Dockerfile               # 多阶段镜像：wheel 构建 → 非 root 运行 + HEALTHCHECK
@@ -396,9 +404,11 @@ pytest -q -m es
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 240 个离线单元测试（+23 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES）
+- [x] 242 个离线单元测试（+23 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
+- [x] Web 控制台：零构建单页（八阶段时间线 / 候选人匹配证据 / metrics / trace），`GET /` 直接托管，
+      截图 `docs/console.png`；SSE 支持 `POST /search/stream`（查询不进 URL）。
 - [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）
 - [x] SQLite/FTS5 后端（`tools/sqlite_fts.py`，标准库）：where 树编译 SQL + 跨后端一致性测试。
 - [x] Elasticsearch 真实后端 + `docker compose` 端到端示例（ES DSL 编译，`examples/es_end_to_end.py`）。
@@ -441,6 +451,7 @@ search-agent demo     # offline showcase: scripted LLM + synthetic candidates
 search-agent demo --repeat 3   # strategy memory: same query x3, then priors
 search-agent eval     # single-pass baseline vs the full loop (effect vs cost)
 search-agent eval --generated 120 --seed 7   # oracle-labeled benchmark (no self-grading)
+search-agent serve --offline   # HTTP API + zero-build web console on :8000
 ```
 
 See `docs/ARCHITECTURE.md` for the state machine, budget and degradation
