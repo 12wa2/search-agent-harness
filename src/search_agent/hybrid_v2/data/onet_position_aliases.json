@@ -1,0 +1,131 @@
+[
+  {
+    "code": "11-2022.00",
+    "group": "销售管理",
+    "title_en": "Sales Managers",
+    "title_zh": "销售经理",
+    "canonical": "销售经理",
+    "aliases": ["销售主管", "销售负责人", "Sales Manager", "Sales Lead", "销售团队经理"]
+  },
+  {
+    "code": "11-2021.00",
+    "group": "销售管理",
+    "title_en": "Marketing Managers",
+    "title_zh": "市场营销经理",
+    "canonical": "市场营销经理",
+    "aliases": ["市场经理", "营销经理", "Marketing Manager", "品牌营销经理", "市场负责人"]
+  },
+  {
+    "code": "41-4012.00",
+    "group": "一线销售",
+    "title_en": "Sales Representatives, Wholesale and Manufacturing",
+    "title_zh": "批发制造销售代表",
+    "canonical": "销售代表",
+    "aliases": ["批发销售代表", "渠道销售代表", "Sales Representative", "销售专员", "客户代表", "一线销售"]
+  },
+  {
+    "code": "41-2031.00",
+    "group": "一线销售",
+    "title_en": "Retail Salespersons",
+    "title_zh": "零售销售员",
+    "canonical": "零售销售员",
+    "aliases": ["门店销售", "导购", "营业员", "Retail Salesperson", "Retail Sales Associate"]
+  },
+  {
+    "code": "41-3011.00",
+    "group": "一线销售",
+    "title_en": "Advertising Sales Agents",
+    "title_zh": "广告销售代表",
+    "canonical": "广告销售代表",
+    "aliases": ["广告销售", "媒体销售", "Advertising Sales Representative", "广告客户代表", "广告销售专员"]
+  },
+  {
+    "code": "41-1011.00",
+    "group": "零售督导",
+    "title_en": "First-Line Supervisors of Retail Sales Workers",
+    "title_zh": "零售销售一线主管",
+    "canonical": "零售销售主管",
+    "aliases": [
+      "门店销售主管",
+      "零售团队主管",
+      "Retail Sales Supervisor",
+      "Store Sales Supervisor",
+      "门店主管",
+      "店铺主管",
+      "零售店长",
+      "门店经理"
+    ]
+  },
+  {
+    "code": "41-1012.00",
+    "group": "零售督导",
+    "title_en": "First-Line Supervisors of Non-Retail Sales Workers",
+    "title_zh": "非零售销售一线主管",
+    "canonical": "销售主管",
+    "aliases": ["销售团队主管", "渠道销售主管", "Sales Supervisor", "Sales Team Lead", "一线销售主管"]
+  },
+  {
+    "code": "13-1161.00",
+    "group": "市场/品类",
+    "title_en": "Market Research Analysts and Marketing Specialists",
+    "title_zh": "市场研究与营销专员",
+    "canonical": "市场研究专员",
+    "aliases": ["市场分析师", "营销专员", "Market Research Analyst", "Marketing Specialist", "消费者洞察专员"]
+  },
+  {
+    "code": "11-2011.00",
+    "group": "市场/品类",
+    "title_en": "Advertising and Promotions Managers",
+    "title_zh": "广告与促销经理",
+    "canonical": "促销经理",
+    "aliases": ["广告经理", "推广经理", "Advertising Manager", "Promotions Manager", "市场推广经理"]
+  },
+  {
+    "code": "27-1026.00",
+    "group": "陈列管理",
+    "title_en": "Merchandise Displayers and Window Trimmers",
+    "title_zh": "商品陈列与橱窗设计",
+    "canonical": "商品陈列",
+    "aliases": ["陈列专员", "视觉陈列", "Visual Merchandiser", "Merchandiser", "橱窗陈列"]
+  },
+  {
+    "code": "27-1027.00",
+    "group": "陈列管理",
+    "title_en": "Set and Exhibit Designers",
+    "title_zh": "展台与陈列设计",
+    "canonical": "展台设计",
+    "aliases": ["陈列设计", "展览设计", "Exhibit Designer", "Display Designer", "展陈设计"]
+  },
+  {
+    "code": "13-1022.00",
+    "group": "批发采购",
+    "title_en": "Wholesale and Retail Buyers, Except Farm Products",
+    "title_zh": "批发零售采购员",
+    "canonical": "采购员",
+    "aliases": ["零售采购", "批发采购", "Buyer", "Purchasing Specialist", "采购专员"]
+  },
+  {
+    "code": "11-3061.00",
+    "group": "批发采购",
+    "title_en": "Purchasing Managers",
+    "title_zh": "采购经理",
+    "canonical": "采购经理",
+    "aliases": ["采购负责人", "Purchasing Manager", "Procurement Manager", "采购主管", "供应商管理经理"]
+  },
+  {
+    "code": "11-3071.00",
+    "group": "供应链",
+    "title_en": "Transportation, Storage, and Distribution Managers",
+    "title_zh": "储运与配送经理",
+    "canonical": "物流经理",
+    "aliases": ["仓储经理", "配送经理", "Distribution Manager", "Transportation Manager", "仓配经理"]
+  },
+  {
+    "code": "13-1081.00",
+    "group": "供应链",
+    "title_en": "Logisticians",
+    "title_zh": "物流师",
+    "canonical": "物流专员",
+    "aliases": ["供应链专员", "Logistician", "Logistics Specialist", "物流计划", "供应链计划"]
+  }
+]

@@ -8,7 +8,7 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-316%20offline%20%2B%2023%20ES-brightgreen)
+![Tests](https://img.shields.io/badge/tests-320%20offline%20%2B%2023%20ES-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![version](https://img.shields.io/badge/version-v0.1.0-blue)
@@ -87,11 +87,13 @@ understand → plan → execute → judge → evaluate → reflect → revise �
 
 一句话总结：原来的系统解决的是「一次查询怎么执行」，我解决的是「这次搜索策略对不对」。
 
-### 为什么仓库里没有直接放原来的检索工具
+### 为什么把检索层也一起放进仓库
 
-`SearchTool` 这条边界抽象自一个真实的人才检索系统：那边 `SearchAgentService(tool=...)` 背后是内部的混合检索服务（Elasticsearch 8 混合召回 + 大模型重排），Agent 只负责「理解 → 规划 → 执行 → 判断 → 反思 → 修订」这层编排。那套服务依赖公司内网的存储与数据，不属于个人资产，因此不在本仓库内。
+Agent 只负责「理解 → 规划 → 执行 → 判断 → 反思 → 修订」这层编排，真正决定一次搜索能不能找到人的，是下面的检索执行层。因此仓库不只保留 `SearchTool` 接口，还把可独立运行的 **Hybrid V2** 引擎一并开源：IR 编译、硬条件过滤、BM25 + kNN 混合召回、可解释的硬匹配事实和受控重排都在 `src/search_agent/hybrid_v2/` 中。
 
-也正因如此，「换引擎不改 Agent 代码」这句话需要用**可运行的参考实现**来证明——仓库内置的内存 / SQLite / Elasticsearch 三个后端就是干这个的：它们在同一份 `SearchTool` 协议下可互换，并在同一语料上结果逐位一致（跨后端一致性测试）。
+它连接**使用者自己提供的 Elasticsearch 8**，地址、索引、认证、字段名、embedding、标签字典和重排模型全部由环境变量决定；默认使用确定性本地向量与本地重排，零 API key 也能跑。仓库不包含任何主机、凭据或真实简历，公开演示数据仍全部是虚构候选人。详细接法见 `docs/HYBRID_V2.md`。
+
+因此，「换引擎不改 Agent 代码」不只靠接口声明，而是有四条可运行路径来证明：内存 / SQLite / Elasticsearch 简版 / Hybrid V2，复用同一个 `SearchTool` 契约。
 
 ## 30 秒上手
 
@@ -354,6 +356,7 @@ search-agent-harness/
 │   ├── tools/sqlite_fts.py  # 零依赖 SQLite/FTS5 后端（SQL 编译 where 树）
 │   ├── tools/text.py        # 共享语义层：分词 / 匹配 / 打分（多后端同源）
 │   ├── tools/elasticsearch.py # 真实 ES 8 后端（DSL 编译 + docker compose）
+│   ├── hybrid_v2/          # 独立混合检索：IR 编译 + 硬过滤 + BM25/kNN + 重排
 │   ├── llm/                 # LLM 客户端（OpenAI 协议）+ 各阶段 prompt
 │   ├── models/              # 意图 IR / 推理工件 / API 模型（pydantic v2）
 │   ├── demo.py              # 离线脚本化 LLM + 合成候选人数据
@@ -363,9 +366,9 @@ search-agent-harness/
 │   ├── tools/embedding.py   # 确定性哈希向量（换真实模型只改这一个函数）
 │   ├── web/                 # 内置 Web 控制台（HTML/CSS/JS，零构建；FastAPI 托管 GET /）
 │   └── cli.py               # 命令行入口：demo / corpus / search / eval / serve
-├── tests/                   # 316 离线 + 23 ES 集成
+├── tests/                   # 320 离线 + 23 ES 集成
 ├── examples/                # custom_backend.py（最小接入）· es_end_to_end.py（真实 ES 全链路）· es_hybrid_recall.py（混合召回）
-├── docs/                    # ARCHITECTURE.md · DECISIONS.md · CASE_STUDY.md · eval_baseline.json · demo.tape
+├── docs/                    # ARCHITECTURE.md · HYBRID_V2.md · DECISIONS.md · CASE_STUDY.md · eval_baseline.json · demo.tape
 ├── Dockerfile               # 多阶段镜像：wheel 构建 → 非 root 运行 + HEALTHCHECK
 └── docker-compose.yml       # 单节点 ES 8 + API 服务（docker compose up -d --build）
 ```
@@ -408,12 +411,30 @@ class SearchTool(Protocol):
     def rerank_pool(self, req: RerankToolRequest) -> SearchToolResult: ...
 ```
 
-实现这两个方法（ES / 向量库 / 内部检索服务皆可），组装
+实现这两个方法（ES / 向量库 / 自有检索服务皆可），组装
 `SearchAgentService(tool=..., llm_client=...)` 即可。参考实现见
 `src/search_agent/tools/memory.py`，最小示例见 `examples/custom_backend.py`。
-此外仓库内置三个后端：内存（`tools/memory.py`）、SQLite/FTS5（`tools/sqlite_fts.py`，
-仅标准库）与 Elasticsearch 8（`tools/elasticsearch.py`，见下节），在同一语料上结果逐位一致
-（`tests/test_sqlite_fts.py`、`tests/test_elasticsearch_backend.py`）。
+此外仓库内置四个后端：内存（`tools/memory.py`）、SQLite/FTS5（`tools/sqlite_fts.py`，
+仅标准库）、Elasticsearch 8 简版（`tools/elasticsearch.py`）与独立的 Hybrid V2
+（`hybrid_v2/`，硬过滤 + BM25/kNN + 可解释重排）。前三个在同一演示语料上结果逐位一致
+（`tests/test_sqlite_fts.py`、`tests/test_elasticsearch_backend.py`）；Hybrid V2 使用
+自己的索引契约，见 `docs/HYBRID_V2.md`。
+
+## Hybrid V2：可独立运行的混合检索引擎
+
+Hybrid V2 是仓库内可独立运行的检索引擎，可以直接连接你自己的 Elasticsearch 8：
+
+```powershell
+pip install -e ".[es]"
+$env:SEARCH_AGENT_HYBRID_V2_ES_URL = "http://127.0.0.1:9200"
+$env:SEARCH_AGENT_HYBRID_V2_ES_INDEX = "candidate"
+search-agent search "找 3 年以上、做过高并发系统的后端工程师" --backend hybrid_v2 --top-k 5
+```
+
+配置了 ES 地址后，`hybrid_v2` 会成为默认检索后端；没有配置时仍默认 `memory`，公开
+demo 不需要任何服务。它保留 NL2IR 硬条件编译、工作年限/空窗/司龄规则、O*NET 本地岗位
+别名、BM25 + 多字段 kNN 和可解释的 `hardMatches`；不包含图扩展、托管词典或外部存储
+适配器。索引字段、认证、embedding 与重排配置见 `docs/HYBRID_V2.md`。
 
 ## 接入真实后端（Elasticsearch）
 
@@ -449,13 +470,17 @@ pytest -q -m es
 | `SEARCH_AGENT_LLM_JSON_REPAIRS` | `1` | 非法 JSON 的修复重试轮数（回传模型输出要求重写） |
 | `SEARCH_AGENT_LLM_BACKOFF_SEC` | `0.5` | 退避基数（秒，逐次翻倍） |
 | `SEARCH_AGENT_REDIS_URL` / `REDIS_URL` | — | 可选：会话记忆 / 结果分页 / 策略记忆（跨进程共享） |
-| `SEARCH_AGENT_ES_URL` | `http://127.0.0.1:9200` | Elasticsearch 后端地址（`tools/elasticsearch.py`） |
+| `SEARCH_AGENT_ES_URL` | `http://127.0.0.1:9200` | Elasticsearch 地址；同时启用 Hybrid V2 默认选择 |
+| `SEARCH_AGENT_HYBRID_V2_ES_URL` / `_ES_INDEX` | — / `candidate` | Hybrid V2 专用地址与索引 |
+| `SEARCH_AGENT_HYBRID_V2_VECTOR_MODE` | `nested` | `nested` 或 `flat` 向量字段布局 |
+| `SEARCH_AGENT_HYBRID_V2_RERANK_PROVIDER` | `local` | 本地确定性重排，或 `openai` 兼容重排 |
+| `SEARCH_AGENT_HYBRID_V2_TAG_DICT` | — | 可选的本地标签 name→id JSON 文件 |
 
 ## Roadmap
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 316 个离线单元测试（+23 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
+- [x] 320 个离线单元测试（+23 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] Web 控制台：零构建单页（八阶段时间线 / 候选人匹配证据 / metrics / trace），`GET /` 直接托管，
@@ -463,6 +488,8 @@ pytest -q -m es
 - [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）
 - [x] SQLite/FTS5 后端（`tools/sqlite_fts.py`，标准库）：where 树编译 SQL + 跨后端一致性测试。
 - [x] Elasticsearch 真实后端 + `docker compose` 端到端示例（ES DSL 编译，`examples/es_end_to_end.py`）。
+- [x] 独立 Hybrid V2 引擎：IR 硬条件编译、BM25 + 多字段 kNN、可解释 hardMatches、
+      本地/可选 LLM 分片重排；使用用户自己的 ES 与环境变量，无内部依赖（`docs/HYBRID_V2.md`）。
 - [x] 向量通道：`dense_vector` + kNN，与 BM25 做 RRF 混合召回（`examples/es_hybrid_recall.py`）。
 - [x] Docker 全栈：多阶段镜像 + compose（`api` 等待 ES 健康后启动，自动灌入演示语料）。
 - [x] Oracle 基准：种子化合成语料 + 生成器真值，去自证评测（`search-agent eval --generated / --oracle`）。
@@ -477,11 +504,11 @@ pytest -q -m es
 
 ## 诚实声明
 
-- 本仓库代码为独立实现：不含任何公司代码、数据或内部文档；演示数据为 16 个虚构候选人（`c001`–`c016`），其中的公司 / 院校名仅作为行业背景用于演示，与真实个人无关。
-- 仓库内置内存 / SQLite / Elasticsearch 三个检索后端（前两个零依赖，ES 需 `docker compose`）；向量库等其它生产组件通过 `SearchTool` 协议对接，不在本仓库内。
+- 仓库内所有演示数据均为虚构：16 个候选人（`c001`–`c016`），其中的公司 / 院校名仅作为行业背景用于演示，与真实个人无关。
+- 仓库内置内存 / SQLite / Elasticsearch 简版 / Hybrid V2 四条检索路径；前两条零依赖，后两条需要使用者自己的 Elasticsearch 8。
 - 未在生产环境部署过；上面的耗时数字来自本机离线 demo（纯 CPU、单进程）。
-- 简历 / 汇报口径里的「平均每条 Query 新增 13.4 个相关候选、独有候选相关率 79.8%」来自**原系统内部环境**
-  （真实简历库 + 公司检索工具 + 真实 LLM），不在本仓库复现。该对照是一次**消融实验**：基线 = 同一套
+- 简历 / 汇报口径里的「平均每条 Query 新增 13.4 个相关候选、独有候选相关率 79.8%」来自一次
+  **非公开评测**，不在本仓库复现；仓库不包含该评测数据或执行环境。该对照是一次**消融实验**：基线 = 同一套
   understand → plan → execute → judge 的单趟链路，唯一变量是关掉 reflect + revise，因此新增收益可归因到
   反思闭环；指标口径为 `A_only = A − B`、新增相关候选 = `|A_only ∩ R|` 的均值、独有候选相关率 =
   `|A_only ∩ R| / |A_only|`（R = 人工标注相关集）。
@@ -519,11 +546,11 @@ Design rationale: the missing piece is not retrieval — Elasticsearch is alread
 strong — but the search-policy layer that decides what to search, where, whether
 it is enough, and when to change direction. This harness adds a budget-governed
 reflective loop on top of a deterministic hybrid retrieval backend, behind a
-two-method `SearchTool` protocol; the internal production retrieval service it
-abstracts from is not part of this repository.
+two-method `SearchTool` protocol. A standalone Hybrid V2 retrieval engine is
+included and connects to an operator-provided Elasticsearch 8 cluster.
 
-> Honesty note: an independent implementation with no company code or data;
-> the demo ships 16 fictional candidates and runs without any API key.
+> Honesty note: no production data or credentials are included; the demo
+> ships 16 fictional candidates and runs without any API key.
 
 </details>
 

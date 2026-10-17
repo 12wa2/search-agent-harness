@@ -45,9 +45,13 @@ class CandidateItem(BaseModel):
     id: str | None = None
     docId: str
     candidateProfileId: str | None = None
+    userId: int | str | None = None
+    newestAppId: int | None = None
     score: float = 0.0
+    matchRate: int | None = None
     name: str | None = None
     workYears: float | None = None
+    summaryEn: str | None = None
     avatar: str = ""
     summary: str = ""
     gender: int | None = None
@@ -58,9 +62,17 @@ class CandidateItem(BaseModel):
     certificates: list[dict] = Field(default_factory=list)
     languages: list[dict] = Field(default_factory=list)
     workExperiences: list[dict] = Field(default_factory=list)
+    internshipExperiences: list[dict] = Field(default_factory=list)
+    projectExperiences: list[dict] = Field(default_factory=list)
     educations: list[dict] = Field(default_factory=list)
     expectedPositions: list[str] = Field(default_factory=list)
+    expectedIndustries: list[str] = Field(default_factory=list)
     expectedCities: list[str] = Field(default_factory=list)
+    expectedSalary: str | None = None
+    expectedWorkType: str | None = None
+    workState: str | None = None
+    softMatchBreakdown: list[dict] | None = None
+    profileSnapshot: dict | None = None
     matchExplanation: dict | None = None
 
 

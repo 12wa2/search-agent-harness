@@ -7,10 +7,12 @@
 
 ### Added
 
-- **Hybrid V2 适配器**（`integrations/hybrid_v2.py`、`tools/factory.py`）：
-  通过同一 `SearchTool` 契约接入 Hybrid V2；新增无图模式，保留本地 O*NET 别名，
-  支持 `--backend hybrid_v2` / `SEARCH_AGENT_BACKEND` 切换；环境中可用时默认使用
-  Hybrid V2，否则回退内存后端，并补充模型转换与默认选择测试。
+- **独立 Hybrid V2 检索引擎**（`hybrid_v2/`、`integrations/hybrid_v2.py`）：
+  将公开可迁移部分完整放入仓库——IR 工作年限/空窗/司龄归一化、硬条件 DSL、本地
+  O*NET 别名、BM25 + 多字段 kNN、`_source.payload` 兼容、可解释 hardMatches 和有界
+  重排。ES 地址、认证、索引字段、embedding、标签/薪资目录全部环境变量注入；无配置时
+  仍默认 `memory`，配置 ES 后默认 `hybrid_v2`。新增假 ES 服务、payload 转换、硬匹配和
+  默认选择测试，接入文档见 `docs/HYBRID_V2.md`。
 - **能力感知请求路由**（`intent_router.py`、`server.py`）：新增确定性 `IntentRouter`，在 Harness 之前
   区分 `GREETING` / `HELP` / `OUT_OF_SCOPE` / `SEARCH`。问候、帮助和明确范围外请求通过单个
   `reply` SSE 帧返回，不启动 Agent、不调用 LLM 或 `SearchTool`；招聘需求和模糊输入默认进入

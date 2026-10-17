@@ -198,8 +198,10 @@ understand ──(need_clarify)──> 返回澄清问题
 
 参考实现 `tools/memory.py::InMemorySearchTool` 完整实现了协议（WhereNode 求值、
 语义 token 覆盖率打分、hard_matches 计算），用于离线演示与测试。
-可选的 `integrations/hybrid_v2.py::HybridV2ToolAdapter` 通过同一协议接入
-Hybrid V2 服务，只负责模型转换，不改变 Agent 的八阶段循环。
+`hybrid_v2/` 提供第四条可运行路径：IR 归一化 → 硬过滤 DSL → BM25 + 多字段 kNN →
+可解释 hardMatches → 本地或有界 LLM 重排。它通过同一协议接入，不改变 Agent 的
+八阶段循环；ES 地址、认证、字段名、embedding 和标签字典全部来自环境变量，接入说明见
+`docs/HYBRID_V2.md`。
 
 ## 10. 可观测性
 
@@ -237,7 +239,8 @@ ES 索引，再对外提供 HTTP + SSE。后端统一由 `tools/factory.py` 构�
 
 ## 13. 召回层：关键词 / 向量 / 混合（RRF）
 
-`search_with_intent` 保持「引擎侧过滤 → Python 复检与打分」这唯一事实来源，所以三个后端逐位
+`search_with_intent` 保持「引擎侧过滤 → Python 复检与打分」这唯一事实来源，所以内存 / SQLite / ES
+三个按相同语义实现的后端逐位
 一致；召回层本身在 ES 后端上另开三条通道，供漏斗式检索与演示使用：
 
 | 通道 | 实现 | 说明 |

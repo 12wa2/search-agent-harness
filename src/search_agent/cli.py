@@ -16,7 +16,6 @@ Examples::
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import os
 import sys
 import time
@@ -168,16 +167,14 @@ def print_metrics(resp: SearchResponse, stream: TextIO | None = None) -> None:
 
 
 def _hybrid_v2_available() -> bool:
-    """Whether the optional Hybrid V2 module can be imported in this environment."""
-    try:
-        module = "app.services.candidate_search.hybrid_v2.service"
-        return importlib.util.find_spec(module) is not None
-    except (ImportError, ModuleNotFoundError, ValueError):
-        return False
+    """Whether an explicit Elasticsearch endpoint enables the bundled engine."""
+    from search_agent.hybrid_v2 import hybrid_v2_configured
+
+    return hybrid_v2_configured()
 
 
 def _default_backend() -> str:
-    """Prefer Hybrid V2 when present; keep the public demo runnable otherwise."""
+    """Prefer Hybrid V2 when ES is configured; keep the demo zero-config otherwise."""
     configured = os.environ.get("SEARCH_AGENT_BACKEND")
     if configured:
         return configured
@@ -194,7 +191,7 @@ def _add_backend_flags(parser: argparse.ArgumentParser) -> None:
         default=default_backend,
         help=(
             "retrieval backend: memory / sqlite / es (needs .[es]) / "
-            f"hybrid_v2 (optional backend; default: {default_backend})"
+            f"hybrid_v2 (bundled; needs ES; default: {default_backend})"
         ),
     )
     parser.add_argument("--sqlite-path", default=":memory:", help="db file for --backend sqlite")

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
 from pydantic import BaseModel, Field
 
 from search_agent.contract.tool import (
@@ -17,29 +16,29 @@ from search_agent.models.api import CandidateItem
 from search_agent.models.ir import CandidateSearchIR, StructuredConditionIR, WhereNode
 
 
-class InternalRequest(BaseModel):
+class ServiceRequest(BaseModel):
     intent: dict[str, Any]
     query_text: str
     top_k: int
 
 
-class InternalRerankRequest(BaseModel):
+class ServiceRerankRequest(BaseModel):
     query_text: str
     top_k: int
     candidates: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class InternalResult(BaseModel):
+class ServiceResult(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
     total: int = 0
     quality: str = "rich"
 
 
 class FakeService:
-    def search_with_intent(self, req: InternalRequest) -> InternalResult:
+    def search_with_intent(self, req: ServiceRequest) -> ServiceResult:
         assert req.query_text == "找后端工程师"
         assert req.intent["where"]["condition"]["field"] == "work_years"
-        return InternalResult(
+        return ServiceResult(
             items=[
                 {
                     "doc_id": "c001",
@@ -50,10 +49,10 @@ class FakeService:
             total=1,
         )
 
-    def rerank_pool(self, req: InternalRerankRequest) -> InternalResult:
+    def rerank_pool(self, req: ServiceRerankRequest) -> ServiceResult:
         assert req.query_text == "找后端工程师"
         assert req.candidates[0]["doc_id"] == "c001"
-        return InternalResult(items=list(req.candidates), total=len(req.candidates))
+        return ServiceResult(items=list(req.candidates), total=len(req.candidates))
 
 
 def _ir() -> CandidateSearchIR:
@@ -78,8 +77,8 @@ def _request() -> SearchToolRequest:
 def test_adapter_translates_search_models_in_both_directions() -> None:
     adapter = hybrid_v2.HybridV2ToolAdapter(
         service=FakeService(),
-        request_model=InternalRequest,
-        rerank_request_model=InternalRerankRequest,
+        request_model=ServiceRequest,
+        rerank_request_model=ServiceRerankRequest,
     )
 
     result = adapter.search_with_intent(_request())
@@ -92,8 +91,8 @@ def test_adapter_translates_search_models_in_both_directions() -> None:
 def test_adapter_translates_rerank_models() -> None:
     adapter = hybrid_v2.HybridV2ToolAdapter(
         service=FakeService(),
-        request_model=InternalRequest,
-        rerank_request_model=InternalRerankRequest,
+        request_model=ServiceRequest,
+        rerank_request_model=ServiceRerankRequest,
     )
     candidate = ToolCandidate(
         doc_id="c001",
@@ -115,10 +114,11 @@ def test_adapter_translates_rerank_models() -> None:
     assert result.items[0].doc_id == "c001"
 
 
-def test_missing_hybrid_backend_error_is_actionable(monkeypatch) -> None:
-    def fail_import(name: str) -> None:
-        raise ImportError(name)
+def test_hybrid_backend_builds_the_bundled_service(monkeypatch) -> None:
+    sentinel = object()
+    monkeypatch.setattr(
+        "search_agent.hybrid_v2.HybridV2SearchService",
+        lambda **_kwargs: sentinel,
+    )
 
-    monkeypatch.setattr(hybrid_v2.importlib, "import_module", fail_import)
-    with pytest.raises(RuntimeError, match="Hybrid V2 service"):
-        hybrid_v2.build_hybrid_v2_tool(no_graph=False)
+    assert hybrid_v2.build_hybrid_v2_tool(no_graph=False) is sentinel
