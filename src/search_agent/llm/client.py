@@ -27,9 +27,11 @@ import random
 import re
 import time
 from dataclasses import dataclass
+from threading import Event
 from typing import Any, Callable, Protocol
 
 from search_agent.core.budget import BudgetState
+from search_agent.core.cancellation import raise_if_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -135,9 +137,15 @@ class MeteredLlmClient:
     character-based estimate, so the budget never silently counts zero.
     """
 
-    def __init__(self, inner: LlmClient, budget_state: BudgetState) -> None:
+    def __init__(
+        self,
+        inner: LlmClient,
+        budget_state: BudgetState,
+        cancel_event: Event | None = None,
+    ) -> None:
         self._inner = inner
         self._budget_state = budget_state
+        self._cancel_event = cancel_event
 
     def complete_json(
         self,
@@ -148,6 +156,7 @@ class MeteredLlmClient:
         schema: dict[str, Any],
         model: str | None = None,
     ) -> dict[str, Any]:
+        raise_if_cancelled(self._cancel_event, stage=f"llm:{schema_name}")
         result = self._inner.complete_json(
             system=system, user=user, schema_name=schema_name, schema=schema, model=model
         )

@@ -7,8 +7,9 @@
 
 1. **LLM 只做判断，事实来自工具**。LLM 负责理解意图、规划路径、做能力级判断；
    候选人事实（hardMatches、简历快照）一律来自 `SearchTool` 的返回，prompt 明确禁止编造。
-2. **控制面不抛异常**。任何阶段的任何失败都走降级矩阵（`core/degrade.py`），
-   循环永远能前进或收敛；`degradedReason` 显式透传到响应与 trace。
+2. **控制面不向调用方抛异常**。任何阶段失败都走降级矩阵（`core/degrade.py`），
+   循环永远能前进或收敛；`degradedReason` 显式透传到响应与 trace。取消是唯一的内部
+   控制流异常，在 Harness / Graph 边界被捕获并转为 `cancelled` 终态。
 3. **预算是第一公民**。迭代 / 路径 / LLM 调用 / 墙钟预算贯穿整个循环（`core/budget.py`），
    而不是用「超时兜底」处理失控。
 4. **不引入 Agent 框架**。8 个阶段是纯函数，`LoopRunner` 就是一个显式循环；
@@ -29,7 +30,7 @@
 | 7 | revise | 反思结果 | 路径动作：收紧 / 放宽 / 新增 / 丢弃 | — |
 | 8 | finalize | 全部状态 | 最终排序结果（收敛再搜或合并重排） | LLM + SearchTool |
 
-阶段约定（`stages/base.py` 的 `Deps` 注入 LLM / SearchTool / BudgetState / event_sink）：
+阶段约定（`stages/base.py` 的 `Deps` 注入 LLM / SearchTool / BudgetState / event_sink / cancel_event）：
 
 - 每个阶段签名统一为 `run_xxx(state, deps) -> dict`，只返回增量更新；
 - LLM 相关阶段的解析层都是**宽容解析**：单条坏数据跳过并记日志，不拖垮整个阶段
@@ -63,6 +64,18 @@ understand ──(need_clarify)──> 返回澄清问题
   （`budget_exceeded`）。
 - **全路径失败检测**：execute 后若本轮没有任何新 PathResult，判定所有路径失败，
   走 `fallback_baseline`（基线单趟检索）。
+
+### 取消与生命周期
+
+`Deps.cancel_event` 是每次请求独立的协作式取消信号（`core/cancellation.py`）：
+
+- Harness 在进入阶段前、阶段返回后检查信号；`MeteredLlmClient` 在转发给模型前再检查一次。
+- 取消不是故障降级：状态记为 `cancelled=true`、`cancelledAt=<阶段>`，
+  `degradedReason=cancelled`，trace 保留已完成阶段的证据。
+- Service 对取消请求返回空交付集，不把部分候选当成最终结果，也不写策略记忆 / 会话轮次。
+- SSE 生成器在客户端断开时于 `finally` 设置信号，释放阻塞中的队列读取。
+- 已经在途的模型请求允许返回，不会被强杀；随后停止后续阶段。这是跨 OpenAI / ES / 自定义
+  `SearchTool` 都可验证的取消语义，比依赖某个 SDK 的请求中断更稳定。
 
 ## 4. 预算与终止
 

@@ -5,6 +5,8 @@ Skipped when the optional ``langgraph`` extra is absent.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 pytest.importorskip("langgraph")
@@ -51,3 +53,25 @@ def test_langgraph_runner_satisfies_protocol() -> None:
 
     runner: HarnessRunner = LangGraphRunner()
     assert callable(runner.run)
+
+
+def test_langgraph_pre_cancelled_run_returns_partial_trace() -> None:
+    cancel = threading.Event()
+    cancel.set()
+    service = SearchAgentService(
+        tool=InMemorySearchTool(DEMO_DATA),
+        llm_client=ScriptedLlmClient(),
+        runner=LangGraphRunner(),
+    )
+
+    response = service.search(
+        SearchRequest(query=DEMO_QUERIES[0], topK=10, details=True),
+        cancel_event=cancel,
+    )
+
+    assert response.total == 0
+    assert response.items == []
+    assert response.debug is not None
+    assert response.debug["cancelled"] is True
+    assert response.debug["cancelledAt"] == "understand"
+    assert response.debug["agentTrace"]["degradedReason"] == "cancelled"

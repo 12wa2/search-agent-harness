@@ -99,9 +99,19 @@ def _sse(event: str, payload: dict[str, Any]) -> str:
 
 
 async def _stream_search(
-    tool: SearchTool, llm: LlmClient, req: SearchRequest
+    tool: SearchTool,
+    llm: LlmClient,
+    req: SearchRequest,
+    *,
+    cancel_event: threading.Event | None = None,
 ) -> AsyncIterator[str]:
-    """Run one search in a worker thread; yield SSE frames as stages fire."""
+    """Run one search in a worker thread; yield SSE frames as stages fire.
+
+    Closing the stream sets ``cancel_event``. The harness then stops at its
+    next stage boundary or before its next LLM call; an already in-flight
+    provider request is allowed to return instead of being force-killed.
+    """
+    cancel_event = cancel_event or threading.Event()
     events: queue.Queue = queue.Queue()
 
     def sink(event: str, state: dict[str, Any]) -> None:
@@ -110,7 +120,7 @@ async def _stream_search(
     def worker() -> None:
         try:
             service = SearchAgentService(tool=tool, llm_client=llm, event_sink=sink)
-            resp = service.search(req)
+            resp = service.search(req, cancel_event=cancel_event)
             events.put(("result", resp.model_dump(by_alias=True)))
         except Exception as exc:  # surfaced as an SSE error frame, not a crash
             events.put(("error", {"message": str(exc)}))
@@ -118,11 +128,17 @@ async def _stream_search(
             events.put(None)
 
     threading.Thread(target=worker, daemon=True).start()
-    while True:
-        item = await asyncio.to_thread(events.get)
-        if item is None:
-            break
-        yield _sse(item[0], item[1])
+    try:
+        while True:
+            item = await asyncio.to_thread(events.get)
+            if item is None:
+                break
+            yield _sse(item[0], item[1])
+    finally:
+        # StreamingResponse cancels this generator when the client disconnects.
+        # The sentinel also releases the to_thread waiter when that happens.
+        cancel_event.set()
+        events.put_nowait(None)
 
 
 def create_app(

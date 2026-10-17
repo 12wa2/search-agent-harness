@@ -26,6 +26,12 @@ from typing import Any, Callable
 
 from langgraph.graph import END, START, StateGraph
 
+from search_agent.core.cancellation import (
+    SearchCancelled,
+    is_cancelled,
+    mark_cancelled,
+    raise_if_cancelled,
+)
 from search_agent.core.degrade import degrade
 from search_agent.core.trace import iteration_trace
 from search_agent.harness import (
@@ -61,6 +67,12 @@ def build_graph(deps: Deps) -> Any:
             state = dict(state)
             bs = deps.budget_state
 
+            try:
+                raise_if_cancelled(deps.cancel_event, stage=phase)
+            except SearchCancelled as exc:
+                mark_cancelled(state, stage=exc.stage)
+                return state
+
             if phase not in _UNGUARDED_PHASES and (bs.time_exceeded() or bs.llm_exceeded()):
                 if state.get("degraded_reason") is None:
                     state["degraded_reason"] = "budget_exceeded"
@@ -76,8 +88,15 @@ def build_graph(deps: Deps) -> Any:
             try:
                 state.update(fn(state, deps))
                 emit_event(deps, phase, state)
+            except SearchCancelled as exc:
+                mark_cancelled(state, stage=exc.stage)
+                return state
             except Exception:  # noqa: BLE001 - degradation matrix handles it
                 handle_stage_failure(state, phase, deps)
+                return state
+
+            if is_cancelled(deps.cancel_event):
+                mark_cancelled(state, stage=phase)
                 return state
 
             if phase == "understand" and not state.get("need_clarify"):
@@ -121,6 +140,8 @@ def build_graph(deps: Deps) -> Any:
         return state
 
     def route_after_understand(state: dict[str, Any]) -> str:
+        if state.get("cancelled"):
+            return "finish"
         phase = state.get("phase")
         if state.get("need_clarify") or phase == "done":
             return "finish"
@@ -131,6 +152,8 @@ def build_graph(deps: Deps) -> Any:
         return "plan"
 
     def route_after_plan(state: dict[str, Any]) -> str:
+        if state.get("cancelled"):
+            return "finish"
         phase = state.get("phase")
         if phase == "done":
             return "finish"
@@ -139,6 +162,8 @@ def build_graph(deps: Deps) -> Any:
         return "execute"
 
     def route_after_execute(state: dict[str, Any]) -> str:
+        if state.get("cancelled"):
+            return "finish"
         phase = state.get("phase")
         if phase == "done":
             return "finish"
@@ -147,15 +172,23 @@ def build_graph(deps: Deps) -> Any:
         return "judge"
 
     def route_after_judge(state: dict[str, Any]) -> str:
+        if state.get("cancelled"):
+            return "finish"
         return "finalize" if state.get("phase") == "finalize" else "evaluate"
 
     def route_after_evaluate(state: dict[str, Any]) -> str:
+        if state.get("cancelled"):
+            return "finish"
         return "reflect" if state.get("phase") == "reflect" else "finalize"
 
     def route_after_reflect(state: dict[str, Any]) -> str:
+        if state.get("cancelled"):
+            return "finish"
         return "finalize" if state.get("phase") == "finalize" else "revise"
 
     def route_after_revise(state: dict[str, Any]) -> str:
+        if state.get("cancelled"):
+            return "finish"
         phase = state.get("phase")
         if phase == "done":
             return "finish"

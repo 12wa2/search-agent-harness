@@ -12,6 +12,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from search_agent.core.cancellation import (
+    SearchCancelled,
+    is_cancelled,
+    mark_cancelled,
+    raise_if_cancelled,
+)
 from search_agent.core.degrade import degrade
 from search_agent.core.difficulty import (
     adaptive_budget,
@@ -75,6 +81,8 @@ def init_state_defaults(initial: dict[str, Any]) -> dict[str, Any]:
     state.setdefault("finalize", False)
     state.setdefault("need_clarify", False)
     state.setdefault("fallback_baseline", False)
+    state.setdefault("cancelled", False)
+    state.setdefault("cancelled_at", None)
     state.setdefault("final_items", [])
     state.setdefault("final_total", 0)
     return state
@@ -209,6 +217,12 @@ class Harness:
             if phase == "done":
                 break
 
+            try:
+                raise_if_cancelled(self.deps.cancel_event, stage=phase)
+            except SearchCancelled as exc:
+                mark_cancelled(state, stage=exc.stage)
+                break
+
             # budget guard: if exceeded, jump to finalize (once)
             if phase not in ("understand", "finalize") and (
                 bs.time_exceeded() or bs.llm_exceeded()
@@ -228,9 +242,18 @@ class Harness:
                 updates = _STAGES[phase](state, self.deps)
                 state.update(updates)
                 emit_event(self.deps, phase, state)
+            except SearchCancelled as exc:
+                mark_cancelled(state, stage=exc.stage)
+                break
             except Exception:  # noqa: BLE001 - degradation
                 handle_stage_failure(state, phase, self.deps)
                 continue
+
+            # A disconnect can arrive while the current stage is in flight.
+            # Finish that stage's event, then stop before the next stage.
+            if is_cancelled(self.deps.cancel_event):
+                mark_cancelled(state, stage=phase)
+                break
 
             # post-understand: difficulty routing
             if phase == "understand" and not state.get("need_clarify"):

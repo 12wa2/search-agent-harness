@@ -8,6 +8,7 @@ No loop logic here -- that lives in the Harness.
 from __future__ import annotations
 
 import logging
+from threading import Event
 from typing import Any, Callable
 
 from search_agent.config import budget_from_env, recall_pool_size_from_env
@@ -53,15 +54,16 @@ class SearchAgentService:
         self._conversation_store = ConversationStore()
         self._experience = experience or ExperienceStore()
 
-    def search(self, req: SearchRequest) -> SearchResponse:
+    def search(self, req: SearchRequest, *, cancel_event: Event | None = None) -> SearchResponse:
         budget = _budget_from_settings(req.topK)
         bs = BudgetState(budget=budget)
         deps = Deps(
-            llm=MeteredLlmClient(self._llm, bs),
+            llm=MeteredLlmClient(self._llm, bs, cancel_event=cancel_event),
             tool=self._tool,
             budget_state=bs,
             event_sink=self._event_sink,
             experience=self._experience,
+            cancel_event=cancel_event,
         )
 
         perm_dict = req.permission.model_dump() if req.permission else None
@@ -89,14 +91,16 @@ class SearchAgentService:
         }
 
         state = self._runner.run(initial_state, deps)
-        self._record_experience(state)
+        if not state.get("cancelled"):
+            self._record_experience(state)
+            if conv_id:
+                try:
+                    self._save_conversation_turn(conv_id, req, state)
+                except Exception:
+                    pass
 
-        if conv_id:
-            try:
-                self._save_conversation_turn(conv_id, req, state)
-            except Exception:
-                pass
-
+        if state.get("cancelled"):
+            return self._handle_cancelled(req, state)
         if state.get("fallback_baseline"):
             return self._handle_fallback(req, state)
         if state.get("need_clarify"):
@@ -119,6 +123,15 @@ class SearchAgentService:
                 "score": tc.score,
                 "matchExplanation": tc.match_explanation or None,
             }
+        )
+
+    def _handle_cancelled(self, req: SearchRequest, state: dict[str, Any]) -> SearchResponse:
+        """Do not return a partial result set as if the run had completed."""
+        return SearchResponse(
+            query=req.query,
+            total=0,
+            items=[],
+            debug=self._build_debug(state, req),
         )
 
     def _handle_clarify(self, req: SearchRequest, state: dict[str, Any]) -> SearchResponse:
@@ -176,6 +189,9 @@ class SearchAgentService:
         debug: dict[str, Any] = {"parseMode": "search_agent"}
         if state.get("degraded_reason"):
             debug["degradedReason"] = state["degraded_reason"]
+        if state.get("cancelled"):
+            debug["cancelled"] = True
+            debug["cancelledAt"] = state.get("cancelled_at")
         debug["agentTrace"] = state.get("agent_trace", {})
         debug["agentMetrics"] = state.get("agent_metrics", {})
         if state.get("validation_issues"):

@@ -93,6 +93,7 @@ function setRunning(active) {
   state.running = active;
   runBtn.disabled = active;
   stopBtn.hidden = !active;
+  stopBtn.disabled = false;
   runHint.classList.remove("error");
   if (active) {
     runHint.textContent = "Agent 正在运行：阶段事件会实时出现在右侧时间线。";
@@ -345,6 +346,7 @@ async function runSearch(query, topK) {
   state.controller = controller;
   let sawResult = false;
   let sawError = false;
+  let sawCancelled = false;
 
   try {
     const resp = await fetch("/search/stream", {
@@ -373,11 +375,14 @@ async function runSearch(query, topK) {
           addEvent(payload.stage, payload.detail);
         } else if (event === "result") {
           sawResult = true;
+          sawCancelled = Boolean(payload.debug && payload.debug.cancelled);
           removeWaiting();
           renderResults(payload);
           renderMetrics(payload);
           renderTrace(payload);
-          timelineHint.textContent = `完成 · ${state.stageCount} 个阶段事件 · ${Math.max(1, state.executeCount)} 轮`;
+          timelineHint.textContent = sawCancelled
+            ? "已取消 · 未产出部分结果"
+            : `完成 · ${state.stageCount} 个阶段事件 · ${Math.max(1, state.executeCount)} 轮`;
         } else if (event === "error") {
           sawError = true;
           showError(`Agent 执行失败：${payload.message || "unknown error"}`);
@@ -387,10 +392,14 @@ async function runSearch(query, topK) {
     if (!sawResult && !sawError && state.running) {
       showError("连接已结束，但没有收到最终结果。");
     }
-    if (sawResult) runHint.textContent = "完成。可修改需求后重新运行。";
+    if (sawResult && sawCancelled) {
+      runHint.textContent = "已取消。后端会在当前阶段结束后停止后续工作。";
+    } else if (sawResult) {
+      runHint.textContent = "完成。可修改需求后重新运行。";
+    }
   } catch (err) {
     if (err.name === "AbortError") {
-      runHint.textContent = "已停止本次运行。";
+      runHint.textContent = "已请求停止：当前阶段结束后不会再发起新的检索或模型调用。";
     } else {
       showError(`请求失败：${err.message}`);
     }
@@ -445,7 +454,11 @@ function bindEvents() {
   });
 
   stopBtn.addEventListener("click", () => {
-    state.controller?.abort();
+    if (!state.controller) return;
+    stopBtn.disabled = true;
+    runHint.classList.remove("error");
+    runHint.textContent = "正在停止：等待当前阶段结束…";
+    state.controller.abort();
   });
 
   queryInput.addEventListener("keydown", (event) => {

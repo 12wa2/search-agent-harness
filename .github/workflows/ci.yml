@@ -22,6 +22,24 @@ jobs:
           ruff format --check .
       - name: Test
         run: pytest -q
+      - name: Build wheel
+        run: pip wheel . --no-deps --no-cache-dir --wheel-dir dist
+      - name: Verify packaged web console
+        run: |
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+
+          wheel = next(Path("dist").glob("*.whl"))
+          names = set(zipfile.ZipFile(wheel).namelist())
+          required = {
+              "search_agent/web/index.html",
+              "search_agent/web/styles.css",
+              "search_agent/web/app.js",
+          }
+          missing = required - names
+          assert not missing, f"wheel is missing web assets: {sorted(missing)}"
+          PY
       - name: Offline demo smoke test
         run: search-agent demo --top-k 5
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from importlib.resources import files
 
 import pytest
 
@@ -97,3 +98,44 @@ def test_post_search_stream_emits_stage_and_result_frames(client: TestClient) ->
     payload = json.loads(data_line.removeprefix("data: "))
     assert payload["items"]
     assert payload["debug"]["agentTrace"]
+
+
+def test_static_assets_are_served(client: TestClient) -> None:
+    script = client.get("/app.js")
+    assert script.status_code == 200
+    assert "javascript" in script.headers["content-type"]
+    assert "async function runSearch" in script.text
+
+    styles = client.get("/styles.css")
+    assert styles.status_code == 200
+    assert "text/css" in styles.headers["content-type"]
+    assert styles.text.strip()
+
+
+def test_web_assets_are_present_in_the_package() -> None:
+    web = files("search_agent").joinpath("web")
+    for name in ("index.html", "styles.css", "app.js"):
+        assert web.joinpath(name).is_file(), name
+
+
+def test_stream_rejects_empty_query(client: TestClient) -> None:
+    assert client.post("/search/stream", json={"query": ""}).status_code == 422
+    assert client.get("/search/stream", params={"query": ""}).status_code == 422
+
+
+def test_stream_emits_error_frame_when_worker_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(self, req, *, cancel_event=None):
+        raise RuntimeError("worker exploded")
+
+    monkeypatch.setattr("search_agent.server.SearchAgentService.search", boom)
+    with TestClient(create_app(offline=True)) as failing:
+        with failing.stream(
+            "POST",
+            "/search/stream",
+            json={"query": QUERY, "topK": 5, "details": True},
+        ) as resp:
+            assert resp.status_code == 200
+            text = "".join(resp.iter_text())
+
+    assert "event: error" in text
+    assert "worker exploded" in text

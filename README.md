@@ -8,7 +8,7 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-242%20offline%20%2B%2023%20ES-brightgreen)
+![Tests](https://img.shields.io/badge/tests-252%20offline%20%2B%2023%20ES-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![version](https://img.shields.io/badge/version-v0.1.0-blue)
@@ -17,6 +17,20 @@
 
 > 内置 Web 控制台（零构建，FastAPI 直接托管）：`search-agent serve --offline` → <http://127.0.0.1:8000>。
 > 左侧提交招聘需求，中间实时展示八阶段时间线，右侧是交付候选人、命中能力与来源路径。
+
+### 本地查看 Web 控制台
+
+目前**没有托管公网在线 Demo**；仓库提供的是可一键复现的本地演示，默认模式使用脚本化 LLM
+和 16 个虚构候选人，**不需要任何 API Key**：
+
+```bash
+pip install -e ".[api]"
+search-agent serve --offline
+# 浏览器打开 http://127.0.0.1:8000
+```
+
+页面上的“停止”会断开 SSE 连接并通知后端取消：后端会在当前阶段结束后、下一次 LLM 调用前
+或进入下一阶段检索前停止后续工作。已经在途的模型请求不会被强杀，因此界面文案使用“已请求停止”，不宣称立即终止。
 
 ## 这是什么
 
@@ -35,6 +49,7 @@ understand → plan → execute → judge → evaluate → reflect → revise �
 - 用工具返回的事实（而非模型想象）对候选人做能力级判断
 - 每轮反思「缺什么」，修订路径再搜，直到达标或预算耗尽
 - 全程可降级：任何一步失败都不会让整个请求崩掉
+- 客户端断开后可协作取消：在阶段边界和下一次 LLM 调用前停止，未完成结果不会冒充最终结果
 
 ## 设计动机（这个项目从哪来）
 
@@ -237,7 +252,7 @@ search-agent serve --offline    # http://127.0.0.1:8000；浏览器打开即 Web
 | `GET /` | 内置 Web 控制台（零构建静态页：输入需求 → 实时八阶段时间线 → 候选人证据） |
 | `POST /search` | `SearchRequest` → `SearchResponse`（camelCase JSON；`details=true` 附带 `agentTrace` / `agentMetrics`） |
 | `GET /search/stream?query=…&topK=10` | SSE 事件流：每个阶段一帧，最后 `result` 帧返回完整结果 |
-| `POST /search/stream` | 同一 SSE 流的 JSON body 版本（查询不进 URL / 访问日志） |
+| `POST /search/stream` | 同一 SSE 流的 JSON body 版本（查询不进 URL / 访问日志）；客户端断开即请求后端取消 |
 | `GET /healthz` | 健康检查：版本 / 模式 / 后端与 LLM 类型 |
 
 ```bash
@@ -404,11 +419,11 @@ pytest -q -m es
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 242 个离线单元测试（+23 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES）
+- [x] 252 个离线单元测试（+23 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] Web 控制台：零构建单页（八阶段时间线 / 候选人匹配证据 / metrics / trace），`GET /` 直接托管，
-      截图 `docs/console.png`；SSE 支持 `POST /search/stream`（查询不进 URL）。
+      截图 `docs/console.png`；SSE 支持 `POST /search/stream`（查询不进 URL），客户端断开触发阶段边界取消。
 - [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）
 - [x] SQLite/FTS5 后端（`tools/sqlite_fts.py`，标准库）：where 树编译 SQL + 跨后端一致性测试。
 - [x] Elasticsearch 真实后端 + `docker compose` 端到端示例（ES DSL 编译，`examples/es_end_to_end.py`）。
