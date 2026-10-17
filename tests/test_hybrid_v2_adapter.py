@@ -1,4 +1,4 @@
-"""Public contract tests for the private Hybrid V2 adapter seam."""
+"""Public contract tests for the Hybrid V2 adapter seam."""
 
 from __future__ import annotations
 
@@ -115,10 +115,10 @@ def test_adapter_translates_rerank_models() -> None:
     assert result.items[0].doc_id == "c001"
 
 
-def test_missing_private_backend_error_is_actionable(monkeypatch) -> None:
+def test_missing_hybrid_backend_error_is_actionable(monkeypatch) -> None:
     def fail_import(name: str) -> None:
         raise ImportError(name)
 
     monkeypatch.setattr(hybrid_v2.importlib, "import_module", fail_import)
-    with pytest.raises(RuntimeError, match="private search service"):
+    with pytest.raises(RuntimeError, match="Hybrid V2 service"):
         hybrid_v2.build_hybrid_v2_tool(no_graph=False)

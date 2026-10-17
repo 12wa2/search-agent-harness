@@ -175,7 +175,7 @@ def _add_backend_flags(parser: argparse.ArgumentParser) -> None:
         default=os.environ.get("SEARCH_AGENT_BACKEND", "memory"),
         help=(
             "retrieval backend: memory (default) / sqlite / es (needs .[es]) / "
-            "hybrid_v2 (private integration)"
+            "hybrid_v2 (optional backend)"
         ),
     )
     parser.add_argument("--sqlite-path", default=":memory:", help="db file for --backend sqlite")

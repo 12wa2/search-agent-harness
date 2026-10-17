@@ -350,7 +350,6 @@ search-agent-harness/
 │   ├── stages/              # 8 个阶段（每个都是纯函数，可独立单测）
 │   ├── core/                # 签名 / 合并 / 预算 / 降级 / 难度路由 / 指标 / trace / 策略记忆 / 消融开关
 │   ├── contract/tool.py     # SearchTool 协议 —— 与检索后端的唯一边界
-│   ├── integrations/hybrid_v2.py # 可选：私有 Hybrid V2 后端适配器（不含私有实现）
 │   ├── tools/memory.py      # 参考实现：内存检索后端（离线演示用）
 │   ├── tools/sqlite_fts.py  # 零依赖 SQLite/FTS5 后端（SQL 编译 where 树）
 │   ├── tools/text.py        # 共享语义层：分词 / 匹配 / 打分（多后端同源）
@@ -412,28 +411,9 @@ class SearchTool(Protocol):
 实现这两个方法（ES / 向量库 / 内部检索服务皆可），组装
 `SearchAgentService(tool=..., llm_client=...)` 即可。参考实现见
 `src/search_agent/tools/memory.py`，最小示例见 `examples/custom_backend.py`。
-此外仓库内置三个公开后端：内存（`tools/memory.py`）、SQLite/FTS5（`tools/sqlite_fts.py`，仅标准库）与 Elasticsearch 8（`tools/elasticsearch.py`，见下节），在同一语料上结果逐位一致（`tests/test_sqlite_fts.py`、`tests/test_elasticsearch_backend.py`）。`hybrid_v2` 是可选的私有适配器，见下节。
-
-## 可选：接入私有 Hybrid V2 后端
-
-`src/search_agent/integrations/hybrid_v2.py` 提供了一层很薄的适配器：它把公开的
-`SearchToolRequest` / `RerankToolRequest` 转成私有 Hybrid V2 的模型，再把结果转回来。
-Agent 仍然只依赖 `SearchTool` 协议，搜索逻辑不需要改写。
-
-私有服务不会随本仓库分发。需要在同一个 Python 环境中安装或通过 `PYTHONPATH` 暴露该服务后，
-再选择后端：
-
-```powershell
-$env:SEARCH_AGENT_BACKEND = "hybrid_v2"
-$env:SEARCH_AGENT_HYBRID_V2_NO_GRAPH = "1"   # 默认即关闭图库；设为 0 可恢复
-search-agent serve
-```
-
-也可以显式使用 `search-agent search "找有 3 年经验的后端工程师" --backend hybrid_v2`。
-无图模式保留本地 O*NET 职位别名，关闭 Neo4j / PolarDB 图查询；ES 召回、embedding 和内部
-rerank 仍由私有服务负责。该模式需要私有服务自己的 ES、缓存、模型和凭据，**公开 demo 与 CI
-不依赖这些配置**。私有 reranker 的 LLM 调用也不在公开 Harness 的 `MeteredLlmClient` 统计内，
-生产指标应单独采集。
+此外仓库内置三个后端：内存（`tools/memory.py`）、SQLite/FTS5（`tools/sqlite_fts.py`，
+仅标准库）与 Elasticsearch 8（`tools/elasticsearch.py`，见下节），在同一语料上结果逐位一致
+（`tests/test_sqlite_fts.py`、`tests/test_elasticsearch_backend.py`）。
 
 ## 接入真实后端（Elasticsearch）
 
@@ -470,8 +450,6 @@ pytest -q -m es
 | `SEARCH_AGENT_LLM_BACKOFF_SEC` | `0.5` | 退避基数（秒，逐次翻倍） |
 | `SEARCH_AGENT_REDIS_URL` / `REDIS_URL` | — | 可选：会话记忆 / 结果分页 / 策略记忆（跨进程共享） |
 | `SEARCH_AGENT_ES_URL` | `http://127.0.0.1:9200` | Elasticsearch 后端地址（`tools/elasticsearch.py`） |
-| `SEARCH_AGENT_BACKEND` | `memory` | `search` / `serve` 的默认后端；公开默认仍是内存 |
-| `SEARCH_AGENT_HYBRID_V2_NO_GRAPH` | `1` | 私有 `hybrid_v2` 适配器是否禁用外部图库 |
 
 ## Roadmap
 

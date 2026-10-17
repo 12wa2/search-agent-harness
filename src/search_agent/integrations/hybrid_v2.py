@@ -1,9 +1,8 @@
-"""Optional adapter for a private Hybrid V2 implementation of ``SearchTool``.
+"""Optional adapter for a Hybrid V2 implementation of ``SearchTool``.
 
-The private service is intentionally not bundled with the public package. When
-it is installed in the same environment, the CLI can select it with
-``--backend hybrid_v2``. The agent only sees the public contract; all private
-module names stay inside this adapter.
+When the service is available in the same environment, the CLI can select it
+with ``--backend hybrid_v2``. The agent only sees the public contract; all
+service-specific module names stay inside this adapter.
 """
 
 from __future__ import annotations
@@ -53,7 +52,7 @@ class _OnetOnlyPositionExpander:
 
 
 class HybridV2ToolAdapter:
-    """Translate the public contract to an injected private service."""
+    """Translate the public contract to an injected Hybrid V2 service."""
 
     def __init__(
         self,
@@ -77,7 +76,7 @@ class HybridV2ToolAdapter:
         return SearchToolResult.model_validate(internal_result.model_dump())
 
 
-def _load_private_backend() -> tuple[
+def _load_hybrid_backend() -> tuple[
     type[Any],
     type[Any],
     type[Any],
@@ -95,8 +94,8 @@ def _load_private_backend() -> tuple[
         config_module = importlib.import_module("app.core.config")
     except ImportError as exc:
         raise RuntimeError(
-            "hybrid_v2 backend requires the private search service to be importable "
-            "in this Python environment. Install that package locally or set "
+            "hybrid_v2 backend requires the Hybrid V2 service to be importable "
+            "in this Python environment. Install it locally or set "
             "PYTHONPATH; the public demo remains available with --backend memory."
         ) from exc
     return (
@@ -123,7 +122,7 @@ def build_hybrid_v2_tool(*, no_graph: bool | None = None) -> HybridV2ToolAdapter
         expander_cls,
         expand_onet,
         settings,
-    ) = _load_private_backend()
+    ) = _load_hybrid_backend()
 
     if disable_graph:
         for name in ("search_graph_expand_enabled", "search_graph_expand_peers_enabled"):

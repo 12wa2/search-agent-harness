@@ -7,8 +7,8 @@
 
 ### Added
 
-- **可选私有 Hybrid V2 适配器**（`integrations/hybrid_v2.py`、`tools/factory.py`）：
-  通过同一 `SearchTool` 契约接入私有 Hybrid V2；新增无图模式，保留本地 O*NET 别名，
+- **Hybrid V2 适配器**（`integrations/hybrid_v2.py`、`tools/factory.py`）：
+  通过同一 `SearchTool` 契约接入 Hybrid V2；新增无图模式，保留本地 O*NET 别名，
   支持 `--backend hybrid_v2` / `SEARCH_AGENT_BACKEND` 切换，并补充模型转换契约测试。
 - **能力感知请求路由**（`intent_router.py`、`server.py`）：新增确定性 `IntentRouter`，在 Harness 之前
   区分 `GREETING` / `HELP` / `OUT_OF_SCOPE` / `SEARCH`。问候、帮助和明确范围外请求通过单个

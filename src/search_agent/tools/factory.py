@@ -6,8 +6,8 @@ The bundled backends are interchangeable at runtime::
     build_search_tool("sqlite", sqlite_path="corpus.db")
     build_search_tool("es", es_index="search-agent-demo", recreate=True)
 
-An optional ``hybrid_v2`` name loads a private ``SearchTool`` implementation
-from ``search_agent.integrations.hybrid_v2`` when that package is installed.
+An optional ``hybrid_v2`` name loads its ``SearchTool`` implementation from
+``search_agent.integrations.hybrid_v2``.
 
 Optional imports stay lazy, so a bare ``pip install`` keeps working without the
 ``.[es]`` extra. The Elasticsearch URL defaults to ``SEARCH_AGENT_ES_URL`` and
