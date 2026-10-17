@@ -426,15 +426,22 @@ Hybrid V2 是仓库内可独立运行的检索引擎，可以直接连接你自�
 
 ```powershell
 pip install -e ".[es]"
+docker compose up -d elasticsearch
 $env:SEARCH_AGENT_HYBRID_V2_ES_URL = "http://127.0.0.1:9200"
 $env:SEARCH_AGENT_HYBRID_V2_ES_INDEX = "candidate"
-search-agent search "找 3 年以上、做过高并发系统的后端工程师" --backend hybrid_v2 --top-k 5
+search-agent hybrid-v2 index --recreate
+search-agent hybrid-v2 doctor
+search-agent search "找 3 年以上、做过高并发系统的后端工程师" `
+  --backend hybrid_v2 --offline --top-k 5
+python examples/hybrid_v2_end_to_end.py
 ```
 
-配置了 ES 地址后，`hybrid_v2` 会成为默认检索后端；没有配置时仍默认 `memory`，公开
-demo 不需要任何服务。它保留 NL2IR 硬条件编译、工作年限/空窗/司龄规则、O*NET 本地岗位
-别名、BM25 + 多字段 kNN 和可解释的 `hardMatches`；不包含图扩展、托管词典或外部存储
-适配器。索引字段、认证、embedding 与重排配置见 `docs/HYBRID_V2.md`。
+`hybrid-v2 index` 会创建与查询编译器匹配的 ES 8 mapping（索引型 `dense_vector`、CJK 文本分析、
+keyword 子字段、`work_stats`、向量字段），并批量导入 demo 语料；`doctor` 检查集群、索引、
+字段、向量维度和文档数。配置了 ES 地址后，`hybrid_v2` 会成为默认检索后端；没有配置时仍
+默认 `memory`，公开 demo 不需要任何服务。它保留 NL2IR 硬条件编译、工作年限/空窗/司龄规则、
+O*NET 本地岗位别名、BM25 + 多字段 kNN 和可解释的 `hardMatches`；不包含图扩展、托管词典或
+外部存储适配器。索引字段、认证、embedding 与重排配置见 `docs/HYBRID_V2.md`。
 
 ## 接入真实后端（Elasticsearch）
 
@@ -472,7 +479,7 @@ pytest -q -m es
 | `SEARCH_AGENT_REDIS_URL` / `REDIS_URL` | — | 可选：会话记忆 / 结果分页 / 策略记忆（跨进程共享） |
 | `SEARCH_AGENT_ES_URL` | `http://127.0.0.1:9200` | Elasticsearch 地址；同时启用 Hybrid V2 默认选择 |
 | `SEARCH_AGENT_HYBRID_V2_ES_URL` / `_ES_INDEX` | — / `candidate` | Hybrid V2 专用地址与索引 |
-| `SEARCH_AGENT_HYBRID_V2_VECTOR_MODE` | `nested` | `nested` 或 `flat` 向量字段布局 |
+| `SEARCH_AGENT_HYBRID_V2_VECTOR_MODE` | `flat` | `flat`（默认兼容路径）或 `nested` 向量字段布局 |
 | `SEARCH_AGENT_HYBRID_V2_RERANK_PROVIDER` | `local` | 本地确定性重排，或 `openai` 兼容重排 |
 | `SEARCH_AGENT_HYBRID_V2_TAG_DICT` | — | 可选的本地标签 name→id JSON 文件 |
 
@@ -490,6 +497,7 @@ pytest -q -m es
 - [x] Elasticsearch 真实后端 + `docker compose` 端到端示例（ES DSL 编译，`examples/es_end_to_end.py`）。
 - [x] 独立 Hybrid V2 引擎：IR 硬条件编译、BM25 + 多字段 kNN、可解释 hardMatches、
       本地/可选 LLM 分片重排；使用用户自己的 ES 与环境变量，无内部依赖（`docs/HYBRID_V2.md`）。
+- [x] Hybrid V2 索引生命周期：内置 mapping、JSONL/JSON 批量导入、`doctor` 自检和真实 ES 端到端示例。
 - [x] 向量通道：`dense_vector` + kNN，与 BM25 做 RRF 混合召回（`examples/es_hybrid_recall.py`）。
 - [x] Docker 全栈：多阶段镜像 + compose（`api` 等待 ES 健康后启动，自动灌入演示语料）。
 - [x] Oracle 基准：种子化合成语料 + 生成器真值，去自证评测（`search-agent eval --generated / --oracle`）。

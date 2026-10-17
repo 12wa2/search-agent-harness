@@ -16,10 +16,12 @@ Examples::
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
 import unicodedata
+from dataclasses import replace
 from typing import Any, Callable, TextIO
 
 from search_agent import __version__
@@ -207,6 +209,16 @@ def _add_backend_flags(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_hybrid_v2_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--es-url", default=None, help="Elasticsearch 8 URL")
+    parser.add_argument("--es-index", default=None, help="candidate index name")
+    parser.add_argument("--vector-mode", choices=("nested", "flat"), default=None)
+    parser.add_argument("--embedding-provider", choices=("hash", "openai"), default=None)
+    parser.add_argument("--embedding-dims", type=int, default=None)
+    parser.add_argument("--number-of-shards", type=int, default=1)
+    parser.add_argument("--number-of-replicas", type=int, default=0)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="search-agent",
@@ -274,6 +286,31 @@ def _build_parser() -> argparse.ArgumentParser:
     corpus_cmd.add_argument("--out", required=True, help="output directory")
     corpus_cmd.add_argument("--size", type=int, default=120)
     corpus_cmd.add_argument("--seed", type=int, default=7)
+    hybrid_v2_cmd = sub.add_parser(
+        "hybrid-v2",
+        help="Hybrid V2 index administration (requires Elasticsearch 8)",
+    )
+    hybrid_v2_sub = hybrid_v2_cmd.add_subparsers(dest="hybrid_v2_command", required=True)
+    hybrid_v2_init = hybrid_v2_sub.add_parser(
+        "init-index", help="create the candidate index and mapping"
+    )
+    _add_hybrid_v2_flags(hybrid_v2_init)
+    hybrid_v2_init.add_argument("--recreate", action="store_true")
+    hybrid_v2_init.add_argument("--json", action="store_true")
+    hybrid_v2_index = hybrid_v2_sub.add_parser(
+        "index", help="create the index when needed and bulk-index candidates"
+    )
+    _add_hybrid_v2_flags(hybrid_v2_index)
+    hybrid_v2_index.add_argument("--data", default=str(DEMO_DATA), help="candidate JSONL/JSON")
+    hybrid_v2_index.add_argument("--company-id", type=int, default=1)
+    hybrid_v2_index.add_argument("--batch-size", type=int, default=500)
+    hybrid_v2_index.add_argument("--recreate", action="store_true")
+    hybrid_v2_index.add_argument("--json", action="store_true")
+    hybrid_v2_doctor = hybrid_v2_sub.add_parser(
+        "doctor", help="check cluster, index, mapping, vectors, and document count"
+    )
+    _add_hybrid_v2_flags(hybrid_v2_doctor)
+    hybrid_v2_doctor.add_argument("--json", action="store_true")
     return parser
 
 
@@ -386,6 +423,72 @@ def _run_corpus_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _hybrid_v2_config(args: argparse.Namespace):
+    from search_agent.hybrid_v2 import HybridV2Config
+
+    updates: dict[str, Any] = {}
+    if getattr(args, "es_url", None):
+        updates["es_url"] = args.es_url
+    if getattr(args, "es_index", None):
+        updates["es_index"] = args.es_index
+    if getattr(args, "vector_mode", None):
+        updates["vector_mode"] = args.vector_mode
+    if getattr(args, "embedding_provider", None):
+        updates["embedding_provider"] = args.embedding_provider
+    if getattr(args, "embedding_dims", None):
+        updates["embedding_dims"] = args.embedding_dims
+    return replace(HybridV2Config.from_env(), **updates)
+
+
+def _run_hybrid_v2_command(args: argparse.Namespace) -> int:
+    try:
+        from search_agent.hybrid_v2.indexing import HybridV2Indexer
+
+        config = _hybrid_v2_config(args)
+        indexer = HybridV2Indexer(config)
+        try:
+            if args.hybrid_v2_command == "init-index":
+                report = indexer.create_index(
+                    recreate=args.recreate,
+                    number_of_shards=args.number_of_shards,
+                    number_of_replicas=args.number_of_replicas,
+                )
+            elif args.hybrid_v2_command == "index":
+                report = indexer.index_file(
+                    args.data,
+                    company_id=args.company_id,
+                    recreate=args.recreate,
+                    batch_size=args.batch_size,
+                    number_of_shards=args.number_of_shards,
+                    number_of_replicas=args.number_of_replicas,
+                )
+            else:
+                doctor = indexer.doctor()
+                if args.json:
+                    print(json.dumps(doctor.to_dict(), ensure_ascii=False, indent=2))
+                else:
+                    print(f"Hybrid V2 doctor: index={doctor.index} ok={doctor.ok}")
+                    for check in doctor.checks:
+                        marker = "PASS" if check.ok else "FAIL"
+                        print(f"  [{marker}] {check.name}: {check.detail}")
+                return 0 if doctor.ok else 1
+        finally:
+            indexer.close()
+    except Exception as exc:
+        print(f"错误: {exc}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(
+            f"Hybrid V2 index={report.index} created={report.created} "
+            f"documents={report.documents} vectors={report.vector_mode} "
+            f"dims={report.embedding_dims}"
+        )
+    return 0
+
+
 def _run_serve_command(args: argparse.Namespace) -> int:
     try:
         import uvicorn
@@ -429,6 +532,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_eval_command(args)
     if args.command == "corpus":
         return _run_corpus_command(args)
+    if args.command == "hybrid-v2":
+        return _run_hybrid_v2_command(args)
     if args.command == "serve":
         return _run_serve_command(args)
     parser.print_help()

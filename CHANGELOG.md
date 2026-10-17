@@ -13,6 +13,13 @@
   重排。ES 地址、认证、索引字段、embedding、标签/薪资目录全部环境变量注入；无配置时
   仍默认 `memory`，配置 ES 后默认 `hybrid_v2`。新增假 ES 服务、payload 转换、硬匹配和
   默认选择测试，接入文档见 `docs/HYBRID_V2.md`。
+- **Hybrid V2 索引生命周期**（`hybrid_v2/indexing.py`、`cli.py`）：新增与查询编译器同步的
+  ES 8 mapping（索引型 `dense_vector`、CJK 分析、keyword 子字段、work_stats、flat/nested 向量布局）、
+  demo/自定义 JSONL 转换与批量导入、建索引/刷新/计数、`search-agent hybrid-v2 init-index|index|doctor`
+  运维入口，以及 `examples/hybrid_v2_end_to_end.py` 真实 ES 全链路示例。默认向量模式改为
+  `flat` 以保证标准 ES 8 兼容，`nested` 保留为显式高级模式；新增 mapping 完整性、两种向量布局、
+  批量导入、维度不一致和真实 ES 回环测试。已用 Elasticsearch 8.15.0 验证 CLI 建库、`doctor`、
+  FastAPI 检索和端到端回环，并修正 `track_total_hits` 参数冲突。
 - **能力感知请求路由**（`intent_router.py`、`server.py`）：新增确定性 `IntentRouter`，在 Harness 之前
   区分 `GREETING` / `HELP` / `OUT_OF_SCOPE` / `SEARCH`。问候、帮助和明确范围外请求通过单个
   `reply` SSE 帧返回，不启动 Agent、不调用 LLM 或 `SearchTool`；招聘需求和模糊输入默认进入

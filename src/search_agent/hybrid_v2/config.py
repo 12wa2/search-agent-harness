@@ -105,7 +105,7 @@ class HybridV2Config:
             embedding_base_url=_env("SEARCH_AGENT_EMBEDDING_BASE_URL")
             or _env("OPENAI_BASE_URL")
             or _env("SEARCH_AGENT_BASE_URL"),
-            vector_mode=_env("SEARCH_AGENT_HYBRID_V2_VECTOR_MODE", "nested").lower(),
+            vector_mode=_env("SEARCH_AGENT_HYBRID_V2_VECTOR_MODE", "flat").lower(),
             tenant_field=_env("SEARCH_AGENT_HYBRID_V2_TENANT_FIELD", "company_id"),
             entity_join_field=_env("SEARCH_AGENT_HYBRID_V2_ENTITY_JOIN_FIELD", "entity_join"),
             entity_join_value=_env("SEARCH_AGENT_HYBRID_V2_ENTITY_JOIN_VALUE", "profile"),

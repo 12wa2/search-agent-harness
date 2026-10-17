@@ -19,14 +19,24 @@ credentials, host-specific defaults, or real candidate records.
 
 ```powershell
 pip install -e ".[es,api]"
+docker compose up -d elasticsearch
 $env:SEARCH_AGENT_HYBRID_V2_ES_URL = "http://127.0.0.1:9200"
 $env:SEARCH_AGENT_HYBRID_V2_ES_INDEX = "candidate"
 
+search-agent hybrid-v2 index --recreate
+search-agent hybrid-v2 doctor
+
 search-agent search "找 3 年以上、做过高并发系统的后端工程师" `
-  --backend hybrid_v2 --top-k 5
+  --backend hybrid_v2 --offline --top-k 5
 
 search-agent serve --backend hybrid_v2
 ```
+
+`hybrid-v2 index` creates the bundled mapping and loads `src/search_agent/data/demo_candidates.jsonl`
+by default. Use `--data <jsonl-or-json>`, `--company-id`, `--vector-mode`, and
+`--embedding-dims` for your own corpus. Keep the embedding provider and dimensions
+identical between indexing and query time. The bundled path is validated
+against Elasticsearch 8.15.0.
 
 `SEARCH_AGENT_HYBRID_V2_ES_URL` takes precedence over `SEARCH_AGENT_ES_URL`.
 When neither variable is set, the default remains the zero-dependency
@@ -39,10 +49,11 @@ state in-process.
 
 ## Index contract
 
-The bundled query builder expects an Elasticsearch 8 index with the fields
-below. Field names shown with an environment variable can be changed for an
-existing mapping. Optional fields may be omitted when the corresponding query
-feature is not used.
+`search-agent hybrid-v2 init-index` generates the Elasticsearch 8 mapping below,
+including indexed `dense_vector` fields, CJK text analysis, lower-cased keyword sub-fields, work
+statistics, and the selected vector layout. `search-agent hybrid-v2 index`
+performs the same setup before bulk loading. The query builder expects these
+fields; use `search-agent hybrid-v2 doctor` after any manual mapping change.
 
 | Area | Expected fields | Notes |
 |---|---|---|
@@ -67,10 +78,14 @@ the public `CandidateItem`.
 
 Set `SEARCH_AGENT_HYBRID_V2_VECTOR_MODE` to match the index mapping:
 
-- `nested` (default): vectors live at `work_segments.vector`,
-  `project_segments.vector`, and `education_segments.vector`.
-- `flat`: vectors live at `work_vector`, `project_vector`, and
-  `education_vector` on the document.
+- `flat` (default): vectors live at `work_vector`, `project_vector`, and
+  `education_vector` on the document. This is the broad-compatibility path used
+  by the bundled end-to-end example.
+- `nested`: vectors live at `work_segments.vector`,
+  `project_segments.vector`, and `education_segments.vector`. Use this only when
+  the target ES 8 deployment and query path have been verified with nested kNN;
+  `doctor` validates mapping shape and dimensions but cannot prove cluster-level
+  nested-kNN support.
 
 `self_evaluation_vector` and `skills_vector` are document-level fields in both
 modes. All dense vectors must have the same dimension as the configured
@@ -121,7 +136,7 @@ See `.env.example` for the complete list. The most useful knobs are:
 | `SEARCH_AGENT_ES_API_KEY` | unset | API-key auth |
 | `SEARCH_AGENT_ES_VERIFY_CERTS` | `true` | TLS verification |
 | `SEARCH_AGENT_HYBRID_V2_TENANT_FIELD` | `company_id` | tenant filter field |
-| `SEARCH_AGENT_HYBRID_V2_VECTOR_MODE` | `nested` | vector mapping shape |
+| `SEARCH_AGENT_HYBRID_V2_VECTOR_MODE` | `flat` | vector mapping shape |
 | `SEARCH_AGENT_HYBRID_V2_RERANK_PROVIDER` | `local` | local or OpenAI-compatible rerank |
 | `SEARCH_AGENT_HYBRID_V2_RERANK_SCAN_CAP` | `100` | maximum pool passed to rerank |
 | `SEARCH_AGENT_HYBRID_V2_RERANK_TARGET_N` | `20` | minimum scan target before delivery |
@@ -136,3 +151,5 @@ See `.env.example` for the complete list. The most useful knobs are:
 - A production deployment should put Elasticsearch behind network controls,
   use per-tenant credentials or filters, and add index-level monitoring. The
   engine exposes `health()` for a non-secret cluster check.
+- `hybrid-v2 init-index` and `hybrid-v2 index` are operator commands. They can
+  create or replace indexes and must not be exposed as public HTTP endpoints.
