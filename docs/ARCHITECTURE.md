@@ -198,6 +198,8 @@ understand ──(need_clarify)──> 返回澄清问题
 
 参考实现 `tools/memory.py::InMemorySearchTool` 完整实现了协议（WhereNode 求值、
 语义 token 覆盖率打分、hard_matches 计算），用于离线演示与测试。
+可选的 `integrations/hybrid_v2.py::HybridV2ToolAdapter` 通过同一协议接入外部
+Hybrid V2 服务；公开仓库只保留模型转换边界，不包含该服务的实现与配置。
 
 ## 10. 可观测性
 

@@ -21,6 +21,7 @@ htmlcov/
 
 # Local environment
 .env
+logs/
 
 # Editors / OS
 .idea/

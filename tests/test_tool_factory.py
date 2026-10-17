@@ -19,7 +19,7 @@ def _ids(tool) -> list[str]:
 
 
 def test_backends_are_named_in_documented_order() -> None:
-    assert BACKENDS == ("memory", "sqlite", "es")
+    assert BACKENDS == ("memory", "sqlite", "es", "hybrid_v2")
 
 
 def test_memory_and_sqlite_agree_through_the_factory() -> None:
@@ -29,6 +29,17 @@ def test_memory_and_sqlite_agree_through_the_factory() -> None:
 def test_unknown_backend_is_rejected() -> None:
     with pytest.raises(ValueError, match="unknown backend"):
         build_search_tool("pgvector")
+
+
+def test_hybrid_v2_backend_is_loaded_lazily(monkeypatch) -> None:
+    sentinel = object()
+
+    def fake_build(*, no_graph: bool | None = None):
+        assert no_graph is None
+        return sentinel
+
+    monkeypatch.setattr("search_agent.integrations.hybrid_v2.build_hybrid_v2_tool", fake_build)
+    assert build_search_tool("hybrid_v2") is sentinel
 
 
 def test_es_backend_reports_an_unreachable_node() -> None:

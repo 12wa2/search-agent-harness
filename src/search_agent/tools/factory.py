@@ -1,10 +1,13 @@
 """Turn a backend name into a ``SearchTool`` -- one seam for CLI and containers.
 
-The three bundled backends are interchangeable at runtime::
+The bundled backends are interchangeable at runtime::
 
     build_search_tool("memory")
     build_search_tool("sqlite", sqlite_path="corpus.db")
     build_search_tool("es", es_index="search-agent-demo", recreate=True)
+
+An optional ``hybrid_v2`` name loads a private ``SearchTool`` implementation
+from ``search_agent.integrations.hybrid_v2`` when that package is installed.
 
 Optional imports stay lazy, so a bare ``pip install`` keeps working without the
 ``.[es]`` extra. The Elasticsearch URL defaults to ``SEARCH_AGENT_ES_URL`` and
@@ -24,7 +27,7 @@ from search_agent.tools.memory import InMemorySearchTool
 __all__ = ["BACKENDS", "DEFAULT_ES_INDEX", "ES_INDEX_ENV", "build_search_tool"]
 
 #: Backend names accepted by the CLI ``--backend`` flag.
-BACKENDS = ("memory", "sqlite", "es")
+BACKENDS = ("memory", "sqlite", "es", "hybrid_v2")
 
 #: Default index for the bundled demo corpus.
 DEFAULT_ES_INDEX = "search-agent-demo"
@@ -44,6 +47,7 @@ def build_search_tool(
     es_index: str | None = None,
     es_url: str | None = None,
     recreate: bool = False,
+    hybrid_v2_no_graph: bool | None = None,
 ) -> SearchTool:
     """Build one backend by name; ``ValueError`` for names outside ``BACKENDS``."""
     data: Candidates = data_path or DEMO_DATA
@@ -62,4 +66,8 @@ def build_search_tool(
             index=es_index or os.environ.get(ES_INDEX_ENV) or DEFAULT_ES_INDEX,
             recreate=recreate,
         )
+    if backend == "hybrid_v2":
+        from search_agent.integrations.hybrid_v2 import build_hybrid_v2_tool
+
+        return build_hybrid_v2_tool(no_graph=hybrid_v2_no_graph)
     raise ValueError(f"unknown backend {backend!r}; expected one of {', '.join(BACKENDS)}")
