@@ -71,6 +71,12 @@
   与 BM25 按 RRF 融合（`search_semantic` / `hybrid_search`，示例 `examples/es_hybrid_recall.py`）；
   新增 5 个离线向量测试与 5 个 ES 集成用例。
 
+### Fixed
+
+- **SQLite 后端并发安全**（`tools/sqlite_fts.py`）：execute 阶段会并行调用多个搜索路径，
+  SQLite 共享连接现在通过锁串行化查询与关闭操作，避免 CI/多线程环境下偶发返回空结果；
+  新增 32 路并发搜索回归测试。
+
 ## [0.1.0] - 2026-10-15
 
 首个公开版本。

@@ -20,6 +20,7 @@ index; the default is a fresh in-memory database.
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any, Sequence
@@ -93,6 +94,7 @@ class SqliteFtsSearchTool:
         self._items = load_candidates(candidates)
         self._by_id = {item.docId: item for item in self._items}
         self._fts = bool(fts)
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
@@ -106,7 +108,8 @@ class SqliteFtsSearchTool:
         self._ingest()
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
     @property
     def size(self) -> int:
@@ -159,11 +162,12 @@ class SqliteFtsSearchTool:
         if not terms:
             return []
         match = " OR ".join('"' + term.replace('"', '""') + '"' for term in terms)
-        rows = self._conn.execute(
-            "SELECT doc_id, bm25(candidate_fts) AS rank FROM candidate_fts "
-            "WHERE candidate_fts MATCH ? ORDER BY rank LIMIT ?",
-            (match, max(0, int(top_k))),
-        ).fetchall()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT doc_id, bm25(candidate_fts) AS rank FROM candidate_fts "
+                "WHERE candidate_fts MATCH ? ORDER BY rank LIMIT ?",
+                (match, max(0, int(top_k))),
+            ).fetchall()
         return [(str(row["doc_id"]), round(-float(row["rank"]), 4)) for row in rows]
 
     # -- WhereNode -> SQL ----------------------------------------------------
@@ -268,7 +272,8 @@ class SqliteFtsSearchTool:
             marks = ", ".join("?" for _ in excluded)
             sql += f" AND c.doc_id NOT IN ({marks})"
             params.extend(sorted(excluded))
-        rows = self._conn.execute(sql, params).fetchall()
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
         # The SQL clause is at worst an over-approximation: the shared Python
         # evaluator stays the single source of truth for constraint semantics.
         filtered = [

@@ -6,6 +6,8 @@ these tests pin that invariant across operators, tree shapes and edge cases.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from search_agent.contract.tool import (
@@ -158,6 +160,18 @@ def test_semantic_scoring_parity():
         result.items[0].match_explanation["softSignals"]
         == reference.items[0].match_explanation["softSignals"]
     )
+
+
+def test_concurrent_searches_share_the_connection_safely():
+    tool = SqliteFtsSearchTool(DEMO_DATA)
+    req = _request(_leaf("work_years", "gte", [0]))
+    reference = _ranked(InMemorySearchTool(DEMO_DATA).search_with_intent(req))
+    try:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(lambda _: tool.search_with_intent(req), range(32)))
+        assert all(_ranked(result) == reference for result in results)
+    finally:
+        tool.close()
 
 
 def test_exclude_doc_ids_parity():
