@@ -16,6 +16,7 @@ Examples::
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import sys
 import time
@@ -166,16 +167,34 @@ def print_metrics(resp: SearchResponse, stream: TextIO | None = None) -> None:
         print(f"  输出校验: {issues}", file=out)
 
 
+def _hybrid_v2_available() -> bool:
+    """Whether the optional Hybrid V2 module can be imported in this environment."""
+    try:
+        module = "app.services.candidate_search.hybrid_v2.service"
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
+
+
+def _default_backend() -> str:
+    """Prefer Hybrid V2 when present; keep the public demo runnable otherwise."""
+    configured = os.environ.get("SEARCH_AGENT_BACKEND")
+    if configured:
+        return configured
+    return "hybrid_v2" if _hybrid_v2_available() else "memory"
+
+
 def _add_backend_flags(parser: argparse.ArgumentParser) -> None:
     """Backend-selection flags shared by ``search`` and ``serve``."""
+    default_backend = _default_backend()
     parser.add_argument("--data", default=None, help="candidate JSONL path")
     parser.add_argument(
         "--backend",
         choices=BACKENDS,
-        default=os.environ.get("SEARCH_AGENT_BACKEND", "memory"),
+        default=default_backend,
         help=(
-            "retrieval backend: memory (default) / sqlite / es (needs .[es]) / "
-            "hybrid_v2 (optional backend)"
+            "retrieval backend: memory / sqlite / es (needs .[es]) / "
+            f"hybrid_v2 (optional backend; default: {default_backend})"
         ),
     )
     parser.add_argument("--sqlite-path", default=":memory:", help="db file for --backend sqlite")
