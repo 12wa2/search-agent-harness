@@ -102,7 +102,8 @@ _RECOMMEND_OBJECT_RE = re.compile(
 
 _STRONG_ROLE_RE = re.compile(
     r"(?:工程师|开发者|架构师|数据分析|数据工程|产品经理|项目经理|设计师|研究员|"
-    r"科学家|测试|运维|客服|翻译|顾问|经理|主管|专家|实习生|应届生|候选人|人才|"
+    r"科学家|测试|运维|客服|翻译|顾问|经理|主管|专家|实习生|应届生|制作人|剪辑师|"
+    r"导演|摄影师|编剧|演员|歌手|音乐人|主播|编辑|记者|候选人|人选|人才|岗位|职位|"
     r"engineer|developer|architect|scientist|analyst|manager|designer|recruiter|"
     r"candidate|resume)",
     re.IGNORECASE,
@@ -130,8 +131,9 @@ _SEARCH_ACTION_RE = re.compile(
 _ROLE_RE = re.compile(
     r"(?:工程师|开发者|架构师|算法|数据分析|数据工程|产品经理|项目经理|设计师|运营|"
     r"销售|市场|财务|法务|人力|研究员|科学家|测试|运维|客服|翻译|顾问|经理|主管|"
-    r"专家|实习生|应届生|engineer|developer|architect|scientist|analyst|manager|"
-    r"designer|recruiter|candidate|resume)",
+    r"专家|实习生|应届生|制作人|剪辑师|导演|摄影师|编剧|演员|歌手|音乐人|主播|编辑|"
+    r"记者|候选人|人选|人才|岗位|职位|engineer|developer|architect|scientist|analyst|"
+    r"manager|designer|recruiter|candidate|resume)",
     re.IGNORECASE,
 )
 
@@ -157,7 +159,7 @@ def _out_of_scope_rule(text: str) -> str | None:
         return "general_recommendation" if _RECOMMEND_OBJECT_RE.search(text) else None
     if _GENERAL_TASK_RE.match(text):
         return "general_task"
-    if _GENERAL_TOPIC_RE.search(text):
+    if _GENERAL_TOPIC_RE.search(text) and not _SEARCH_ACTION_RE.search(text):
         return "general_topic"
     return None
 

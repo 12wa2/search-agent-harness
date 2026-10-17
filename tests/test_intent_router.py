@@ -41,6 +41,8 @@ def test_help_questions(router: IntentRouter, query: str) -> None:
         "帮我推荐几位候选人",
         "推荐几个人",
         "推荐游戏开发工程师",
+        "推荐音乐制作人",
+        "推荐电影剪辑师",
     ],
 )
 def test_recruitment_queries_are_search(router: IntentRouter, query: str) -> None:
@@ -80,6 +82,22 @@ def test_ambiguous_inputs_default_to_search(router: IntentRouter, query: str) ->
 
 def test_greeting_with_search_action_is_not_a_greeting(router: IntentRouter) -> None:
     assert router.route("你好，推荐几位算法方向的人").intent is Intent.SEARCH
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("推荐一本书", Intent.OUT_OF_SCOPE),
+        ("推荐一首歌", Intent.OUT_OF_SCOPE),
+        ("推荐候选人", Intent.SEARCH),
+        ("推荐算法工程师", Intent.SEARCH),
+        ("招聘音乐制作人", Intent.SEARCH),
+        ("找电影剪辑师", Intent.SEARCH),
+        ("你好，帮我找 Python 工程师", Intent.SEARCH),
+    ],
+)
+def test_intent_boundaries(router: IntentRouter, query: str, expected: Intent) -> None:
+    assert router.route(query).intent is expected
 
 
 def test_reply_payload_and_suggestions(router: IntentRouter) -> None:

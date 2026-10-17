@@ -37,6 +37,10 @@
 `推荐算法工程师` / `推荐几位候选人` / `推荐几个人` 仍默认进入搜索。只有出现书籍、歌曲、影视等
 明确对象时才拒绝，避免把「推荐」这个招聘动作词本身当成聊天指令。
 
+行业词（音乐 / 电影等）只作为弱信号：没有搜索动作时才直接判为 `OUT_OF_SCOPE`；只要出现
+招聘或搜索动作，就默认交给 Agent 处理。因此“招聘音乐制作人”“找电影剪辑师”不会因为岗位词
+不在固定词表里而被误伤。
+
 `IntentRouter` 是无状态规则层，不保存对话上下文；它的职责是能力边界与成本保护，不是通用聊天。
 `POST /search` 仍保持纯搜索契约；需要能力路由的交互入口是 `/search/stream` 和 Web 控制台。
 
@@ -102,20 +106,23 @@ understand ──(need_clarify)──> 返回澄清问题
 
 ## 4. 预算与终止
 
-`Budget`（`models/artifacts.py`）五个字段，默认值来自 `config.budget_from_env`：
+`Budget`（`models/artifacts.py`）包含 **5 类资源预算 + 1 个目标阈值**，默认值来自
+`config.budget_from_env`。资源预算分别是迭代次数、搜索路径数、LLM 调用次数、Token 和墙钟时间：
 
 | 字段 | 默认 | 含义 |
 |---|---|---|
 | `max_iterations` | 3 | 反思循环最大迭代数 |
 | `max_paths_per_iteration` | 4 | 每轮最大路径数 |
-| `target_qualified` | `max(top_k*2, 20)` | 合格候选人目标 |
-| `time_budget_sec` | 12.0 | 墙钟预算（秒） |
 | `max_llm_calls` | 40 | LLM 调用上限 |
+| `max_tokens` | 0 | Token 上限；0 = 只记账不设限 |
+| `time_budget_sec` | 12.0 | 墙钟预算（秒） |
+| `target_qualified` | `max(top_k*2, 20)` | 合格候选人目标阈值，不属于资源预算 |
 
 终止判定集中在 `core/budget.py::should_finalize`，返回 `(finalize, reason)`，
-共 5 种原因：`target_reached` / `max_iterations` / `time_budget` / `llm_budget` /
-`no_progress`（没有 pending 路径且本轮无新增合格）。`BudgetState` 同时记录
-`llm_calls` / `iteration` / `new_qualified_last_round` 三个计数器。
+共 6 种原因：`target_reached` / `max_iterations` / `time_budget` / `llm_budget` /
+`token_budget` / `no_progress`（没有 pending 路径且本轮无新增合格）。`BudgetState`
+同时记录 `llm_calls` / `iteration` / `new_qualified_last_round`，以及
+`prompt_tokens + completion_tokens` 的累计 token 用量。
 
 ## 5. 降级矩阵
 
