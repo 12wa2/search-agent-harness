@@ -38,6 +38,9 @@ def test_help_questions(router: IntentRouter, query: str) -> None:
         "想找几位做客服系统的候选人",
         "招一个会写代码的工程师",
         "帮我搜索候选人",
+        "帮我推荐几位候选人",
+        "推荐几个人",
+        "推荐游戏开发工程师",
     ],
 )
 def test_recruitment_queries_are_search(router: IntentRouter, query: str) -> None:
@@ -53,10 +56,21 @@ def test_recruitment_queries_are_search(router: IntentRouter, query: str) -> Non
         "帮我翻译这段简历",
         "帮我写一个查候选人的 SQL",
         "怎么学习 Python",
+        "帮我推荐一首歌",
+        "推荐一本算法书",
+        "推荐游戏",
     ],
 )
 def test_explicit_non_search_tasks_are_out_of_scope(router: IntentRouter, query: str) -> None:
     assert router.route(query).intent is Intent.OUT_OF_SCOPE
+
+
+def test_recommending_a_book_is_out_of_scope(router: IntentRouter) -> None:
+    assert router.route("推荐一本书").intent is Intent.OUT_OF_SCOPE
+
+
+def test_recommending_a_recruiting_role_is_search(router: IntentRouter) -> None:
+    assert router.route("推荐算法工程师").intent is Intent.SEARCH
 
 
 @pytest.mark.parametrize("query", ["帮我找一下手机", "帮我找个人", "那北京的呢"])

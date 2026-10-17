@@ -84,8 +84,27 @@ _HELP_RE = re.compile(
 
 _GENERAL_TASK_RE = re.compile(
     r"^(?:帮我|请|麻烦|我想|我要|我需要|能不能|可以)?\s*(?:怎么|如何)?\s*"
-    r"(?:写|生成|创作|润色|改写|总结|翻译|解释|讲解|教我|学习|修复|调试|编码|"
+    r"(?:写|生成|创作|润色|改写|总结|翻译|解释|讲解|教我|学习|修复|调试|编码|推荐|"
     r"计算|算一下|解方程|证明|画|做|制作|设计|策划|规划|安排|预订|购买|下单)",
+    re.IGNORECASE,
+)
+
+_RECOMMEND_START_RE = re.compile(
+    r"^(?:帮我|请|麻烦|我想|我要|我需要|能不能|可以)?\s*推荐",
+    re.IGNORECASE,
+)
+
+_RECOMMEND_OBJECT_RE = re.compile(
+    r"(?:书|书籍|小说|文章|歌|歌曲|专辑|音乐|电影|影片|电视剧|综艺|动漫|游戏|"
+    r"课程|餐厅|酒店|菜谱|景点|旅游|礼物|商品)",
+    re.IGNORECASE,
+)
+
+_STRONG_ROLE_RE = re.compile(
+    r"(?:工程师|开发者|架构师|数据分析|数据工程|产品经理|项目经理|设计师|研究员|"
+    r"科学家|测试|运维|客服|翻译|顾问|经理|主管|专家|实习生|应届生|候选人|人才|"
+    r"engineer|developer|architect|scientist|analyst|manager|designer|recruiter|"
+    r"candidate|resume)",
     re.IGNORECASE,
 )
 
@@ -132,6 +151,10 @@ def _has_recruitment_signal(text: str) -> bool:
 def _out_of_scope_rule(text: str) -> str | None:
     if _GENERAL_KNOWLEDGE_RE.fullmatch(text):
         return "general_knowledge"
+    if _RECOMMEND_START_RE.match(text):
+        # Recommendation is ambiguous by itself: "推荐几个人" stays on the
+        # search path, while an explicit general object is out of scope.
+        return "general_recommendation" if _RECOMMEND_OBJECT_RE.search(text) else None
     if _GENERAL_TASK_RE.match(text):
         return "general_task"
     if _GENERAL_TOPIC_RE.search(text):
@@ -177,7 +200,9 @@ class IntentRouter:
             )
 
         rule = _out_of_scope_rule(text)
-        if rule and not _has_recruitment_signal(text):
+        if rule == "general_recommendation" and _STRONG_ROLE_RE.search(text):
+            rule = None
+        if rule and (rule == "general_recommendation" or not _has_recruitment_signal(text)):
             return _reply(
                 Intent.OUT_OF_SCOPE,
                 "我目前专注于招聘需求解析与候选人搜索，暂不处理写诗、翻译、天气或通用知识问答。\n"

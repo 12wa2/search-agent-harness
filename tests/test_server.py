@@ -152,6 +152,21 @@ class _ExplodingLlm:
         raise RuntimeError("intent-routed request must not call the LLM")
 
 
+class _ExplodingSearchTool:
+    """Fail and count if a routed reply accidentally reaches retrieval."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def search_with_intent(self, _req):
+        self.calls += 1
+        raise RuntimeError("intent-routed request must not call SearchTool")
+
+    def rerank_pool(self, _req):
+        self.calls += 1
+        raise RuntimeError("intent-routed request must not call SearchTool")
+
+
 def _frames(text: str) -> list[str]:
     return [frame.strip() for frame in text.split("\n\n") if frame.strip()]
 
@@ -174,13 +189,15 @@ def _event_payload(frame: str) -> tuple[str, dict]:
         ("你好", "GREETING"),
         ("你能做什么？", "HELP"),
         ("帮我写一首诗", "OUT_OF_SCOPE"),
+        ("推荐一本书", "OUT_OF_SCOPE"),
     ],
 )
-def test_non_search_requests_return_one_reply_without_calling_llm(
+def test_non_search_requests_return_one_reply_without_calling_llm_or_tool(
     method: str, query: str, intent: str
 ) -> None:
     llm = _ExplodingLlm()
-    app = create_app(llm_client=llm)
+    tool = _ExplodingSearchTool()
+    app = create_app(tool=tool, llm_client=llm)
     kwargs = (
         {"params": {"query": query, "topK": 5}}
         if method == "GET"
@@ -199,6 +216,7 @@ def test_non_search_requests_return_one_reply_without_calling_llm(
     assert payload["searchStarted"] is False
     assert payload["suggestions"]
     assert llm.calls == 0
+    assert tool.calls == 0
     assert "event: stage" not in text
     assert "event: result" not in text
     assert "event: error" not in text
