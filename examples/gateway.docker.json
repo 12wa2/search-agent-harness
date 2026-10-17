@@ -1,0 +1,25 @@
+{
+  "gateway_api_key_env": "SEARCH_AGENT_GATEWAY_API_KEY",
+  "default_model_alias": "search-agent-primary",
+  "model_aliases": {
+    "search-agent-primary": [
+      {
+        "name": "qwen3.8-flash",
+        "base_url": "https://maas.qianwenaiapi.com/compatible-mode/v1",
+        "model": "qwen3.8-flash",
+        "api_key_env": "PRIMARY_LLM_API_KEY",
+        "timeout_sec": 60,
+        "extra_body": {
+          "enable_thinking": false
+        }
+      },
+      {
+        "name": "deepseek-flash",
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-flash",
+        "api_key_env": "FALLBACK_LLM_API_KEY",
+        "timeout_sec": 60
+      }
+    ]
+  }
+}

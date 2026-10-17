@@ -21,6 +21,7 @@ htmlcov/
 
 # Local environment
 .env
+gateway.local.json
 logs/
 
 # Editors / OS

@@ -11,6 +11,7 @@ Examples::
     search-agent corpus --out data/bench    # write a seeded corpus + oracle labels
     search-agent serve --offline            # optional HTTP service (.[api])
     search-agent serve --backend es         # same service on a real Elasticsearch
+    search-agent gateway --config gateway.local.json  # optional LLM gateway (.[api])
 """
 
 from __future__ import annotations
@@ -282,6 +283,13 @@ def _build_parser() -> argparse.ArgumentParser:
     serve_cmd.add_argument("--port", type=int, default=8000)
     serve_cmd.add_argument("--offline", action="store_true", help="force the scripted demo LLM")
     _add_backend_flags(serve_cmd)
+    gateway_cmd = sub.add_parser(
+        "gateway",
+        help='optional OpenAI-compatible LLM gateway (pip install ".[api]")',
+    )
+    gateway_cmd.add_argument("--config", required=True, help="gateway JSON config path")
+    gateway_cmd.add_argument("--host", default="127.0.0.1")
+    gateway_cmd.add_argument("--port", type=int, default=4000)
     corpus_cmd = sub.add_parser("corpus", help="write a seeded synthetic corpus with oracle labels")
     corpus_cmd.add_argument("--out", required=True, help="output directory")
     corpus_cmd.add_argument("--size", type=int, default=120)
@@ -521,6 +529,29 @@ def _run_serve_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_gateway_command(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+
+        from search_agent.gateway.app import create_gateway_app
+        from search_agent.gateway.config import GatewayConfig
+    except ImportError:
+        print('LLM 网关需要可选依赖：pip install -e ".[api]"', file=sys.stderr)
+        return 1
+    try:
+        config = GatewayConfig.from_file(args.config)
+    except Exception as exc:  # noqa: BLE001 - operator-facing validation
+        print(f"错误: 无法加载网关配置: {exc}", file=sys.stderr)
+        return 1
+    app = create_gateway_app(config)
+    print(
+        f"search-agent LLM 网关启动：http://{args.host}:{args.port}/v1  "
+        f"(模型别名: {', '.join(config.model_aliases)})"
+    )
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -536,6 +567,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_hybrid_v2_command(args)
     if args.command == "serve":
         return _run_serve_command(args)
+    if args.command == "gateway":
+        return _run_gateway_command(args)
     parser.print_help()
     return 2
 

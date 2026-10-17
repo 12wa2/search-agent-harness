@@ -44,6 +44,7 @@ def _resp(content, usage):
 def _install_openai_script(monkeypatch, script):
     """Feed the client a script: exceptions raise, tuples are (content, usage)."""
     module = types.ModuleType("openai")
+    calls: list[dict] = []
 
     class _OpenAI:
         def __init__(self, **_kwargs):
@@ -51,7 +52,8 @@ def _install_openai_script(monkeypatch, script):
                 completions=types.SimpleNamespace(create=self._create)
             )
 
-        def _create(self, **_kwargs):
+        def _create(self, **kwargs):
+            calls.append(kwargs)
             item = script.pop(0)
             if isinstance(item, BaseException):
                 raise item
@@ -63,6 +65,7 @@ def _install_openai_script(monkeypatch, script):
 
     module.OpenAI = _OpenAI
     monkeypatch.setitem(sys.modules, "openai", module)
+    return calls
 
 
 def _client(**kwargs):
@@ -79,6 +82,30 @@ def test_openai_client_records_provider_usage(monkeypatch):
     assert client.last_usage == LlmUsage(prompt_tokens=120, completion_tokens=30, calls=1)
     assert client.usage.total_tokens == 150
     assert client.usage.estimated is False
+
+
+def test_disable_thinking_sends_qwen_extension(monkeypatch):
+    monkeypatch.setenv("SEARCH_AGENT_DISABLE_THINKING", "1")
+    calls = _install_openai_script(monkeypatch, [_Usage(1, 1)])
+    client, _ = _client()
+    client.complete_json(system="s", user="u", schema_name="x", schema={})
+    assert calls[0]["extra_body"] == {"enable_thinking": False}
+
+
+def test_thinking_extension_is_opt_in(monkeypatch):
+    monkeypatch.delenv("SEARCH_AGENT_DISABLE_THINKING", raising=False)
+    calls = _install_openai_script(monkeypatch, [_Usage(1, 1)])
+    client, _ = _client()
+    client.complete_json(system="s", user="u", schema_name="x", schema={})
+    assert "extra_body" not in calls[0]
+
+
+def test_llm_timeout_can_be_overridden_by_env(monkeypatch):
+    monkeypatch.setenv("SEARCH_AGENT_LLM_TIMEOUT_SEC", "12.5")
+    calls = _install_openai_script(monkeypatch, [_Usage(1, 1)])
+    client, _ = _client()
+    client.complete_json(system="s", user="u", schema_name="x", schema={})
+    assert calls[0]["timeout"] == 12.5
 
 
 def test_openai_client_estimates_when_gateway_omits_usage(monkeypatch):

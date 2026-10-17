@@ -16,6 +16,7 @@ Environment for ``OpenAILlmClient``::
     SEARCH_AGENT_LLM_RETRIES                  # transient-failure retries (2)
     SEARCH_AGENT_LLM_JSON_REPAIRS             # JSON repair rounds (1)
     SEARCH_AGENT_LLM_BACKOFF_SEC              # base backoff, doubling (0.5)
+    SEARCH_AGENT_LLM_TIMEOUT_SEC              # per-call timeout (60)
 """
 
 from __future__ import annotations
@@ -62,6 +63,13 @@ def _env_float(name: str, default: float) -> float:
         return float(os.environ.get(name, "") or default)
     except ValueError:
         return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def is_retryable(exc: BaseException) -> bool:
@@ -203,7 +211,7 @@ class OpenAILlmClient:
         *,
         api_key: str | None = None,
         base_url: str | None = None,
-        timeout: float = 60.0,
+        timeout: float | None = None,
         sleep: Callable[[float], None] | None = None,
     ) -> None:
         self._default_model = default_model or os.environ.get("SEARCH_AGENT_MODEL") or "gpt-4o-mini"
@@ -213,10 +221,15 @@ class OpenAILlmClient:
         self._base_url = (
             base_url or os.environ.get("SEARCH_AGENT_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
         )
-        self._timeout = timeout
+        self._timeout = (
+            timeout
+            if timeout is not None
+            else _env_float("SEARCH_AGENT_LLM_TIMEOUT_SEC", 60.0)
+        )
         self._max_retries = _env_int("SEARCH_AGENT_LLM_RETRIES", 2)
         self._repair_retries = _env_int("SEARCH_AGENT_LLM_JSON_REPAIRS", 1)
         self._backoff_sec = _env_float("SEARCH_AGENT_LLM_BACKOFF_SEC", 0.5)
+        self._disable_thinking = _env_bool("SEARCH_AGENT_DISABLE_THINKING", False)
         self._sleep = sleep or time.sleep
         self.usage = LlmUsage()
         self.last_usage: LlmUsage | None = None
@@ -258,15 +271,18 @@ class OpenAILlmClient:
         repairs = 0
         while True:
             try:
-                resp = client.chat.completions.create(
-                    model=model or self._default_model,
-                    messages=messages,
-                    response_format={
+                request_kwargs: dict[str, Any] = {
+                    "model": model or self._default_model,
+                    "messages": messages,
+                    "response_format": {
                         "type": "json_schema",
                         "json_schema": {"name": schema_name, "strict": True, "schema": schema},
                     },
-                    timeout=self._timeout,
-                )
+                    "timeout": self._timeout,
+                }
+                if self._disable_thinking:
+                    request_kwargs["extra_body"] = {"enable_thinking": False}
+                resp = client.chat.completions.create(**request_kwargs)
             except Exception as exc:  # noqa: BLE001 - classified right below
                 if attempt >= self._max_retries or not is_retryable(exc):
                     raise

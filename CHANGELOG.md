@@ -7,6 +7,21 @@
 
 ### Added
 
+- **网关一键启动**（`docker-compose.yml`、`scripts/start-dev.ps1`）：Compose 新增
+  `gateway` 服务，与 Elasticsearch、API 一起后台启动并配置 `restart: unless-stopped`；
+  Compose 使用 `examples/gateway.docker.json`，本地 CLI 继续使用 `gateway.local.json`。
+  新增 Windows 本地脚本和 `.cmd` 包装器，可后台启动网关和 API，日志写入忽略的 `logs/`。
+
+- **真实模型延迟控制**（`llm/client.py`、`gateway/`）：新增
+  `SEARCH_AGENT_DISABLE_THINKING` 与 `SEARCH_AGENT_LLM_TIMEOUT_SEC`，用于关闭
+  Qwen 等思考型模型的隐藏推理并调整单次调用超时；网关的每个 upstream target
+  支持 `extra_body`，可把 provider 专属参数限制在对应模型，不影响 fallback。
+
+- **可选 LLM 网关**（`src/search_agent/gateway/`）：新增 OpenAI-compatible
+  `search-agent gateway` 服务，支持模型别名、主备 provider 降级、Bearer 鉴权、
+  请求 ID、超时控制和按 alias/model/tenant 聚合的 token 使用统计；接入说明见
+  `docs/LLM_GATEWAY.md`。
+
 - **独立 Hybrid V2 检索引擎**（`hybrid_v2/`、`integrations/hybrid_v2.py`）：
   将公开可迁移部分完整放入仓库——IR 工作年限/空窗/司龄归一化、硬条件 DSL、本地
   O*NET 别名、BM25 + 多字段 kNN、`_source.payload` 兼容、可解释 hardMatches 和有界

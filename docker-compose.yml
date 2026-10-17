@@ -30,3 +30,24 @@ services:
     ports:
       - "8000:8000"
     restart: unless-stopped
+
+  gateway:
+    build: .
+    image: search-agent-harness:local
+    container_name: search-agent-gateway
+    command: ["search-agent", "gateway", "--config", "/app/gateway.docker.json", "--host", "0.0.0.0", "--port", "4000"]
+    environment:
+      - SEARCH_AGENT_GATEWAY_API_KEY=${SEARCH_AGENT_GATEWAY_API_KEY:-local-gateway-key}
+      - PRIMARY_LLM_API_KEY=${PRIMARY_LLM_API_KEY:-}
+      - FALLBACK_LLM_API_KEY=${FALLBACK_LLM_API_KEY:-}
+    volumes:
+      - ./examples/gateway.docker.json:/app/gateway.docker.json:ro
+    ports:
+      - "4000:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4000/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped

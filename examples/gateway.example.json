@@ -1,0 +1,22 @@
+{
+  "gateway_api_key_env": "SEARCH_AGENT_GATEWAY_API_KEY",
+  "default_model_alias": "search-agent-primary",
+  "model_aliases": {
+    "search-agent-primary": [
+      {
+        "name": "primary-openai",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+        "api_key_env": "PRIMARY_LLM_API_KEY",
+        "timeout_sec": 60
+      },
+      {
+        "name": "fallback-qwen",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model": "qwen-plus",
+        "api_key_env": "FALLBACK_LLM_API_KEY",
+        "timeout_sec": 60
+      }
+    ]
+  }
+}

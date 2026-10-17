@@ -8,7 +8,7 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-320%20offline%20%2B%2023%20ES-brightgreen)
+![Tests](https://img.shields.io/badge/tests-361-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![version](https://img.shields.io/badge/version-v0.1.0-blue)
@@ -114,6 +114,13 @@ pip install -e ".[openai]"
 export SEARCH_AGENT_API_KEY=sk-...                       # Windows: $env:SEARCH_AGENT_API_KEY="sk-..."
 export SEARCH_AGENT_BASE_URL=https://api.openai.com/v1   # 可选
 search-agent search "招聘推荐算法工程师，要求 5 年以上，有召回排序经验"
+```
+
+使用 Qwen 等默认开启思考的模型时，建议关闭隐藏推理并放宽墙钟预算：
+
+```powershell
+$env:SEARCH_AGENT_DISABLE_THINKING = "1"
+$env:SEARCH_AGENT_TIME_BUDGET_SEC = "180"
 ```
 
 ## 运行效果
@@ -297,9 +304,9 @@ curl -s http://127.0.0.1:8000/search -H "Content-Type: application/json" \
 
 `create_app(tool=..., llm_client=...)` 同样接受自定义后端，与本地调用共用同一套 `SearchTool` 协议。
 
-## Docker 全栈（API + Elasticsearch）
+## Docker 全栈（API + Elasticsearch + LLM 网关）
 
-一条命令起「HTTP 服务 + Elasticsearch 后端」：
+一条命令起「HTTP 服务 + Elasticsearch + LLM 网关」：
 
 ```bash
 docker compose up -d --build            # 首次要构建镜像，之后可去掉 --build
@@ -312,6 +319,26 @@ docker compose down                     # 停止（加 -v 一并清掉 ES 数据
 `HEALTHCHECK`）；compose 里 `api` 服务等 ES 健康检查通过后才启动，启动时把 16 条演示语料
 灌进 ES（`--recreate-index`，可用 `command:` 覆盖）。想切真实 LLM，取消 compose 里
 `SEARCH_AGENT_API_KEY` 的注释即可——容器会自动从 offline 模式换成 OpenAI 兼容端点。
+
+`gateway` 服务使用仓库内已跟踪的 `examples/gateway.docker.json`；本地
+`gateway.local.json` 继续用于命令行启动。上游 key 通过 `.env` 注入，不会进入仓库：
+
+```text
+SEARCH_AGENT_GATEWAY_API_KEY=local-gateway-key
+PRIMARY_LLM_API_KEY=...
+FALLBACK_LLM_API_KEY=...
+```
+
+本地不启动 Docker 时，可以用脚本后台启动网关和 API：
+
+```powershell
+.\scripts\start-dev.cmd          # gateway + API
+.\scripts\start-dev.cmd -SkipApi # 只启动 gateway
+```
+
+脚本会把日志写到 `logs/`，并复用已经健康的 4000 / 8000 服务。`.cmd` 包装器使用
+PowerShell 的 `-ExecutionPolicy Bypass`；如果直接运行 `.ps1`，请使用
+`powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1`。
 
 ## 架构
 
@@ -358,6 +385,7 @@ search-agent-harness/
 │   ├── tools/elasticsearch.py # 真实 ES 8 后端（DSL 编译 + docker compose）
 │   ├── hybrid_v2/          # 独立混合检索：IR 编译 + 硬过滤 + BM25/kNN + 重排
 │   ├── llm/                 # LLM 客户端（OpenAI 协议）+ 各阶段 prompt
+│   ├── gateway/             # 可选 OpenAI-compatible LLM 网关：别名 / 降级 / 用量
 │   ├── models/              # 意图 IR / 推理工件 / API 模型（pydantic v2）
 │   ├── demo.py              # 离线脚本化 LLM + 合成候选人数据
 │   ├── eval.py              # 离线评测：单趟基线 vs 全循环（效果 / 成本对比）
@@ -366,11 +394,12 @@ search-agent-harness/
 │   ├── tools/embedding.py   # 确定性哈希向量（换真实模型只改这一个函数）
 │   ├── web/                 # 内置 Web 控制台（HTML/CSS/JS，零构建；FastAPI 托管 GET /）
 │   └── cli.py               # 命令行入口：demo / corpus / search / eval / serve
-├── tests/                   # 320 离线 + 23 ES 集成
-├── examples/                # custom_backend.py（最小接入）· es_end_to_end.py（真实 ES 全链路）· es_hybrid_recall.py（混合召回）
-├── docs/                    # ARCHITECTURE.md · HYBRID_V2.md · DECISIONS.md · CASE_STUDY.md · eval_baseline.json · demo.tape
+├── scripts/                 # Windows 本地开发：start-dev.ps1（gateway + API）
+├── tests/                   # pytest suite（离线 + 可选 ES 集成）
+├── examples/                # custom backend · ES 端到端 · 混合召回 · gateway*.json
+├── docs/                    # 架构 / Hybrid V2 / 决策 / 案例 / LLM 网关 / 评测基线
 ├── Dockerfile               # 多阶段镜像：wheel 构建 → 非 root 运行 + HEALTHCHECK
-└── docker-compose.yml       # 单节点 ES 8 + API 服务（docker compose up -d --build）
+└── docker-compose.yml       # ES 8 + API + LLM gateway（docker compose up -d --build）
 ```
 
 ### 混合召回通道（BM25 + 向量 + RRF）
@@ -476,6 +505,8 @@ pytest -q -m es
 | `SEARCH_AGENT_LLM_RETRIES` | `2` | 瞬时错误重试次数（超时 / 429 / 5xx，指数退避 + 抖动） |
 | `SEARCH_AGENT_LLM_JSON_REPAIRS` | `1` | 非法 JSON 的修复重试轮数（回传模型输出要求重写） |
 | `SEARCH_AGENT_LLM_BACKOFF_SEC` | `0.5` | 退避基数（秒，逐次翻倍） |
+| `SEARCH_AGENT_LLM_TIMEOUT_SEC` | `60` | 单次 LLM 请求超时（秒） |
+| `SEARCH_AGENT_DISABLE_THINKING` | `0` | `1` 时发送 `enable_thinking=false`，适用于 Qwen 等思考型模型 |
 | `SEARCH_AGENT_REDIS_URL` / `REDIS_URL` | — | 可选：会话记忆 / 结果分页 / 策略记忆（跨进程共享） |
 | `SEARCH_AGENT_ES_URL` | `http://127.0.0.1:9200` | Elasticsearch 地址；同时启用 Hybrid V2 默认选择 |
 | `SEARCH_AGENT_HYBRID_V2_ES_URL` / `_ES_INDEX` | — / `candidate` | Hybrid V2 专用地址与索引 |
@@ -483,11 +514,40 @@ pytest -q -m es
 | `SEARCH_AGENT_HYBRID_V2_RERANK_PROVIDER` | `local` | 本地确定性重排，或 `openai` 兼容重排 |
 | `SEARCH_AGENT_HYBRID_V2_TAG_DICT` | — | 可选的本地标签 name→id JSON 文件 |
 
+## LLM 网关（可选）
+
+仓库新增了一个薄的 OpenAI-compatible 网关，用于统一模型别名、主备降级、Bearer
+鉴权、超时控制和 token 使用统计：
+
+```powershell
+pip install -e ".[api]"
+Copy-Item examples/gateway.example.json gateway.local.json
+$env:SEARCH_AGENT_GATEWAY_API_KEY = "local-gateway-key"
+$env:PRIMARY_LLM_API_KEY = "sk-..."
+$env:FALLBACK_LLM_API_KEY = "..."
+search-agent gateway --config gateway.local.json --port 4000
+```
+
+网关是独立的长驻服务，不会随 `search-agent search` 自动拉起。希望少手动启动时，用
+`docker compose up -d gateway`（带 `restart: unless-stopped`），或在 Windows 本地执行
+`.\scripts\start-dev.cmd -SkipApi`。
+
+Agent 侧只需要把地址和模型别名指向网关：
+
+```powershell
+$env:SEARCH_AGENT_BASE_URL = "http://127.0.0.1:4000/v1"
+$env:SEARCH_AGENT_API_KEY = "local-gateway-key"
+$env:SEARCH_AGENT_MODEL = "search-agent-primary"
+```
+
+网关只负责 provider 层路由和失败降级；Agent 的 per-request token 预算、取消和
+阶段级降级仍然保留。完整配置、接口和限制见 `docs/LLM_GATEWAY.md`。
+
 ## Roadmap
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 320 个离线单元测试（+23 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
+- [x] 361 个测试通过（含可选 ES 集成）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] Web 控制台：零构建单页（八阶段时间线 / 候选人匹配证据 / metrics / trace），`GET /` 直接托管，
