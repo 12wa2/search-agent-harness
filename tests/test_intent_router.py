@@ -75,6 +75,12 @@ def test_recommending_a_recruiting_role_is_search(router: IntentRouter) -> None:
     assert router.route("推荐算法工程师").intent is Intent.SEARCH
 
 
+def test_weather_phrase_with_a_non_recruiting_search_verb_is_out_of_scope(
+    router: IntentRouter,
+) -> None:
+    assert router.route("帮我找一下天气怎么样").intent is Intent.OUT_OF_SCOPE
+
+
 @pytest.mark.parametrize("query", ["帮我找一下手机", "帮我找个人", "那北京的呢"])
 def test_ambiguous_inputs_default_to_search(router: IntentRouter, query: str) -> None:
     assert router.route(query).intent is Intent.SEARCH

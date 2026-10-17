@@ -10,8 +10,8 @@
 - **能力感知请求路由**（`intent_router.py`、`server.py`）：新增确定性 `IntentRouter`，在 Harness 之前
   区分 `GREETING` / `HELP` / `OUT_OF_SCOPE` / `SEARCH`。问候、帮助和明确范围外请求通过单个
   `reply` SSE 帧返回，不启动 Agent、不调用 LLM 或 `SearchTool`；招聘需求和模糊输入默认进入
-  八阶段搜索。补充推荐对象、候选人/岗位词和特殊岗位边界，并新增 GET/POST 路由集成测试及
-  零 LLM / 零检索调用断言。
+  八阶段搜索。补充推荐对象、候选人/岗位词、特殊岗位和非招聘搜索动作（如天气查询）边界，
+  并新增 GET/POST 路由集成测试及零 LLM / 零检索调用断言。
 - **Web 控制台**（`src/search_agent/web/`、`server.py`）：`GET /` 直接托管零构建单页——
   左侧提交招聘需求，中间通过 SSE 实时呈现八阶段时间线与逐阶段细节（可展开原始事件），
   右侧展示交付候选人、命中能力、来源路径与匹配证据，同时显示 LLM 调用 / tokens / 迭代 /

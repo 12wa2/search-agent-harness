@@ -116,7 +116,9 @@ understand ──(need_clarify)──> 返回澄清问题
 | `max_llm_calls` | 40 | LLM 调用上限 |
 | `max_tokens` | 0 | Token 上限；0 = 只记账不设限 |
 | `time_budget_sec` | 12.0 | 墙钟预算（秒） |
-| `target_qualified` | `max(top_k*2, 20)` | 合格候选人目标阈值，不属于资源预算 |
+
+目标阈值 `target_qualified` 默认为 `max(top_k*2, 20)`，只用于判定 `target_reached`
+和计算路径质量分级，不消耗资源预算。
 
 终止判定集中在 `core/budget.py::should_finalize`，返回 `(finalize, reason)`，
 共 6 种原因：`target_reached` / `max_iterations` / `time_budget` / `llm_budget` /

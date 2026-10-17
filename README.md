@@ -8,7 +8,7 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-309%20offline%20%2B%2023%20ES-brightgreen)
+![Tests](https://img.shields.io/badge/tests-310%20offline%20%2B%2023%20ES-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![version](https://img.shields.io/badge/version-v0.1.0-blue)
@@ -363,7 +363,7 @@ search-agent-harness/
 │   ├── tools/embedding.py   # 确定性哈希向量（换真实模型只改这一个函数）
 │   ├── web/                 # 内置 Web 控制台（HTML/CSS/JS，零构建；FastAPI 托管 GET /）
 │   └── cli.py               # 命令行入口：demo / corpus / search / eval / serve
-├── tests/                   # 309 离线 + 23 ES 集成
+├── tests/                   # 310 离线 + 23 ES 集成
 ├── examples/                # custom_backend.py（最小接入）· es_end_to_end.py（真实 ES 全链路）· es_hybrid_recall.py（混合召回）
 ├── docs/                    # ARCHITECTURE.md · DECISIONS.md · CASE_STUDY.md · eval_baseline.json · demo.tape
 ├── Dockerfile               # 多阶段镜像：wheel 构建 → 非 root 运行 + HEALTHCHECK
@@ -453,7 +453,7 @@ pytest -q -m es
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 309 个离线单元测试（+23 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
+- [x] 310 个离线单元测试（+23 个 ES 集成用例）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] Web 控制台：零构建单页（八阶段时间线 / 候选人匹配证据 / metrics / trace），`GET /` 直接托管，

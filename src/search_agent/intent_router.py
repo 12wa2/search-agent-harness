@@ -159,7 +159,7 @@ def _out_of_scope_rule(text: str) -> str | None:
         return "general_recommendation" if _RECOMMEND_OBJECT_RE.search(text) else None
     if _GENERAL_TASK_RE.match(text):
         return "general_task"
-    if _GENERAL_TOPIC_RE.search(text) and not _SEARCH_ACTION_RE.search(text):
+    if _GENERAL_TOPIC_RE.search(text) and not _has_recruitment_signal(text):
         return "general_topic"
     return None
 
