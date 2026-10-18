@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from search_agent.cli import main
 from search_agent.demo import DEMO_DATA, DEMO_QUERIES, ScriptedLlmClient, run_demo
 from search_agent.models.api import SearchRequest
@@ -47,6 +49,37 @@ def test_scripted_client_implements_all_four_roles():
     assert resp.items
     roles = {name for name, _ in client.calls}
     assert roles == {"agent_understand", "agent_plan", "agent_judge", "agent_reflect"}
+
+
+def test_scripted_client_merges_follow_up_history():
+    client = ScriptedLlmClient()
+    result = client.complete_json(
+        system="",
+        user=json.dumps(
+            {
+                "query": "最好有大厂背景",
+                "conversation_history": [
+                    {
+                        "turn": 0,
+                        "query": DEMO_QUERIES[0],
+                        "conditions": {},
+                        "result_count": 5,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        schema_name="agent_understand",
+        schema={},
+    )
+
+    abilities = {ability["name"] for ability in result["must_abilities"]}
+    assert result["raw_query"] == "最好有大厂背景"
+    assert "高并发系统设计" in abilities
+    assert any(
+        source["value"] == "一线互联网大厂"
+        for source in result["talent_profile"]["source_hypotheses"]
+    )
 
 
 def test_cli_demo_repeat_shows_strategy_memory(capsys):

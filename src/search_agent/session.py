@@ -19,7 +19,8 @@ import time
 import uuid
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
 from search_agent.models.api import CandidateItem
 
@@ -50,6 +51,8 @@ class AgentSessionData(BaseModel):
 
 class AgentSessionPage(BaseModel):
     """One page of paginated agent results."""
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
 
     query_token: str
     offset: int
@@ -94,7 +97,21 @@ class AgentSessionStore:
             job_hash = hashlib.sha1(raw.encode()).hexdigest()[:12]
 
         final_items = state.get("final_items", [])
-        merged_pool = [tc.model_dump() for tc in final_items]
+        merged_pool = []
+        for tc in final_items:
+            item = tc.item.model_copy(
+                update={
+                    "score": tc.score,
+                    "matchExplanation": tc.match_explanation or None,
+                }
+            )
+            merged_pool.append(
+                {
+                    "doc_id": tc.doc_id,
+                    "score": tc.score,
+                    "item": item.model_dump(),
+                }
+            )
 
         data = AgentSessionData(
             session_id=token,
@@ -129,6 +146,10 @@ class AgentSessionStore:
         limit: int = 20,
     ) -> AgentSessionPage:
         """Slice the stored merged_pool; no re-run, no re-query."""
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        if limit < 1:
+            raise ValueError("limit must be positive")
         raw = self._get(query_token)
         if raw is None:
             raise KeyError(f"agent session not found or expired: {query_token}")

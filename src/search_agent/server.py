@@ -37,11 +37,13 @@ from fastapi.staticfiles import StaticFiles
 
 from search_agent import __version__
 from search_agent.contract.tool import SearchTool
+from search_agent.conversation_memory import ConversationStore
 from search_agent.demo import DEMO_DATA, ScriptedLlmClient
 from search_agent.intent_router import Intent, IntentRouter, RouteDecision
 from search_agent.llm.client import LlmClient, OpenAILlmClient
 from search_agent.models.api import SearchRequest, SearchResponse
 from search_agent.service import SearchAgentService
+from search_agent.session import AgentSessionPage, AgentSessionStore
 from search_agent.tools.memory import InMemorySearchTool
 
 #: Console assets live inside the package so wheels and the Docker image both ship them.
@@ -58,6 +60,7 @@ def _stage_payload(event: str, state: dict[str, Any]) -> dict[str, Any]:
             "jobTitle": job.title,
             "mustAbilities": [a.name for a in job.must_abilities],
             "hardConstraints": len(job.hard_constraints),
+            "historyTurns": len((state.get("conversation_history") or [])[-3:]),
         }
     if event == "plan":
         paths = state.get("paths") or []
@@ -112,6 +115,8 @@ async def _stream_search(
     req: SearchRequest,
     *,
     cancel_event: threading.Event | None = None,
+    conversation_store: ConversationStore | None = None,
+    session_store: AgentSessionStore | None = None,
 ) -> AsyncIterator[str]:
     """Run one search in a worker thread; yield SSE frames as stages fire.
 
@@ -127,7 +132,13 @@ async def _stream_search(
 
     def worker() -> None:
         try:
-            service = SearchAgentService(tool=tool, llm_client=llm, event_sink=sink)
+            service = SearchAgentService(
+                tool=tool,
+                llm_client=llm,
+                event_sink=sink,
+                conversation_store=conversation_store,
+                session_store=session_store,
+            )
             resp = service.search(req, cancel_event=cancel_event)
             events.put(("result", resp.model_dump(by_alias=True)))
         except Exception as exc:  # surfaced as an SSE error frame, not a crash
@@ -156,12 +167,21 @@ def create_app(
     data_path: str | None = None,
     offline: bool = True,
     intent_router: IntentRouter | None = None,
+    conversation_store: ConversationStore | None = None,
+    session_store: AgentSessionStore | None = None,
 ) -> FastAPI:
     """Build the HTTP app. Defaults to the zero-key offline stack."""
     resolved_tool = tool or InMemorySearchTool(str(data_path or DEMO_DATA))
     resolved_llm = llm_client or (ScriptedLlmClient() if offline else OpenAILlmClient())
     router = intent_router or IntentRouter()
-    service = SearchAgentService(tool=resolved_tool, llm_client=resolved_llm)
+    resolved_conversations = conversation_store or ConversationStore()
+    resolved_sessions = session_store or AgentSessionStore()
+    service = SearchAgentService(
+        tool=resolved_tool,
+        llm_client=resolved_llm,
+        conversation_store=resolved_conversations,
+        session_store=resolved_sessions,
+    )
 
     app = FastAPI(
         title="search-agent-harness",
@@ -189,7 +209,13 @@ def create_app(
     def stream_response(req: SearchRequest) -> StreamingResponse:
         decision = router.route(req.query)
         body = (
-            _stream_search(resolved_tool, resolved_llm, req)
+            _stream_search(
+                resolved_tool,
+                resolved_llm,
+                req,
+                conversation_store=resolved_conversations,
+                session_store=resolved_sessions,
+            )
             if decision.intent is Intent.SEARCH
             else _stream_reply(decision)
         )
@@ -204,13 +230,42 @@ def create_app(
         query: str = Query(..., min_length=1),
         topK: int = Query(10, ge=1, le=5000),
         details: bool = Query(False),
+        companyId: int = Query(1, gt=0),
+        hrId: int | None = Query(None, gt=0),
+        conversationId: str | None = Query(None),
+        pageSize: int | None = Query(None, ge=1, le=100),
     ) -> StreamingResponse:
-        return stream_response(SearchRequest(query=query, topK=topK, details=details))
+        return stream_response(
+            SearchRequest(
+                query=query,
+                topK=topK,
+                details=details,
+                companyId=companyId,
+                hrId=hrId,
+                conversationId=conversationId,
+                pageSize=pageSize,
+            )
+        )
 
     @app.post("/search/stream")
     def search_stream_post(req: SearchRequest) -> StreamingResponse:
         """POST variant: keeps the query out of URLs and access logs."""
         return stream_response(req)
+
+    @app.get("/sessions/{query_token}", response_model=AgentSessionPage)
+    def session_page(
+        query_token: str,
+        offset: int = Query(0, ge=0),
+        limit: int = Query(20, ge=1, le=100),
+    ) -> AgentSessionPage:
+        try:
+            return resolved_sessions.get_page(query_token, offset=offset, limit=limit)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.delete("/sessions/{query_token}")
+    def delete_session(query_token: str) -> dict[str, bool]:
+        return {"deleted": resolved_sessions.invalidate(query_token)}
 
     if _WEB_DIR.is_dir():
         # Mounted last so every API route above keeps precedence.

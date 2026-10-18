@@ -11,6 +11,8 @@ const STAGES = [
 
 const STAGE_LABEL = Object.fromEntries(STAGES);
 const STAGE_ORDER = new Map(STAGES.map(([key], i) => [key, i]));
+const PAGE_SIZE = 5;
+const CONVERSATION_KEY = "search-agent:conversation";
 
 const state = {
   running: false,
@@ -18,6 +20,17 @@ const state = {
   startedAt: 0,
   executeCount: 0,
   stageCount: 0,
+  conversationId: null,
+  conversationTurns: 0,
+  conversationHistory: [],
+  queryToken: null,
+  pageOffset: 0,
+  pageLimit: PAGE_SIZE,
+  pageTotal: 0,
+  pageTotalPages: 1,
+  pageCurrent: 1,
+  pageHasMore: false,
+  pageLoading: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -35,6 +48,13 @@ const metrics = $("metrics");
 const traceWrap = $("trace-wrap");
 const traceJson = $("trace-json");
 const timelineHint = $("timeline-hint");
+const pager = $("pager");
+const pageState = $("page-state");
+const prevPageBtn = $("prev-page");
+const nextPageBtn = $("next-page");
+const conversationLabel = $("conversation-label");
+const conversationHistory = $("conversation-history");
+const newConversationBtn = $("new-conversation");
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -51,6 +71,83 @@ function kv(label, value) {
   const wrap = el("span", "kv");
   wrap.append(el("span", "", `${label}: `), el("b", "", value));
   return wrap;
+}
+
+function loadConversationState() {
+  try {
+    const raw = sessionStorage.getItem(CONVERSATION_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    state.conversationId = saved.conversationId || null;
+    state.conversationTurns = Number(saved.conversationTurns || 0);
+    state.conversationHistory = Array.isArray(saved.history) ? saved.history.slice(-6) : [];
+  } catch (err) {
+    state.conversationId = null;
+  }
+}
+
+function saveConversationState() {
+  try {
+    sessionStorage.setItem(
+      CONVERSATION_KEY,
+      JSON.stringify({
+        conversationId: state.conversationId,
+        conversationTurns: state.conversationTurns,
+        history: state.conversationHistory.slice(-6),
+      }),
+    );
+  } catch (err) {
+    // The in-memory conversation still works when storage is unavailable.
+  }
+}
+
+function renderConversation() {
+  const round = Math.max(1, state.conversationTurns || 1);
+  conversationLabel.textContent = state.conversationId
+    ? `第 ${round} 轮 · 续接当前会话`
+    : "新会话 · 第 1 轮";
+  conversationHistory.replaceChildren();
+  state.conversationHistory.forEach((turn, index) => {
+    const li = el("li");
+    li.append(
+      el("b", "", `${index + 1}`),
+      el("span", "", turn.query || ""),
+      el("small", "", `${turn.total ?? 0} 人`),
+    );
+    li.title = turn.query || "";
+    li.addEventListener("click", () => {
+      queryInput.value = turn.query || "";
+      queryInput.focus();
+    });
+    conversationHistory.append(li);
+  });
+  conversationHistory.hidden = state.conversationHistory.length === 0;
+}
+
+function rememberConversationTurn(query, total) {
+  const last = state.conversationHistory[state.conversationHistory.length - 1];
+  if (!last || last.query !== query) {
+    state.conversationHistory.push({ query, total });
+    state.conversationHistory = state.conversationHistory.slice(-6);
+  } else {
+    last.total = total;
+  }
+  saveConversationState();
+  renderConversation();
+}
+
+function resetConversation() {
+  state.conversationId = null;
+  state.conversationTurns = 0;
+  state.conversationHistory = [];
+  state.queryToken = null;
+  try {
+    sessionStorage.removeItem(CONVERSATION_KEY);
+  } catch (err) {
+    // Ignore storage failures; clearing in-memory state is enough.
+  }
+  hidePager();
+  renderConversation();
 }
 
 function buildRail() {
@@ -82,6 +179,13 @@ function resetUI() {
   traceWrap.hidden = true;
   traceJson.textContent = "";
   resultsHint.textContent = "—";
+  hidePager();
+  state.queryToken = null;
+  state.pageOffset = 0;
+  state.pageTotal = 0;
+  state.pageTotalPages = 1;
+  state.pageCurrent = 1;
+  state.pageHasMore = false;
   state.executeCount = 0;
   state.stageCount = 0;
   for (const item of document.querySelectorAll(".rail-item")) {
@@ -94,6 +198,7 @@ function setRunning(active) {
   runBtn.disabled = active;
   stopBtn.hidden = !active;
   stopBtn.disabled = false;
+  newConversationBtn.disabled = active;
   runHint.classList.remove("error");
   if (active) {
     runHint.textContent = "Agent 正在运行：阶段事件会实时出现在右侧时间线。";
@@ -123,6 +228,7 @@ function stageDetail(stage, detail = {}) {
     if (detail.jobTitle) parts.push(kv("岗位", detail.jobTitle));
     if (detail.mustAbilities?.length) parts.push(kv("必备能力", list(detail.mustAbilities)));
     if (detail.hardConstraints !== undefined) parts.push(kv("硬条件", detail.hardConstraints));
+    if (detail.historyTurns) parts.push(kv("历史上下文", `${detail.historyTurns} 轮`));
   } else if (stage === "plan") {
     if (detail.paths !== undefined) parts.push(kv("路径", detail.paths));
     for (const rationale of detail.rationales || []) {
@@ -246,12 +352,42 @@ function renderCandidate(item, rank) {
   return li;
 }
 
-function renderResults(payload) {
+function hidePager() {
+  pager.hidden = true;
+  pageState.textContent = "—";
+}
+
+function updatePager(page) {
+  if (!page) {
+    hidePager();
+    return;
+  }
+  state.pageOffset = Number(page.offset || 0);
+  state.pageLimit = Number(page.limit || PAGE_SIZE);
+  state.pageTotal = Number(page.total || 0);
+  state.pageTotalPages = Math.max(1, Number(page.totalPages || 1));
+  state.pageCurrent = Math.max(1, Number(page.currentPage || 1));
+  state.pageHasMore = Boolean(page.hasMore);
+  const visible = state.pageTotalPages > 1;
+  pager.hidden = !visible;
+  if (!visible) return;
+  pageState.textContent = `第 ${state.pageCurrent} / ${state.pageTotalPages} 页 · 共 ${state.pageTotal} 人`;
+  prevPageBtn.disabled = state.pageLoading || state.pageCurrent <= 1;
+  nextPageBtn.disabled = state.pageLoading || !state.pageHasMore;
+}
+
+function renderCandidateList(items, offset = 0) {
   results.replaceChildren();
+  items.forEach((item, index) => results.append(renderCandidate(item, offset + index + 1)));
+}
+
+function renderResults(payload) {
   const items = payload.items || [];
   const clarification = payload.clarification;
 
   if (clarification?.needClarification) {
+    results.replaceChildren();
+    hidePager();
     resultsEmpty.hidden = true;
     resultsHint.textContent = "需要澄清";
     const card = el("li", "err-card");
@@ -264,10 +400,54 @@ function renderResults(payload) {
   }
 
   resultsEmpty.hidden = items.length > 0;
-  const total = payload.total ?? items.length;
-  resultsHint.textContent = `${items.length} 人交付${total !== items.length ? ` · total ${total}` : ""}`;
-  items.forEach((item, index) => results.append(renderCandidate(item, index + 1)));
+  const page = payload.page || null;
+  const offset = Number(page?.offset || 0);
+  const total = Number(page?.total ?? payload.total ?? items.length);
+  renderCandidateList(items, offset);
+  updatePager(page);
+  resultsHint.textContent = page
+    ? `${items.length} 人本页${total !== items.length ? ` · 共 ${total} 人` : ""}`
+    : `${items.length} 人交付`;
   $("results").scrollTop = 0;
+}
+
+async function loadSessionPage(offset) {
+  if (!state.queryToken || state.pageLoading) return;
+  state.pageLoading = true;
+  updatePager({
+    offset: state.pageOffset,
+    limit: state.pageLimit,
+    total: state.pageTotal,
+    currentPage: state.pageCurrent,
+    totalPages: state.pageTotalPages,
+    hasMore: state.pageHasMore,
+  });
+  try {
+    const resp = await fetch(
+      `/sessions/${encodeURIComponent(state.queryToken)}?offset=${offset}&limit=${state.pageLimit}`,
+    );
+    if (resp.status === 404) throw new Error("该分页会话已过期，请重新运行搜索。");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    const payload = await resp.json();
+    renderCandidateList(payload.items || [], Number(payload.offset || 0));
+    resultsEmpty.hidden = (payload.items || []).length > 0;
+    updatePager(payload);
+    resultsHint.textContent = `${(payload.items || []).length} 人本页${payload.total ? ` · 共 ${payload.total} 人` : ""}`;
+    $("results").scrollTop = 0;
+  } catch (err) {
+    runHint.classList.add("error");
+    runHint.textContent = err.message;
+  } finally {
+    state.pageLoading = false;
+    updatePager({
+      offset: state.pageOffset,
+      limit: state.pageLimit,
+      total: state.pageTotal,
+      currentPage: state.pageCurrent,
+      totalPages: state.pageTotalPages,
+      hasMore: state.pageHasMore,
+    });
+  }
 }
 
 function setMetric(id, value) {
@@ -408,7 +588,13 @@ async function runSearch(query, topK) {
     const resp = await fetch("/search/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, topK, details: true }),
+      body: JSON.stringify({
+        query,
+        topK,
+        details: true,
+        pageSize: PAGE_SIZE,
+        conversationId: state.conversationId,
+      }),
       signal: controller.signal,
     });
     if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
@@ -438,10 +624,19 @@ async function runSearch(query, topK) {
         } else if (event === "result") {
           sawResult = true;
           sawCancelled = Boolean(payload.debug && payload.debug.cancelled);
+          if (payload.conversationId) {
+            state.conversationId = payload.conversationId;
+            state.conversationTurns = Number(payload.conversationTurns || state.conversationTurns || 1);
+            saveConversationState();
+          }
+          state.queryToken = payload.queryToken || null;
           removeWaiting();
           renderResults(payload);
           renderMetrics(payload);
           renderTrace(payload);
+          if (!sawCancelled) {
+            rememberConversationTurn(query, Number(payload.total || 0));
+          }
           timelineHint.textContent = sawCancelled
             ? "已取消 · 未产出部分结果"
             : `完成 · ${state.stageCount} 个阶段事件 · ${Math.max(1, state.executeCount)} 轮`;
@@ -512,7 +707,7 @@ function bindEvents() {
       runHint.textContent = "请先填写招聘需求。";
       return;
     }
-    const topK = Math.max(1, Math.min(50, Number(topKInput.value) || 5));
+    const topK = Math.max(1, Math.min(50, Number(topKInput.value) || 20));
     topKInput.value = topK;
     runSearch(query, topK);
   });
@@ -538,6 +733,26 @@ function bindEvents() {
       queryInput.focus();
     });
   }
+
+  newConversationBtn.addEventListener("click", () => {
+    if (state.running) return;
+    resetConversation();
+    resetUI();
+    queryInput.value = "";
+    timelineEmpty.hidden = false;
+    resultsEmpty.hidden = false;
+    runHint.classList.remove("error");
+    runHint.textContent = "已开启新会话。下一条需求不会引用之前的上下文。";
+    queryInput.focus();
+  });
+
+  prevPageBtn.addEventListener("click", () => {
+    loadSessionPage(Math.max(0, state.pageOffset - state.pageLimit));
+  });
+
+  nextPageBtn.addEventListener("click", () => {
+    if (state.pageHasMore) loadSessionPage(state.pageOffset + state.pageLimit);
+  });
 }
 
 function initFromUrl() {
@@ -547,12 +762,14 @@ function initFromUrl() {
   if (query) queryInput.value = query;
   if (topK) topKInput.value = topK;
   if (params.get("auto") === "1" && query) {
-    const k = Math.max(1, Math.min(50, Number(topK) || 5));
+    const k = Math.max(1, Math.min(50, Number(topK) || 20));
     runSearch(query, k);
   }
 }
 
+loadConversationState();
 buildRail();
+renderConversation();
 bindEvents();
 initFromUrl();
 loadHealth();

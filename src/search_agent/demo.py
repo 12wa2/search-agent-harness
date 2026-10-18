@@ -84,6 +84,7 @@ _TECH_SKILLS = [
 ]
 _CITIES = ["北京", "上海", "深圳", "杭州", "广州", "成都", "武汉", "南京"]
 _BIG_TECH = ["字节跳动", "腾讯", "阿里", "美团", "百度", "京东", "快手", "网易", "滴滴"]
+_FOLLOW_UP_MARKERS = ("最好", "优先", "不要", "排除", "还要", "希望", "偏向")
 
 
 def _json_payload(user: str) -> dict[str, Any]:
@@ -123,6 +124,11 @@ def _title_for(query: str) -> str:
     return "后端工程师"
 
 
+def _is_follow_up_query(query: str) -> bool:
+    """Offline stand-in for the real model's conversation-history merge."""
+    return any(marker in query for marker in _FOLLOW_UP_MARKERS)
+
+
 class ScriptedLlmClient:
     """Deterministic rule-based stand-in for the four LLM roles.
 
@@ -160,7 +166,12 @@ class ScriptedLlmClient:
     # -- the four roles ------------------------------------------------------
 
     def _understand(self, payload: dict[str, Any]) -> dict[str, Any]:
-        query = str(payload.get("query") or "")
+        raw_query = str(payload.get("query") or "")
+        query = raw_query
+        history = payload.get("conversation_history") or []
+        if history and _is_follow_up_query(raw_query):
+            prior_queries = [str(item.get("query") or "") for item in history[-2:]]
+            query = " ".join(part for part in [*prior_queries, raw_query] if part)
         lowered = query.lower()
         abilities: list[dict[str, Any]] = []
         soft_signals: list[dict[str, Any]] = []
@@ -257,7 +268,7 @@ class ScriptedLlmClient:
             )
 
         return {
-            "raw_query": query,
+            "raw_query": raw_query,
             "title": _title_for(query),
             "must_abilities": abilities,
             "nice_abilities": [],

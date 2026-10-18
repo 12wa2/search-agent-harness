@@ -50,6 +50,55 @@ def test_search_with_details_returns_agent_trace(client: TestClient) -> None:
     assert "agentMetrics" in debug
 
 
+def test_search_returns_conversation_and_positions_first_page(client: TestClient) -> None:
+    first = client.post(
+        "/search",
+        json={"query": QUERY, "topK": 5, "pageSize": 2, "details": True},
+    )
+    assert first.status_code == 200
+    body = first.json()
+    assert body["conversationId"]
+    assert body["conversationTurns"] == 1
+    assert body["queryToken"]
+    assert len(body["items"]) == 2
+    assert body["page"]["currentPage"] == 1
+    assert body["page"]["hasMore"] is True
+
+    second = client.post(
+        "/search",
+        json={
+            "query": f"{QUERY} 最好有大厂背景",
+            "topK": 5,
+            "pageSize": 2,
+            "conversationId": body["conversationId"],
+        },
+    )
+    assert second.status_code == 200
+    assert second.json()["conversationId"] == body["conversationId"]
+    assert second.json()["conversationTurns"] == 2
+
+
+def test_session_endpoint_paginates_and_expires_after_delete(client: TestClient) -> None:
+    resp = client.post(
+        "/search",
+        json={"query": QUERY, "topK": 5, "pageSize": 2, "details": True},
+    )
+    token = resp.json()["queryToken"]
+    assert token
+
+    page = client.get(f"/sessions/{token}", params={"offset": 2, "limit": 2})
+    assert page.status_code == 200
+    payload = page.json()
+    assert payload["queryToken"] == token
+    assert payload["currentPage"] == 2
+    assert len(payload["items"]) == 2
+
+    deleted = client.delete(f"/sessions/{token}")
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True}
+    assert client.get(f"/sessions/{token}").status_code == 404
+
+
 def test_search_rejects_empty_query(client: TestClient) -> None:
     resp = client.post("/search", json={"query": ""})
     assert resp.status_code == 422
@@ -70,6 +119,29 @@ def test_search_stream_emits_stage_and_result_frames(client: TestClient) -> None
     payload = json.loads(data_line.removeprefix("data: "))
     assert payload["total"] > 0
     assert payload["items"]
+
+
+def test_get_stream_accepts_tenant_scope_and_page_size(client: TestClient) -> None:
+    resp = client.get(
+        "/search/stream",
+        params={
+            "query": QUERY,
+            "topK": 5,
+            "companyId": 39978,
+            "hrId": 7,
+            "pageSize": 2,
+        },
+    )
+    assert resp.status_code == 200
+    result_frames = [c for c in resp.text.split("\n\n") if c.startswith("event: result")]
+    assert result_frames
+    data_line = next(line for line in result_frames[0].splitlines() if line.startswith("data: "))
+    payload = json.loads(data_line.removeprefix("data: "))
+
+    assert payload["conversationId"]
+    assert payload["queryToken"]
+    assert len(payload["items"]) == 2
+    assert payload["page"]["currentPage"] == 1
 
 
 def test_root_serves_the_web_console(client: TestClient) -> None:
@@ -98,6 +170,9 @@ def test_post_search_stream_emits_stage_and_result_frames(client: TestClient) ->
     payload = json.loads(data_line.removeprefix("data: "))
     assert payload["items"]
     assert payload["debug"]["agentTrace"]
+    assert payload["conversationId"]
+    assert payload["queryToken"] is None
+    assert payload["page"] is None
 
 
 def test_static_assets_are_served(client: TestClient) -> None:
@@ -105,6 +180,8 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert script.status_code == 200
     assert "javascript" in script.headers["content-type"]
     assert "async function runSearch" in script.text
+    assert "conversationId" in script.text
+    assert "/sessions/" in script.text
 
     styles = client.get("/styles.css")
     assert styles.status_code == 200

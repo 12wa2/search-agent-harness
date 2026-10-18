@@ -91,6 +91,17 @@ class TestConversationStoreMemory:
         assert memory.turns[1].query == "prefer big tech"
         assert memory.turns[2].query == "salary under 30k"
 
+    def test_append_keeps_only_latest_turns(self):
+        store = ConversationStore(ttl_seconds=60, connect_redis=False, max_turns=2)
+        conv_id = new_conversation_id()
+        store.append_turn(conv_id, 39978, 1, _turn(0, "q1"))
+        store.append_turn(conv_id, 39978, 1, _turn(1, "q2"))
+        store.append_turn(conv_id, 39978, 1, _turn(2, "q3"))
+
+        memory = store.load(conv_id)
+        assert memory is not None
+        assert [turn.query for turn in memory.turns] == ["q2", "q3"]
+
     def test_expired_entry_returns_none(self):
         store = ConversationStore(ttl_seconds=0, connect_redis=False)
         conv_id = new_conversation_id()

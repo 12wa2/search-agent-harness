@@ -8,7 +8,7 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-361-brightgreen)
+![Tests](https://img.shields.io/badge/tests-373-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![version](https://img.shields.io/badge/version-v0.1.0-blue)
@@ -44,8 +44,8 @@ Web 控制台和两个 `/search/stream` 入口会先经过确定性的 `IntentRo
 | 招聘需求，或无法确定 | `SEARCH` | 进入 `understand → … → finalize` | 正常预算 |
 
 设计上刻意保守：只有**明确**的问候、帮助问题和无关任务会在 Harness 之前被拦下；其余输入默认交给
-Agent，避免把不常见但真实的招聘表达误判成聊天。路由是规则匹配，不调用 LLM，也不保留会话记忆——
-这是能力边界，不是通用聊天机器人。
+Agent，避免把不常见但真实的招聘表达误判成聊天。路由是规则匹配，不调用 LLM，也不读取或写入
+多轮会话记忆——这是路由的能力边界，不是通用聊天机器人。
 
 “推荐”单独出现时仍视为模糊搜索信号；只有出现书籍、歌曲、电影等明确对象时才判为范围外。
 因此“推荐一本书”与“推荐算法工程师”不会互相误判。
@@ -329,6 +329,8 @@ search-agent serve --offline    # http://127.0.0.1:8000；浏览器打开即 Web
 | `POST /search` | `SearchRequest` → `SearchResponse`（camelCase JSON；`details=true` 附带 `agentTrace` / `agentMetrics`） |
 | `GET /search/stream?query=…&topK=10` | SSE：非搜索请求返回单帧 `reply`；搜索请求逐阶段推送，最后 `result` 帧返回完整结果 |
 | `POST /search/stream` | 同一 SSE 流的 JSON body 版本（查询不进 URL / 访问日志）；客户端断开即请求后端取消 |
+| `GET /sessions/{queryToken}?offset=5&limit=5` | 分页读取本次 Agent 结果池，不重新检索、不调用 LLM |
+| `DELETE /sessions/{queryToken}` | 主动删除分页会话；不调用也会按 1 小时 TTL 过期 |
 | `GET /healthz` | 健康检查：版本 / 模式 / 后端与 LLM 类型 |
 
 SSE 事件协议：
@@ -346,6 +348,37 @@ curl -s http://127.0.0.1:8000/search -H "Content-Type: application/json" \
 ```
 
 `create_app(tool=..., llm_client=...)` 同样接受自定义后端，与本地调用共用同一套 `SearchTool` 协议。
+
+### 多轮会话与结果分页
+
+`SearchRequest` 额外支持两个可选字段：
+
+- `conversationId`：省略时后端自动生成并在响应返回；后续请求带上它，`understand` 会读取最近 3 轮
+  条件摘要。对话记忆默认最多保留 10 轮、TTL 2 小时，并按 `(companyId, hrId)` 精确校验归属。
+- `pageSize`：本次返回的首页大小；不传时保持旧行为，也不创建分页 Session。`topK=20, pageSize=5`
+  表示 Agent 最多交付 20 人，本次只返回前 5 人，并通过 `queryToken` 获取后续页。
+
+```bash
+# 第一轮：自动创建 conversationId，并返回 queryToken
+curl -s -X POST http://127.0.0.1:8000/search -H "Content-Type: application/json" \
+  -d '{"query": "找 Python 后端工程师，3 年以上", "topK": 20, "pageSize": 5}'
+
+# 第二轮：复制上一轮的 conversationId，当前输入会继承并细化前一轮条件
+curl -s -X POST http://127.0.0.1:8000/search -H "Content-Type: application/json" \
+  -d '{"query": "最好有大厂背景", "conversationId": "<上一步返回值>", "topK": 20, "pageSize": 5}'
+
+# 分页：复制 queryToken，不重新运行 Agent
+curl -s "http://127.0.0.1:8000/sessions/<queryToken>?offset=5&limit=5"
+```
+
+Web 控制台已接入同一协议：同一标签页会复用 `conversationId`，显示历史 query 与当前轮次；
+候选人列表底部可翻页，点击“新对话”后下一轮不会继承旧上下文。未配置 Redis 时使用进程内降级，
+多进程部署请设置 `SEARCH_AGENT_REDIS_URL` 或 `REDIS_URL`。
+
+演示时可以先输入“找有 3 年以上经验的后端工程师”，随后在同一会话输入“最好有大厂背景”，
+观察 `understand` 阶段的“历史上下文 1 轮”和来源假设变化；离线脚本化 LLM 也会对
+“最好 / 优先 / 不要”等追问做规则合并。再点击“新对话”重复第二轮，确认不再携带历史。
+完整的三段式口播稿和验收点见 `docs/CASE_STUDY.md` 的“多轮会话 + 分页演示”。
 
 ## Docker 全栈（API + Elasticsearch + LLM 网关）
 
@@ -590,11 +623,13 @@ $env:SEARCH_AGENT_MODEL = "search-agent-primary"
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 383 个测试通过（含可选 ES 集成）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
+- [x] 373 个离线测试通过（另有 24 个可选 ES 集成测试）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] Web 控制台：零构建单页（八阶段时间线 / 候选人匹配证据 / metrics / trace），`GET /` 直接托管，
       截图 `docs/console.png`；SSE 支持 `POST /search/stream`（查询不进 URL），客户端断开触发阶段边界取消。
+- [x] 轻量多轮会话（结构化摘要、最近 3 轮注入、租户隔离）与结果池分页（`/sessions/{queryToken}`，
+      翻页不重新运行 Agent）；Web 控制台支持续接会话、新对话和上一页 / 下一页。
 - [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）
 - [x] SQLite/FTS5 后端（`tools/sqlite_fts.py`，标准库）：where 树编译 SQL + 跨后端一致性测试。
 - [x] Elasticsearch 真实后端 + `docker compose` 端到端示例（ES DSL 编译，`examples/es_end_to_end.py`）。

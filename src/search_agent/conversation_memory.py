@@ -49,8 +49,17 @@ class ConversationStore:
 
     PREFIX = "search_agent:conversation:"
 
-    def __init__(self, ttl_seconds: int = _DEFAULT_TTL, *, connect_redis: bool = True) -> None:
+    def __init__(
+        self,
+        ttl_seconds: int = _DEFAULT_TTL,
+        *,
+        connect_redis: bool = True,
+        max_turns: int = 10,
+    ) -> None:
+        if max_turns < 1:
+            raise ValueError("max_turns must be positive")
         self._ttl = ttl_seconds
+        self._max_turns = max_turns
         self._redis = None
         if connect_redis:
             try:
@@ -95,6 +104,7 @@ class ConversationStore:
             )
 
         memory.turns.append(turn)
+        memory.turns = memory.turns[-self._max_turns :]
         memory.expires_at = now + self._ttl
 
         self._set(conversation_id, memory.model_dump())

@@ -35,6 +35,19 @@ class SearchRequest(BaseModel):
     details: bool = Field(default=False)
     permission: PermissionContext | None = None
     conversationId: str | None = None
+    pageSize: int | None = Field(default=None, ge=1, le=100)
+
+
+class PageInfo(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    offset: int
+    limit: int
+    total: int
+    currentPage: int
+    totalPages: int
+    hasMore: bool
+    nextOffset: int
 
 
 class CandidateItem(BaseModel):
@@ -86,6 +99,10 @@ class SearchResponse(BaseModel):
     items: list[CandidateItem]
     debug: dict | None = None
     clarification: dict | None = None
+    conversationId: str | None = None
+    conversationTurns: int = 0
+    queryToken: str | None = None
+    page: PageInfo | None = None
 
 
-__all__ = ["CandidateItem", "PermissionContext", "SearchRequest", "SearchResponse"]
+__all__ = ["CandidateItem", "PageInfo", "PermissionContext", "SearchRequest", "SearchResponse"]

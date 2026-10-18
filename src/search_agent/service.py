@@ -14,15 +14,18 @@ from typing import Any, Callable
 from search_agent.config import budget_from_env, recall_pool_size_from_env
 from search_agent.contract.tool import SearchTool, ToolCandidate
 from search_agent.conversation_memory import (
+    ConversationMemory,
     ConversationStore,
     ConversationTurn,
+    new_conversation_id,
 )
 from search_agent.core.budget import BudgetState
 from search_agent.core.experience import ExperienceStore, attribute_qualified, query_family
 from search_agent.llm.client import LlmClient, MeteredLlmClient, OpenAILlmClient
-from search_agent.models.api import CandidateItem, SearchRequest, SearchResponse
+from search_agent.models.api import CandidateItem, PageInfo, SearchRequest, SearchResponse
 from search_agent.models.artifacts import Budget
 from search_agent.runner import HarnessRunner, LoopRunner
+from search_agent.session import AgentSessionStore
 from search_agent.stages.base import Deps
 
 logger = logging.getLogger(__name__)
@@ -45,13 +48,16 @@ class SearchAgentService:
         fallback_fn: Callable[[SearchRequest], SearchResponse] | None = None,
         event_sink: Callable[[str, dict[str, Any]], None] | None = None,
         experience: ExperienceStore | None = None,
+        conversation_store: ConversationStore | None = None,
+        session_store: AgentSessionStore | None = None,
     ) -> None:
         self._tool = tool
         self._llm = llm_client or OpenAILlmClient()
         self._runner = runner or LoopRunner()
         self._fallback_fn = fallback_fn
         self._event_sink = event_sink
-        self._conversation_store = ConversationStore()
+        self._conversation_store = conversation_store or ConversationStore()
+        self._session_store = session_store or AgentSessionStore()
         self._experience = experience or ExperienceStore()
 
     def search(self, req: SearchRequest, *, cancel_event: Event | None = None) -> SearchResponse:
@@ -68,14 +74,17 @@ class SearchAgentService:
 
         perm_dict = req.permission.model_dump() if req.permission else None
         conversation_history: list[dict] = []
-        conv_id = getattr(req, "conversationId", None)
-        if conv_id:
+        conv_id = req.conversationId or new_conversation_id()
+        if req.conversationId:
             try:
-                memory = self._conversation_store.load(conv_id)
-                if memory:
+                memory = self._conversation_store.load(req.conversationId)
+                if memory and self._conversation_matches_scope(memory, req):
                     conversation_history = [t.model_dump() for t in memory.turns]
+                elif memory:
+                    conv_id = new_conversation_id()
             except Exception:
                 pass
+        conversation_turns = len(conversation_history)
 
         initial_state: dict[str, Any] = {
             "query": req.query,
@@ -95,23 +104,23 @@ class SearchAgentService:
             self._record_experience(state)
             if conv_id:
                 try:
-                    self._save_conversation_turn(conv_id, req, state)
+                    conversation_turns = self._save_conversation_turn(conv_id, req, state)
                 except Exception:
                     pass
 
         if state.get("cancelled"):
-            return self._handle_cancelled(req, state)
-        if state.get("fallback_baseline"):
-            return self._handle_fallback(req, state)
-        if state.get("need_clarify"):
-            return self._handle_clarify(req, state)
-
-        items = [self._to_candidate_item(tc) for tc in state.get("final_items", [])]
-        return SearchResponse(
-            query=req.query,
-            total=state.get("final_total", len(items)),
-            items=items,
-            debug=self._build_debug(state, req),
+            resp = self._handle_cancelled(req, state)
+        elif state.get("fallback_baseline"):
+            resp = self._handle_fallback(req, state)
+        elif state.get("need_clarify"):
+            resp = self._handle_clarify(req, state)
+        else:
+            resp = self._build_completed_response(req, state)
+        return resp.model_copy(
+            update={
+                "conversationId": conv_id,
+                "conversationTurns": conversation_turns,
+            }
         )
 
     # ── output adapters ─────────────────────────────────────────────────
@@ -123,6 +132,50 @@ class SearchAgentService:
                 "score": tc.score,
                 "matchExplanation": tc.match_explanation or None,
             }
+        )
+
+    @staticmethod
+    def _conversation_matches_scope(memory: ConversationMemory, req: SearchRequest) -> bool:
+        # A conversation belongs to exactly one (company, hr) scope. Treat a
+        # missing hrId as a scope value as well, so an anonymous request cannot
+        # inherit an HR-scoped history (and vice versa).
+        return memory.company_id == req.companyId and memory.hr_id == req.hrId
+
+    def _build_completed_response(
+        self, req: SearchRequest, state: dict[str, Any]
+    ) -> SearchResponse:
+        final_items = state.get("final_items", [])
+        items = [self._to_candidate_item(tc) for tc in final_items]
+        query_token: str | None = None
+        page_info: PageInfo | None = None
+        if req.pageSize is not None:
+            try:
+                query_token = self._session_store.create(state)
+                page = self._session_store.get_page(
+                    query_token,
+                    offset=0,
+                    limit=req.pageSize,
+                )
+                items = list(page.items)
+                page_info = PageInfo(
+                    offset=page.offset,
+                    limit=page.limit,
+                    total=page.total,
+                    currentPage=page.current_page,
+                    totalPages=page.total_pages,
+                    hasMore=page.has_more,
+                    nextOffset=page.next_offset,
+                )
+            except Exception:  # noqa: BLE001 - pagination is best-effort
+                logger.warning("agent session creation failed", exc_info=True)
+
+        return SearchResponse(
+            query=req.query,
+            total=state.get("final_total", len(items)),
+            items=items,
+            debug=self._build_debug(state, req),
+            queryToken=query_token,
+            page=page_info,
         )
 
     def _handle_cancelled(self, req: SearchRequest, state: dict[str, Any]) -> SearchResponse:
@@ -199,8 +252,8 @@ class SearchAgentService:
         return debug
 
     def _save_conversation_turn(
-        self, conversation_id: str, req: Any, state: dict[str, Any]
-    ) -> None:
+        self, conversation_id: str, req: SearchRequest, state: dict[str, Any]
+    ) -> int:
         """Save one conversation turn to Redis."""
         import time as _time
 
@@ -218,8 +271,16 @@ class SearchAgentService:
             name = getattr(getattr(tc, "item", None), "name", None)
             if name:
                 top_names.append(name)
+        history = state.get("conversation_history", [])
+        turn_index = (
+            max(
+                (int(turn.get("turn_index", -1)) for turn in history),
+                default=-1,
+            )
+            + 1
+        )
         turn = ConversationTurn(
-            turn_index=len(state.get("conversation_history", [])),
+            turn_index=turn_index,
             query=req.query,
             job_profile_summary=summary,
             result_count=state.get("final_total", len(final_items)),
@@ -232,6 +293,7 @@ class SearchAgentService:
             hr_id=getattr(req, "hrId", None),
             turn=turn,
         )
+        return turn_index + 1
 
 
 __all__ = ["SearchAgentService"]

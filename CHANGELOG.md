@@ -53,6 +53,14 @@
   右侧展示交付候选人、命中能力、来源路径与匹配证据，同时显示 LLM 调用 / tokens / 迭代 /
   耗时 / 降级；新增 `POST /search/stream`（查询不进 URL / 访问日志），保留 GET 变体；
   截图 `docs/console.png`；新增 2 个服务端用例（静态页可加载、POST 流与 GET 一致）。
+- **轻量多轮会话与结果分页**（`conversation_memory.py`、`session.py`、`service.py`、`server.py`）：
+  搜索响应新增自动生成的 `conversationId` 与 `conversationTurns`；传 `pageSize` 时再返回 `queryToken`
+  与分页元数据。对话记忆最多保留 10 轮、只注入最近 3 轮、TTL 2 小时，并按 `(companyId, hrId)`
+  精确校验归属；
+  结果池由 Redis/进程内 Session 按 1 小时 TTL 保存，新增 `GET/DELETE /sessions/{queryToken}`。
+  Web 控制台加入“新对话”、历史 query、轮次提示和候选人分页控件；不传 `pageSize` 时保持原 API 行为，
+  也不创建多余的结果 Session。脚本化 LLM 对“最好 / 优先 / 不要”等追问做规则合并，离线 demo
+  也能观察跨轮条件继承。
 - **指标分层：池召回 vs 交付召回**（`oracle.py` / `eval.py`）：Oracle 报告与消融表都拆成
   「探索层（池召回：路径召回池 ∪ 交付列表里看到过的合格人）」与「交付层（top-k 召回）」两行——
   全循环池召回 0.70 → 0.76（多路径买探索宽度），交付 top-10 0.32 → 0.30（粗粒度词法打分排不上来，

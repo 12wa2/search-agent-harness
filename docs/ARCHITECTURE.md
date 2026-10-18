@@ -272,3 +272,21 @@ ES 索引，再对外提供 HTTP + SSE。后端统一由 `tools/factory.py` 构�
    注入 `strategyPriors`；无观测时整键省略，prompt 约定 `runs < 2` 忽略。
 
 工程层只提供证据，决策仍在 LLM；取舍详见 `docs/DECISIONS.md` D23。
+
+## 15. 轻量多轮会话与结果分页
+
+这里刻意不引入向量记忆或图记忆，只保留两类可过期状态：
+
+| 状态 | 存储 | TTL | 内容 |
+|---|---|---|---|
+| 对话记忆 | Redis / 进程内降级 | 2 小时 | 最近最多 10 轮的结构化条件摘要，Prompt 只取最近 3 轮 |
+| 结果 Session | Redis / 进程内降级 | 1 小时 | 本次 `final_items`、Trace、指标与分页游标 |
+
+`SearchAgentService` 在搜索前按 `conversationId` 加载历史，并按 `(companyId, hrId)` 精确校验归属
+（`hrId` 为空也视为一个独立作用域）；搜索结束后保存紧凑轮次摘要，再按需从 `final_items`
+创建 Session。`pageSize` 只控制首页切片，后续页通过 `GET /sessions/{queryToken}` 读取，
+不重新运行 Agent、不增加 LLM/token 成本。
+
+没有 `conversationId` 时由后端生成并返回，首次请求与旧客户端保持兼容；没有 `pageSize` 时
+响应仍返回完整 `final_items`，且不创建分页 Session。这两条兼容边界让记忆与分页都是可选增强，
+而不是主链路的新故障点。

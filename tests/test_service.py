@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
+
 from search_agent.contract.tool import (
     RerankToolRequest,
     SearchToolRequest,
     SearchToolResult,
     ToolCandidate,
 )
+from search_agent.conversation_memory import ConversationStore
 from search_agent.llm.client import FakeLlmClient
 from search_agent.models.api import CandidateItem, SearchRequest, SearchResponse
 from search_agent.models.ir import (
@@ -17,6 +20,7 @@ from search_agent.models.ir import (
 )
 from search_agent.runner import LoopRunner
 from search_agent.service import SearchAgentService
+from search_agent.session import AgentSessionStore
 
 
 def _ir():
@@ -105,6 +109,155 @@ def test_service_returns_search_response_with_items():
     assert resp.debug is not None
     assert "agentTrace" in resp.debug
     assert resp.debug["agentTrace"]["final"]["rerankUsed"] is True
+
+
+def test_service_backfills_conversation_id_and_second_turn_uses_history():
+    llm = _llm()
+    conversations = ConversationStore(connect_redis=False)
+    sessions = AgentSessionStore(connect_redis=False)
+    svc = SearchAgentService(
+        tool=_FakeTool([_candidate(f"d{i}") for i in range(5)]),
+        llm_client=llm,
+        runner=LoopRunner(),
+        conversation_store=conversations,
+        session_store=sessions,
+    )
+
+    first = svc.search(SearchRequest(query="Python engineer", companyId=39978, hrId=7, topK=5))
+    assert first.conversationId
+    assert first.conversationTurns == 1
+
+    second = svc.search(
+        SearchRequest(
+            query="prefer big tech",
+            companyId=39978,
+            hrId=7,
+            topK=5,
+            conversationId=first.conversationId,
+        )
+    )
+    assert second.conversationId == first.conversationId
+    assert second.conversationTurns == 2
+
+    understands = [json.loads(user) for name, user in llm.calls if name == "agent_understand"]
+    assert understands[1]["conversation_history"][0]["query"] == "Python engineer"
+
+
+def test_service_does_not_reuse_conversation_across_tenants():
+    llm = _llm()
+    svc = SearchAgentService(
+        tool=_FakeTool([_candidate(f"d{i}") for i in range(5)]),
+        llm_client=llm,
+        runner=LoopRunner(),
+        conversation_store=ConversationStore(connect_redis=False),
+        session_store=AgentSessionStore(connect_redis=False),
+    )
+
+    first = svc.search(SearchRequest(query="Python engineer", companyId=39978, topK=5))
+    second = svc.search(
+        SearchRequest(
+            query="prefer big tech",
+            companyId=40000,
+            topK=5,
+            conversationId=first.conversationId,
+        )
+    )
+
+    assert second.conversationId != first.conversationId
+    understands = [json.loads(user) for name, user in llm.calls if name == "agent_understand"]
+    assert "conversation_history" not in understands[1]
+
+
+def test_service_does_not_reuse_hr_scoped_conversation_without_hr_id():
+    llm = _llm()
+    svc = SearchAgentService(
+        tool=_FakeTool([_candidate(f"d{i}") for i in range(5)]),
+        llm_client=llm,
+        runner=LoopRunner(),
+        conversation_store=ConversationStore(connect_redis=False),
+        session_store=AgentSessionStore(connect_redis=False),
+    )
+
+    first = svc.search(SearchRequest(query="Python engineer", companyId=39978, hrId=7, topK=5))
+    second = svc.search(
+        SearchRequest(
+            query="prefer big tech",
+            companyId=39978,
+            topK=5,
+            conversationId=first.conversationId,
+        )
+    )
+
+    assert second.conversationId != first.conversationId
+    understands = [json.loads(user) for name, user in llm.calls if name == "agent_understand"]
+    assert "conversation_history" not in understands[1]
+
+
+def test_service_does_not_create_pagination_session_without_page_size():
+    svc = SearchAgentService(
+        tool=_FakeTool([_candidate(f"d{i}") for i in range(5)]),
+        llm_client=_llm(),
+        runner=LoopRunner(),
+        conversation_store=ConversationStore(connect_redis=False),
+        session_store=AgentSessionStore(connect_redis=False),
+    )
+
+    resp = svc.search(SearchRequest(query="Python engineer", companyId=39978, topK=5))
+
+    assert resp.queryToken is None
+    assert resp.page is None
+
+
+def test_service_turn_index_continues_after_memory_window():
+    conversations = ConversationStore(connect_redis=False, max_turns=2)
+    svc = SearchAgentService(
+        tool=_FakeTool([_candidate(f"d{i}") for i in range(5)]),
+        llm_client=_llm(),
+        runner=LoopRunner(),
+        conversation_store=conversations,
+        session_store=AgentSessionStore(connect_redis=False),
+    )
+
+    conv_id = None
+    for index in range(4):
+        resp = svc.search(
+            SearchRequest(
+                query=f"query {index}",
+                companyId=39978,
+                topK=5,
+                conversationId=conv_id,
+            )
+        )
+        conv_id = resp.conversationId
+
+    memory = conversations.load(conv_id)
+    assert memory is not None
+    assert [turn.turn_index for turn in memory.turns] == [2, 3]
+    assert resp.conversationTurns == 4
+
+
+def test_service_returns_first_page_and_reusable_session_token():
+    sessions = AgentSessionStore(connect_redis=False)
+    svc = SearchAgentService(
+        tool=_FakeTool([_candidate(f"d{i}", 0.9 - i * 0.05) for i in range(5)]),
+        llm_client=_llm(),
+        runner=LoopRunner(),
+        conversation_store=ConversationStore(connect_redis=False),
+        session_store=sessions,
+    )
+
+    resp = svc.search(SearchRequest(query="Python engineer", companyId=39978, topK=5, pageSize=2))
+
+    assert len(resp.items) == 2
+    assert resp.total == 5
+    assert resp.queryToken
+    assert resp.page is not None
+    assert resp.page.currentPage == 1
+    assert resp.page.totalPages == 3
+    assert resp.page.hasMore is True
+
+    second = sessions.get_page(resp.queryToken, offset=2, limit=2)
+    assert [item.docId for item in second.items] == ["d2", "d3"]
 
 
 def test_service_clarification_response():

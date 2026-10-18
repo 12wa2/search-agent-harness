@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from search_agent.contract.tool import ToolCandidate
 from search_agent.models.api import CandidateItem
 from search_agent.session import (
@@ -123,3 +125,20 @@ def test_total_pages_calculation():
 
     assert page.total_pages == 3  # ceil(25/10)
     assert page.current_page == 1
+
+
+def test_page_preserves_enriched_score_and_explanation():
+    store = AgentSessionStore(ttl_seconds=60, connect_redis=False)
+    token = store.create(_state(1))
+    page = store.get_page(token, offset=0, limit=1)
+
+    assert page.items[0].score == pytest.approx(0.9)
+    assert page.items[0].matchExplanation == {"summary": "good"}
+
+
+@pytest.mark.parametrize(("offset", "limit"), [(-1, 5), (0, 0)])
+def test_page_rejects_invalid_slice(offset: int, limit: int) -> None:
+    store = AgentSessionStore(ttl_seconds=60, connect_redis=False)
+    token = store.create(_state(1))
+    with pytest.raises(ValueError):
+        store.get_page(token, offset=offset, limit=limit)
