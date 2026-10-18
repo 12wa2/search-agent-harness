@@ -1,0 +1,336 @@
+{
+  "description": "Synthetic-oracle complex-query benchmark over a seeded 100-candidate corpus. relevant is derived from generator ground truth (ability set + minimum years), not from human review.",
+  "label_kind": "synthetic_oracle",
+  "seed": 2026,
+  "size": 100,
+  "candidates": "examples/bench100/candidates.jsonl",
+  "oracle": "examples/bench100/oracle.json",
+  "queries": [
+    {
+      "id": "backend_concurrency",
+      "query": "找有3年以上后端经验的工程师，必须做过高并发系统；熟悉Java和微服务者优先，大厂背景优先",
+      "must": [
+        "3年以上",
+        "后端或架构经验",
+        "高并发系统经验"
+      ],
+      "nice": [
+        "Java",
+        "微服务",
+        "大厂背景"
+      ],
+      "requiredAbilities": [
+        "服务端开发",
+        "高并发系统设计"
+      ],
+      "minYears": 3,
+      "roleTitle": "后端工程师",
+      "relevant": [
+        "g001",
+        "g015",
+        "g029",
+        "g043",
+        "g057",
+        "g071",
+        "g085",
+        "g099"
+      ]
+    },
+    {
+      "id": "recommendation_ranking",
+      "query": "招推荐算法工程师，必须有5年以上机器学习和推荐系统经验；有召回、排序、CTR或线上A/B实验经验者优先",
+      "must": [
+        "5年以上",
+        "推荐系统",
+        "机器学习"
+      ],
+      "nice": [
+        "召回",
+        "排序",
+        "CTR",
+        "A/B实验"
+      ],
+      "requiredAbilities": [
+        "推荐系统",
+        "机器学习"
+      ],
+      "minYears": 5,
+      "roleTitle": "推荐算法工程师",
+      "relevant": [
+        "g003",
+        "g017",
+        "g031",
+        "g045",
+        "g059",
+        "g073",
+        "g087"
+      ]
+    },
+    {
+      "id": "data_realtime",
+      "query": "找有3年以上数据工程经验的工程师；做过实时数仓、熟悉Spark和Flink者优先",
+      "must": [
+        "3年以上",
+        "数据工程"
+      ],
+      "nice": [
+        "实时数仓",
+        "Spark",
+        "Flink",
+        "数据治理"
+      ],
+      "requiredAbilities": [
+        "数据工程"
+      ],
+      "minYears": 3,
+      "roleTitle": "数据工程师",
+      "relevant": [
+        "g004",
+        "g012",
+        "g018",
+        "g026",
+        "g032",
+        "g040",
+        "g046",
+        "g054",
+        "g060",
+        "g068",
+        "g074",
+        "g082",
+        "g088",
+        "g096"
+      ]
+    },
+    {
+      "id": "stability_capacity",
+      "query": "找有3年以上经验的系统架构工程师，必须同时具备高并发系统设计和系统架构设计经验；做过稳定性治理或容量规划者优先",
+      "must": [
+        "高并发",
+        "系统架构",
+        "稳定性或容量规划"
+      ],
+      "nice": [
+        "微服务",
+        "全链路压测",
+        "容灾"
+      ],
+      "requiredAbilities": [
+        "高并发系统设计",
+        "系统架构设计"
+      ],
+      "minYears": 3,
+      "roleTitle": "系统架构师",
+      "relevant": [
+        "g005",
+        "g019",
+        "g033",
+        "g047",
+        "g061",
+        "g075",
+        "g089"
+      ]
+    },
+    {
+      "id": "payment_distributed_tx",
+      "query": "找有3年以上后端经验的工程师，必须同时具备服务端开发和分布式系统经验；有支付、交易或分布式事务经验者优先",
+      "must": [
+        "3年以上",
+        "服务端开发",
+        "分布式系统"
+      ],
+      "nice": [
+        "支付",
+        "交易",
+        "分布式事务"
+      ],
+      "requiredAbilities": [
+        "服务端开发",
+        "分布式系统"
+      ],
+      "minYears": 3,
+      "roleTitle": "后端工程师",
+      "relevant": [
+        "g002",
+        "g014",
+        "g016",
+        "g028",
+        "g030",
+        "g042",
+        "g044",
+        "g056",
+        "g058",
+        "g070",
+        "g072",
+        "g084",
+        "g086",
+        "g098",
+        "g100"
+      ]
+    },
+    {
+      "id": "microservice_backend",
+      "query": "招5年以上后端工程师，必须同时具备服务端开发和微服务架构经验；熟悉服务治理、高可用或Spring Cloud者优先",
+      "must": [
+        "5年以上",
+        "服务端开发",
+        "微服务架构"
+      ],
+      "nice": [
+        "服务治理",
+        "高可用",
+        "Spring Cloud"
+      ],
+      "requiredAbilities": [
+        "服务端开发",
+        "微服务架构"
+      ],
+      "minYears": 5,
+      "roleTitle": "后端工程师",
+      "relevant": [
+        "g002",
+        "g006",
+        "g016",
+        "g020",
+        "g030",
+        "g034",
+        "g044",
+        "g048",
+        "g052",
+        "g058",
+        "g062",
+        "g072",
+        "g086",
+        "g090",
+        "g091"
+      ]
+    },
+    {
+      "id": "ml_platform",
+      "query": "找有3年以上机器学习经验的工程师；有模型训练、PyTorch、特征工程或在线推理经验者优先",
+      "must": [
+        "3年以上",
+        "机器学习"
+      ],
+      "nice": [
+        "模型训练",
+        "PyTorch",
+        "特征工程",
+        "在线推理"
+      ],
+      "requiredAbilities": [
+        "机器学习"
+      ],
+      "minYears": 3,
+      "roleTitle": "机器学习工程师",
+      "relevant": [
+        "g003",
+        "g009",
+        "g011",
+        "g012",
+        "g014",
+        "g017",
+        "g023",
+        "g031",
+        "g037",
+        "g045",
+        "g051",
+        "g059",
+        "g065",
+        "g071",
+        "g073",
+        "g079",
+        "g087",
+        "g093"
+      ]
+    },
+    {
+      "id": "data_architect",
+      "query": "找有5年以上经验的数据平台架构师，必须同时具备数据工程和系统架构设计经验；有实时数仓、容量规划或数据平台经验者优先",
+      "must": [
+        "5年以上",
+        "数据工程",
+        "系统架构"
+      ],
+      "nice": [
+        "实时数仓",
+        "容量规划",
+        "数据平台"
+      ],
+      "requiredAbilities": [
+        "数据工程",
+        "系统架构设计"
+      ],
+      "minYears": 5,
+      "roleTitle": "数据平台架构师",
+      "relevant": [
+        "g004",
+        "g018",
+        "g032",
+        "g060",
+        "g074",
+        "g088"
+      ]
+    },
+    {
+      "id": "distributed_infra",
+      "query": "找有5年以上经验的分布式基础设施工程师，必须同时具备分布式系统和高并发系统设计经验；熟悉容灾、Kafka或链路追踪者优先",
+      "must": [
+        "5年以上",
+        "分布式系统",
+        "高并发"
+      ],
+      "nice": [
+        "容灾",
+        "Kafka",
+        "链路追踪"
+      ],
+      "requiredAbilities": [
+        "分布式系统",
+        "高并发系统设计"
+      ],
+      "minYears": 5,
+      "roleTitle": "基础设施工程师",
+      "relevant": [
+        "g005",
+        "g011",
+        "g019",
+        "g025",
+        "g033",
+        "g039",
+        "g047",
+        "g053",
+        "g061",
+        "g067",
+        "g075",
+        "g089"
+      ]
+    },
+    {
+      "id": "architecture_transferable",
+      "query": "找有8年以上经验的系统架构师，必须同时具备系统架构设计和微服务架构经验；跨团队协作、技术方案评审或可迁移背景优先",
+      "must": [
+        "8年以上",
+        "系统架构",
+        "微服务架构"
+      ],
+      "nice": [
+        "技术方案评审",
+        "服务治理",
+        "跨团队协作"
+      ],
+      "requiredAbilities": [
+        "系统架构设计",
+        "微服务架构"
+      ],
+      "minYears": 8,
+      "roleTitle": "系统架构师",
+      "relevant": [
+        "g041",
+        "g055",
+        "g069",
+        "g083",
+        "g097"
+      ]
+    }
+  ]
+}

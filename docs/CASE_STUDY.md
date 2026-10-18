@@ -140,6 +140,25 @@ search-agent demo "找有 3 年以上经验、做过高并发系统的后端工�
 | 「合格 16」谁判的？可信吗？ | LLM judge + 证据 grounding（简历里找不到证据的能力降级），属代理指标；真值看 oracle 基准，人工反馈闭环在 Roadmap。 |
 | 为什么只有 5 次 LLM 调用？ | understand 1 + plan 1 + judge 2（每条路径一次）+ reflect 1；finalize 的收敛再搜不调 LLM（只对新增候选 judge，本例 0 新增）。 |
 
+## 100 人真实模型复核：一个成功案例与一个回退案例
+
+上面的 16 人案例用于解释阶段和确定性行为；正式展示还需回答「换到真实 LLM、真实 ES 和更大语料后
+是否仍成立」。仓库中的 `examples/real_ab_experiment.py` 因此固定同一 Qwen 网关、Hybrid V2 索引、
+`top-k=5` 和同一套 `synthetic_oracle` 标签，只切换 `reflect + revise`。
+
+**成功案例 `backend_concurrency`**：基线交付 5 人、相关 0 人；Agent 交付 5 人、相关 4 人，
+池召回从 `0.250` 升到 `0.875`，并带回 `g015`、`g029`、`g085`、`g099` 四个基线没有交付的相关候选人。
+这条 query 能说明反思的价值：第一次搜索没有找到足够的“高并发 + 后端”证据时，系统会换搜索方向，
+而不是在原查询上反复调参。
+
+**回退案例 `microservice_backend`**：基线 recall@5 为 `0.333`，Agent 反而降到 `0.133`；另有
+`backend_concurrency`、`payment_distributed_tx` 在预算上限触发 `budget_exceeded`。这说明“探索得更宽”
+不等于“最终排序更准”：候选进入池以后，judge / rerank 和预算分配仍可能把正确的人挤下去。
+面试时不应隐藏这条回退；它恰好能引出下一阶段优化方向。
+
+完整 10 条 query 的逐条结果、成本、bootstrap 区间与边界见
+`docs/real_llm_ab_results_100.md`。
+
 ## 相关文档
 
 - 状态机 / 预算 / 降级细节：`docs/ARCHITECTURE.md`

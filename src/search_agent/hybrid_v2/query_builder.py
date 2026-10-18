@@ -285,6 +285,9 @@ def _build_knn_clauses(
         vector = embeddings.get(text)
         if vector is None:
             continue
+        if not any(abs(value) > 1e-12 for value in vector):
+            degraded.append("embedding_zero_vector")
+            continue
         surviving.append((text, field, weight, vector))
     if not surviving:
         if "embedding_batch_failed" not in degraded:

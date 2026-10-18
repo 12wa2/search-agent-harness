@@ -75,7 +75,10 @@ def should_finalize(
         return True, "llm_budget"
     if bs.token_exceeded():
         return True, "token_budget"
-    if not has_pending_paths and bs.new_qualified_last_round == 0:
+    # A zero-result first round is a search-strategy failure, not proof that no
+    # more strategies exist. Let the loop reflect once before declaring no
+    # progress; max_iterations still bounds the retry.
+    if not has_pending_paths and bs.new_qualified_last_round == 0 and bs.iteration > 0:
         return True, "no_progress"
     return False, None
 

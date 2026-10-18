@@ -14,9 +14,17 @@ def test_target_reached():
 
 def test_no_progress_when_no_paths_and_no_new_qualified():
     bs = _bs(target_qualified=100, max_iterations=10, max_llm_calls=100, time_budget_sec=60)
+    bs.iteration = 1
     bs.new_qualified_last_round = 0
     fin, reason = should_finalize(qualified_count=5, has_pending_paths=False, bs=bs)
     assert fin and reason == "no_progress"
+
+
+def test_first_empty_round_can_reflect():
+    bs = _bs(target_qualified=100, max_iterations=10, max_llm_calls=100, time_budget_sec=60)
+    bs.new_qualified_last_round = 0
+    fin, reason = should_finalize(qualified_count=0, has_pending_paths=False, bs=bs)
+    assert not fin and reason is None
 
 
 def test_continue_when_progress():

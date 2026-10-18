@@ -171,6 +171,13 @@ def collect_metrics(state: dict[str, Any], bs: Any) -> AgentMetrics:
             if candidate.doc_id not in seen_surfaced:
                 seen_surfaced.add(candidate.doc_id)
                 surfaced_doc_ids.append(candidate.doc_id)
+    # Converged final-search candidates are judged into ``accumulated`` but do
+    # not belong to any PathResult. They are still part of the recall pool, so
+    # excluding them under-reports the agent's discovery coverage.
+    for doc_id in accumulated:
+        if doc_id not in seen_surfaced:
+            seen_surfaced.add(doc_id)
+            surfaced_doc_ids.append(doc_id)
     for candidate in state.get("final_items") or []:
         if candidate.doc_id not in seen_surfaced:
             seen_surfaced.add(candidate.doc_id)

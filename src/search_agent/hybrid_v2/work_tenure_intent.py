@@ -58,6 +58,37 @@ _GENERIC_TENURE_BLOCKERS = (
     "带团队",
 )
 
+# Capability/domain phrases are not exact job titles. Treating "3年后端经验"
+# as role_tenure("后端") would exclude transferable candidates whose actual
+# titles are "业务系统研发工程师" or "交易链路开发工程师".
+_GENERIC_TENURE_TITLES = frozenset(
+    {
+        "后端",
+        "前端",
+        "全栈",
+        "服务端",
+        "算法",
+        "数据",
+        "数据工程",
+        "机器学习",
+        "推荐",
+        "推荐系统",
+        "分布式系统",
+        "系统架构",
+        "架构",
+        "微服务",
+        "基础设施",
+        "高并发",
+        "平台",
+        "数据平台",
+        "支付",
+        "交易",
+        "业务系统",
+        "研发",
+        "开发",
+    }
+)
+
 
 @dataclass(frozen=True)
 class WorkTenureTarget:
@@ -178,7 +209,10 @@ def classify_work_tenure_intent(query: str) -> WorkTenureIntent:
     if target is None or not target.title:
         return "generic"
 
-    if any(blocker in target.title for blocker in _GENERIC_TENURE_BLOCKERS):
+    if (
+        target.title in _GENERIC_TENURE_TITLES
+        or any(blocker in target.title for blocker in _GENERIC_TENURE_BLOCKERS)
+    ):
         return "generic"
     return "title"
 

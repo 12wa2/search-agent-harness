@@ -39,6 +39,12 @@ def embed_text(text: str, *, dims: int = EMBEDDING_DIMS) -> list[float]:
         vector[_bucket(token, dims)] += 1.0 + math.log(count)
     norm = math.sqrt(sum(value * value for value in vector))
     if norm == 0.0:
+        # ES cosine kNN rejects zero-magnitude query vectors. A non-empty text
+        # can still tokenize to nothing (for example "3年+"); give it a stable
+        # direction instead of turning an otherwise valid search into HTTP 400.
+        if not text.strip():
+            return vector
+        vector[_bucket("__raw__:" + text.strip().lower(), dims)] = 1.0
         return vector
     return [value / norm for value in vector]
 

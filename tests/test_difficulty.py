@@ -9,6 +9,8 @@ from search_agent.contract.tool import (
 from search_agent.core.budget import BudgetState
 from search_agent.core.difficulty import (
     adaptive_budget,
+    apply_difficulty_floor,
+    difficulty_floor,
     difficulty_route,
 )
 from search_agent.harness import Harness
@@ -95,9 +97,22 @@ def _understand_resp(difficulty="high"):
 
 
 def test_difficulty_route_mapping():
-    assert difficulty_route("high") == "single_pass"
-    assert difficulty_route("low") == "reduced"
-    assert difficulty_route("mid") == "standard"
+    assert difficulty_route("low") == "single_pass"
+    assert difficulty_route("mid") == "reduced"
+    assert difficulty_route("high") == "standard"
+
+
+def test_difficulty_floor_promotes_abstract_queries():
+    assert difficulty_floor("找有3年以上经验、做过高并发系统的后端工程师") == "mid"
+    assert difficulty_floor("找能力可迁移的架构师") == "high"
+    assert difficulty_floor("找3年以上 Java 工程师") == "low"
+
+
+def test_apply_difficulty_floor_never_lowers_model_choice():
+    assert apply_difficulty_floor("找高并发后端工程师", "low") == "mid"
+    assert apply_difficulty_floor("找高并发后端工程师", "high") == "high"
+    assert apply_difficulty_floor("找 Java 工程师", "low") == "low"
+    assert apply_difficulty_floor("找 Java 工程师", "mid") == "mid"
 
 
 def test_adaptive_budget_single_pass():
@@ -124,12 +139,12 @@ def test_adaptive_budget_standard_unchanged():
 # ── harness integration ──
 
 
-def test_high_difficulty_skips_plan_and_reflection():
-    """high → single_pass: no plan call, no reflect call, single path."""
+def test_low_difficulty_skips_plan_and_reflection():
+    """low → single_pass: no plan call, no reflect call, single path."""
     tool = _FakeTool()
     llm = FakeLlmClient(
         responses={
-            "agent_understand": _understand_resp("high"),
+            "agent_understand": _understand_resp("low"),
             "agent_judge": {
                 "judgments": [
                     {
@@ -162,12 +177,12 @@ def test_high_difficulty_skips_plan_and_reflection():
     assert state["budget"].max_paths_per_iteration == 1
 
 
-def test_low_difficulty_reduces_budget():
-    """low → reduced: plan still called, but budget shrunk."""
+def test_mid_difficulty_reduces_budget():
+    """mid → reduced: plan still called, but budget shrunk."""
     tool = _FakeTool()
     llm = FakeLlmClient(
         responses={
-            "agent_understand": _understand_resp("low"),
+            "agent_understand": _understand_resp("mid"),
             "agent_plan": {
                 "paths": [
                     {"rationale": "p", "intent": _ir().model_dump(), "expected_yield": "high"}
@@ -197,12 +212,12 @@ def test_low_difficulty_reduces_budget():
     assert len(plan_calls) == 1
 
 
-def test_mid_difficulty_standard():
-    """mid → standard: normal flow, budget unchanged."""
+def test_high_difficulty_standard():
+    """high → standard: full reflective loop, budget unchanged."""
     tool = _FakeTool()
     llm = FakeLlmClient(
         responses={
-            "agent_understand": _understand_resp("mid"),
+            "agent_understand": _understand_resp("high"),
             "agent_plan": {
                 "paths": [
                     {"rationale": "p", "intent": _ir().model_dump(), "expected_yield": "high"}
@@ -229,10 +244,10 @@ def test_mid_difficulty_standard():
     assert state["budget"].max_paths_per_iteration == 4
 
 
-def test_high_difficulty_no_hard_constraints_falls_to_plan():
-    """high but no hard_constraints → can't build fallback path → falls to plan."""
+def test_low_difficulty_no_hard_constraints_falls_to_plan():
+    """low but no hard_constraints → can't build fallback path → falls to plan."""
     tool = _FakeTool()
-    resp = _understand_resp("high")
+    resp = _understand_resp("low")
     resp["hard_constraints"] = []
     llm = FakeLlmClient(
         responses={
@@ -258,7 +273,7 @@ def test_high_difficulty_no_hard_constraints_falls_to_plan():
     h = Harness(_deps(llm, tool))
     state = h.run(_state())
 
-    # still single_pass route (skip_reflection), but plan was called
+    # still the single_pass route (skip_reflection), but plan was called
     assert state["difficulty_route"] == "single_pass"
     assert state.get("skip_reflection") is True
     plan_calls = [c for c in llm.calls if c[0] == "agent_plan"]

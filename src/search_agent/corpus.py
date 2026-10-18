@@ -39,10 +39,13 @@ from __future__ import annotations
 import json
 import random
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from search_agent.demo import ABILITY_LIBRARY
+
+_CORPUS_END_DATE = date(2026, 9, 1)
 
 __all__ = [
     "ABILITY_SKILLS",
@@ -398,6 +401,27 @@ def _pick_title(rng: random.Random, base_title: str, implicit: set[str]) -> str:
     return base_title
 
 
+def _shift_months(anchor: date, months: int) -> date:
+    month_index = anchor.year * 12 + anchor.month - 1 + months
+    year, month = divmod(month_index, 12)
+    return date(year, month + 1, 1)
+
+
+def _experience_dates(years: float, count: int) -> list[tuple[str, str]]:
+    total_months = max(0, int(round(years * 12)))
+    if count <= 1:
+        start = _shift_months(_CORPUS_END_DATE, -total_months)
+        return [(start.isoformat(), _CORPUS_END_DATE.isoformat())]
+    older_months = total_months // 2
+    newer_months = total_months - older_months
+    older_start = _shift_months(_CORPUS_END_DATE, -total_months)
+    boundary = _shift_months(_CORPUS_END_DATE, -newer_months)
+    return [
+        (older_start.isoformat(), boundary.isoformat()),
+        (boundary.isoformat(), _CORPUS_END_DATE.isoformat()),
+    ]
+
+
 def _make_candidate(
     rng: random.Random,
     doc_id: str,
@@ -438,6 +462,7 @@ def _make_candidate(
 
     degree = "硕士" if rng.random() < 0.45 else "本科"
     companies = rng.sample(_COMPANIES, rng.randint(1, 2))
+    dates = _experience_dates(years, len(companies))
     record: dict[str, Any] = {
         "docId": doc_id,
         "name": name,
@@ -453,6 +478,11 @@ def _make_candidate(
         "certificates": [{"name": "PMP 项目管理认证"}] if rng.random() < 0.15 else [],
         "expectedPositions": [title],
     }
+    for work, (start_date, end_date) in zip(
+        record['workExperiences'], dates, strict=True
+    ):
+        work['startDate'] = start_date
+        work['endDate'] = end_date
     return record, frozenset(abilities), frozenset(implicit), years
 
 

@@ -7,6 +7,14 @@
 
 ### Added
 
+- **真实模型 A/B 实验（100 人合成基准）**（`examples/real_ab_experiment.py`、
+  `examples/build_real_ab_bench.py`、`examples/bench100/`、`examples/real_ab_queries_100.json`）：
+  新增可复现的 100 人种子化语料、10 条复杂 query 和 `synthetic_oracle` 标签，固定同一 Qwen 网关、
+  Elasticsearch 索引与 `top-k=5`，比较单趟基线和完整反思循环。正式复核（`qwen3.8-flash`）记录
+  recall@5 `0.392 → 0.473`、precision `0.740 → 0.840`、池召回 `0.735 → 0.937`、
+  新增相关候选 `17` 个（相关率 `0.708`）、LLM 调用 `20 → 59`、tokens
+  `148,428 → 446,704`、Agent 降级 `2` 次。报告同时保留配对 bootstrap 区间、逐 query 明细和
+  “单次合成观测、不可与公司指标混用”的边界。实验入口新增 `--workers`，支持按 query 隔离并发。
 - **网关一键启动**（`docker-compose.yml`、`scripts/start-dev.ps1`）：Compose 新增
   `gateway` 服务，与 Elasticsearch、API 一起后台启动并配置 `restart: unless-stopped`；
   Compose 使用 `examples/gateway.docker.json`，本地 CLI 继续使用 `gateway.local.json`。
@@ -101,6 +109,18 @@
 
 ### Fixed
 
+- **收敛搜索的最终交付与召回口径**（`stages/finalize.py`、`core/metrics.py`、`eval.py`）：
+  收敛再搜不再只截取召回池前 `top-k` 后直接交付；完整收敛池会先进入 judge，再与路径池统一按 must
+  能力覆盖、缺失能力、硬条件违规、简历证据与后端分数排序后截断。池召回指标同步纳入只出现在
+  `accumulated` 的收敛候选，避免低估 Agent 的探索覆盖。新增 `tests/test_finalize.py` 与
+  `tests/test_metrics.py` 回归用例，覆盖“相关候选位于召回池较后位置”和“可迁移岗位证据优先”两种情形。
+- **难度路由语义**（`core/difficulty.py`、`llm/prompts/__init__.py`）：修正为
+  `low → single_pass`、`mid → reduced`、`high → standard`，让明确简单的查询走单趟，
+  抽象或存在漏召风险的查询进入完整反思循环；同步更新架构与决策文档的旧口径。
+- **首轮空结果终止**（`core/budget.py`）：无待执行路径且首轮新增合格数为 0 时，先允许进入
+  reflect，再由 `max_iterations` 约束后续轮次；避免把“首轮策略失败”误判为“没有更多策略”。
+- **Hybrid V2 演示语料**（`data/demo_candidates.jsonl`）：为 16 个虚构候选人的工作经历补全
+  `startDate` / `endDate`，使“后端经验 + 年限”编译出的 `work_stats.role_tenure` 过滤能够命中。
 - **SQLite 后端并发安全**（`tools/sqlite_fts.py`）：execute 阶段会并行调用多个搜索路径，
   SQLite 共享连接现在通过锁串行化查询与关闭操作，避免 CI/多线程环境下偶发返回空结果；
   新增 32 路并发搜索回归测试。

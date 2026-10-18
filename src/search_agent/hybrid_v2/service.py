@@ -200,7 +200,10 @@ class HybridV2SearchService:
         if items and not req.skip_rerank:
             scan_n = min(
                 len(items),
-                max(req.top_k, min(self._config.rerank_scan_cap, self._config.rerank_target_n)),
+                max(
+                    req.top_k,
+                    min(self._config.rerank_scan_cap, recall_pool_size),
+                ),
             )
             rerank_started = time.perf_counter()
             reranked, rerank_meta = self._reranker.rerank(
@@ -215,15 +218,17 @@ class HybridV2SearchService:
             if status not in {"ok", "skipped"}:
                 degraded.append(f"rerank_{status}")
         else:
-            items = items[: req.top_k]
+            items = items[:recall_pool_size]
 
-        delivered = items[: req.top_k]
+        # The harness judges the path's recall pool; finalize performs the
+        # top-k cut. Returning only top_k here silently disables reflection.
+        delivered = items[:recall_pool_size]
         qualified = sum(
             1
             for item in delivered
             if float(item.score or 0.0) >= self._config.rerank_min_confidence
         )
-        quality = quality_label(qualified, max(total, len(delivered)), req.top_k)
+        quality = quality_label(qualified, max(total, len(delivered)), recall_pool_size)
         timings["total"] = int((time.perf_counter() - started) * 1000)
         return SearchToolResult(
             items=[_as_tool_candidate(item, elapsed_ms=timings["total"]) for item in delivered],

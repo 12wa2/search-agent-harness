@@ -118,13 +118,13 @@ class FakeSearchTool:
         )
 
 
-def _understand_resp(needs_clarify=False):
+def _understand_resp(needs_clarify=False, *, difficulty="mid"):
     return {
         "title": "Python 后端工程师",
         "must_abilities": [{"name": "Python", "level": "must"}],
         "nice_abilities": [{"name": "Django", "level": "nice"}],
         "hard_constraints": [],
-        "subjective_difficulty": "mid",
+        "subjective_difficulty": difficulty,
         "difficulty_reason": "",
         "needs_clarification": needs_clarify,
         "clarify_questions": ["请明确工作年限要求"] if needs_clarify else [],
@@ -368,7 +368,7 @@ def test_profile_convergence_triggers_finalize():
 
     llm = FakeLlmClient(
         responses={
-            "agent_understand": _understand_resp(),
+            "agent_understand": _understand_resp(difficulty="high"),
             "agent_plan": _plan_resp([("python path", _ir("skill", ("Python",)))]),
             "agent_judge": lambda: _judge_resp(
                 [f"a{i}" for i in range(5)]

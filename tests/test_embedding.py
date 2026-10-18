@@ -26,6 +26,12 @@ def test_empty_text_has_no_direction() -> None:
     assert cosine(vector, vector) == 0.0
 
 
+def test_non_empty_text_without_tokens_still_has_a_direction() -> None:
+    vector = embed_text("3年+")
+    assert any(value != 0.0 for value in vector)
+    assert math.isclose(math.sqrt(sum(value * value for value in vector)), 1.0, rel_tol=1e-9)
+
+
 def test_related_text_beats_unrelated_text() -> None:
     query = embed_text("高并发系统设计 服务端开发")
     related = embed_text("主导过日均十亿级高并发交易系统的架构设计与稳定性治理")

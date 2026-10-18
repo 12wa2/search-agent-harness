@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -17,6 +18,7 @@ from search_agent.llm.prompts import (
     build_understand_payload,
     understand_prompt,
 )
+from search_agent.core.difficulty import apply_difficulty_floor
 from search_agent.models.artifacts import (
     CandidateSource,
     JobAbility,
@@ -32,6 +34,9 @@ from search_agent.stages.base import Deps
 logger = logging.getLogger(__name__)
 
 _DIFF_ALIASES = {"medium": "mid", "mid": "mid", "low": "low", "high": "high"}
+_ENTITY_FILTER_FIELDS = frozenset(
+    {"position", "intention_position", "latest_work_job", "company", "latest_company"}
+)
 
 
 def _coerce_abilities(raw: Any) -> list[JobAbility]:
@@ -66,6 +71,38 @@ def _coerce_hard_constraints(raw: Any) -> list[StructuredConditionIR]:
             except Exception:
                 logger.debug("understand: skip invalid hard_constraint: %s", c)
     return out
+
+
+def _relax_unstated_entity_filters(
+    query: str,
+    constraints: list[StructuredConditionIR],
+) -> tuple[list[StructuredConditionIR], list[str]]:
+    """Keep title/company filters only when the user wrote a concrete value.
+
+    A model often expands "后端经验" into ``position any=[后端工程师, ...]``.
+    That turns a capability search into an exact-title filter and excludes
+    transferable candidates. Unstated entity values are returned so they can be
+    preserved as semantic signals instead of being discarded.
+    """
+    normalized_query = re.sub(r"\s+", "", query.casefold())
+    kept: list[StructuredConditionIR] = []
+    relaxed: list[str] = []
+    for condition in constraints:
+        if condition.field not in _ENTITY_FILTER_FIELDS:
+            kept.append(condition)
+            continue
+        mentioned = any(
+            normalized_value
+            and normalized_value in normalized_query
+            for normalized_value in (
+                re.sub(r"\s+", "", str(value).casefold()) for value in condition.values
+            )
+        )
+        if mentioned:
+            kept.append(condition)
+        else:
+            relaxed.extend(str(value) for value in condition.values if str(value).strip())
+    return kept, relaxed
 
 
 def _coerce_soft_signals(raw: Any) -> list[SemanticConditionIR]:
@@ -108,14 +145,35 @@ def run_understand(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     # tolerate alias keys the model emits when strict mode is not enforced
     diff_raw = data.get("subjective_difficulty") or data.get("difficulty_level") or "mid"
     difficulty = _DIFF_ALIASES.get(str(diff_raw).strip().lower(), "mid")
+    difficulty = apply_difficulty_floor(state["query"], difficulty)
     tp = data.get("talent_profile") or data.get("initial_talent_profile") or {}
+
+    hard_constraints = _coerce_hard_constraints(data.get("hard_constraints"))
+    hard_constraints, relaxed_terms = _relax_unstated_entity_filters(
+        state["query"], hard_constraints
+    )
+    soft_signals = _coerce_soft_signals(tp.get("soft_signals"))
+    must_keywords = list(tp.get("must_keywords", []) or [])
+    existing_soft_texts = {condition.text.casefold() for condition in soft_signals}
+    for term in relaxed_terms:
+        if term.casefold() not in {str(keyword).casefold() for keyword in must_keywords}:
+            must_keywords.append(term)
+        if term.casefold() not in existing_soft_texts:
+            soft_signals.append(
+                SemanticConditionIR(
+                    text=term,
+                    fields=["work_vector", "skills_vector"],
+                    weight=1.2,
+                )
+            )
+            existing_soft_texts.add(term.casefold())
 
     job = JobProfile(
         raw_query=state["query"],
         title=data.get("title"),
         must_abilities=_coerce_abilities(data.get("must_abilities")),
         nice_abilities=_coerce_abilities(data.get("nice_abilities")),
-        hard_constraints=_coerce_hard_constraints(data.get("hard_constraints")),
+        hard_constraints=hard_constraints,
         subjective_difficulty=difficulty,
         difficulty_reason=data.get("difficulty_reason", "") or "",
         needs_clarification=bool(data.get("needs_clarification", False)),
@@ -123,8 +181,8 @@ def run_understand(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     )
     talent = TalentProfile(
         source_hypotheses=_coerce_sources(tp.get("source_hypotheses")),
-        must_keywords=tp.get("must_keywords", []) or [],
-        soft_signals=_coerce_soft_signals(tp.get("soft_signals")),
+        must_keywords=must_keywords,
+        soft_signals=soft_signals,
         risk_filters=tp.get("risk_filters", []) or [],
     )
 

@@ -179,3 +179,41 @@ def test_hybrid_v2_service_can_skip_rerank() -> None:
 
     assert result.items[0].item.matchRate == 100
     assert result.items[0].item.score == 1.0
+
+
+def test_search_with_intent_returns_the_recall_pool_not_only_top_k() -> None:
+    response = {
+        "hits": {
+            "total": {"value": 10, "relation": "eq"},
+            "hits": [
+                {"_id": f"doc-{index}", "_score": 1.0, "_source": _source()}
+                for index in range(10)
+            ],
+        }
+    }
+    service = HybridV2SearchService(
+        config=_config(),
+        es_client=FakeEsClient(response),
+        embedder=HashEmbedder(dims=8),
+    )
+    intent = CandidateSearchIR(
+        where=WhereNode(
+            type="leaf",
+            condition=StructuredConditionIR(field="work_years", operator="gte", values=[3]),
+        )
+    )
+
+    result = service.search_with_intent(
+        SearchToolRequest(
+            intent=intent,
+            query_text="后端工程师",
+            company_id=1,
+            top_k=2,
+            recall_pool_size=8,
+            routing=0,
+            skip_rerank=True,
+        )
+    )
+
+    assert len(result.items) == 8
+    assert result.total == 10

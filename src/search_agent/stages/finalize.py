@@ -3,8 +3,9 @@
 When the talent profile was enriched through the reflection loop, run ONE
 definitive ``search_with_intent`` using the fully-evolved profile. The enriched
 semantic signals (common traits, source hypotheses) broaden vector recall, so
-the final search can surface people keyword search alone cannot find. This costs
-the same LLM tokens as ``rerank_pool`` (one rerank) plus a single ES query.
+the final search can surface people keyword search alone cannot find. The full
+recall page is judged once before the top-k cut; the old behaviour of cutting to
+top-k first made relevant candidates below that cut invisible to the ranking.
 
 When the profile was NOT enriched (single_pass / degraded / no reflections) or
 the converged search fails, fall back to the cross-path merge + ``rerank_pool``
@@ -45,6 +46,160 @@ def _build_merged_pool(path_results: list[PathResult]) -> list[ToolCandidate]:
             if tc.doc_id not in best or tc.score > best[tc.doc_id].score:
                 best[tc.doc_id] = tc
     return list(best.values())
+
+
+def _dedupe_candidates(*groups: list[ToolCandidate]) -> list[ToolCandidate]:
+    """Union candidate groups by doc_id, keeping the highest backend score."""
+    best: dict[str, ToolCandidate] = {}
+    for group in groups:
+        for tc in group:
+            if tc.doc_id not in best or tc.score > best[tc.doc_id].score:
+                best[tc.doc_id] = tc
+    return list(best.values())
+
+
+def _hard_required_violations(tc: ToolCandidate) -> int:
+    """Count explicit required hard-condition failures on a candidate."""
+    hard = tc.hard_matches or (tc.match_explanation or {}).get("hardMatches") or []
+    if not isinstance(hard, list):
+        return 0
+    return sum(
+        1
+        for hm in hard
+        if isinstance(hm, dict)
+        and hm.get("matched") is False
+        and hm.get("required", True)
+    )
+
+
+_ABILITY_EVIDENCE_SYNONYMS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (
+        ("服务端", "后端"),
+        (
+            "后端",
+            "服务端",
+            "业务系统",
+            "交易",
+            "支付",
+            "订单",
+            "电商",
+            "网关",
+            "研发工程师",
+            "java",
+            "go",
+            "python",
+            "微服务",
+        ),
+    ),
+    (
+        ("高并发",),
+        ("高并发", "容量", "压测", "洪峰", "qps", "吞吐", "性能优化", "限流", "降级", "稳定性"),
+    ),
+    (
+        ("微服务",),
+        ("微服务", "spring cloud", "服务治理", "服务拆分", "注册发现", "dubbo", "service mesh"),
+    ),
+    (
+        ("系统架构", "架构设计"),
+        ("架构", "容量规划", "高可用", "技术选型", "容灾", "稳定性", "分布式"),
+    ),
+    (
+        ("分布式",),
+        ("分布式", "kafka", "消息队列", "分布式事务", "一致性"),
+    ),
+    (
+        ("推荐",),
+        ("推荐", "召回", "排序", "ctr", "a/b实验"),
+    ),
+    (
+        ("数据工程",),
+        ("spark", "flink", "数据仓库", "数仓", "数据平台", "etl"),
+    ),
+    (
+        ("机器学习",),
+        ("机器学习", "深度学习", "pytorch", "tensorflow", "模型训练"),
+    ),
+)
+
+
+def _candidate_text(tc: ToolCandidate) -> str:
+    """Text blob used only for explainable resume-evidence coverage."""
+    item = tc.item
+    parts: list[str] = [str(item.summary or "")]
+    for skill in item.skills or []:
+        if isinstance(skill, dict):
+            parts.append(str(skill.get("name", "")))
+    for work in item.workExperiences or []:
+        if isinstance(work, dict):
+            parts.append(
+                str(
+                    work.get("job_title")
+                    or work.get("jobTitle")
+                    or work.get("position")
+                    or ""
+                )
+            )
+            parts.append(str(work.get("company_name") or work.get("companyName") or ""))
+    parts.extend(str(position) for position in item.expectedPositions or [])
+    for cert in item.certificates or []:
+        if isinstance(cert, dict):
+            parts.append(str(cert.get("name", "")))
+    return " ".join(parts).lower()
+
+
+def _ability_evidence_terms(ability: Any) -> set[str]:
+    """Combine LLM-provided hints with a small transferable-role vocabulary."""
+    name = str(getattr(ability, "name", "") or "").lower()
+    terms = {
+        str(hint).lower()
+        for hint in (getattr(ability, "evidence_hints", None) or [])
+        if str(hint).strip()
+    }
+    for keys, synonyms in _ABILITY_EVIDENCE_SYNONYMS:
+        if any(key in name for key in keys):
+            terms.update(synonyms)
+    return terms
+
+
+def _resume_evidence_coverage(tc: ToolCandidate, must_abilities: list[Any]) -> tuple[int, int]:
+    """How many must abilities have resume evidence; (matched, missing)."""
+    text = _candidate_text(tc)
+    matched = 0
+    for ability in must_abilities:
+        terms = _ability_evidence_terms(ability)
+        if terms and any(term in text for term in terms):
+            matched += 1
+    return matched, len(must_abilities) - matched
+
+
+def _selection_key(
+    tc: ToolCandidate,
+    accumulated: dict[str, Any],
+    must_abilities: list[Any],
+) -> tuple[int, int, int, int, int, int, int, float, str]:
+    """Rank judged candidates by ability coverage before backend similarity.
+
+    Order: LLM-judged must coverage (desc), missing must abilities (asc), required
+    hard-condition violations (asc), resume-evidence coverage (desc), evidence
+    gaps (asc), unjudged penalty, total matched abilities, backend score, doc_id.
+    The evidence terms resolve ties where the LLM misses an implicit ability.
+    """
+    must_names = {str(getattr(a, "name", "")) for a in must_abilities}
+    judgment = accumulated.get(tc.doc_id)
+    matched = set(judgment.matched_abilities) if judgment else set()
+    missing_must = len(must_names - matched)
+    evidence_hits, evidence_missing = _resume_evidence_coverage(tc, must_abilities)
+    return (
+        -len(matched & must_names),
+        missing_must,
+        _hard_required_violations(tc),
+        -evidence_hits,
+        evidence_missing,
+        0 if judgment else 1,
+        -len(matched),
+        -tc.score,
+        tc.doc_id,
+    )
 
 
 def _build_converged_intent(state: dict[str, Any]) -> CandidateSearchIR | None:
@@ -179,6 +334,7 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     }
 
     final_items: list[ToolCandidate] = []
+    converged_pool: list[ToolCandidate] = []
 
     # --- converged final search (only when the profile was enriched) ---------
     # The reflection loop evolved the talent profile; use it for one definitive
@@ -214,7 +370,9 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
             for tc in fs_result.items:
                 if tc.doc_id not in accumulated:
                     final_search_new += 1
-            final_items = list(fs_result.items[:top_k])
+            # Keep the complete recall page: judging or selecting only the first
+            # top-k silently discards relevant candidates surfaced at ranks 6..N.
+            converged_pool = list(fs_result.items)
             logger.info(
                 "converged final search: total=%d items=%d new=%d",
                 fs_result.total,
@@ -225,69 +383,68 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
             logger.warning("converged final search failed: %s", exc)
             converged = None
 
-    # --- fallback: global rerank over the accumulated cross-path pool --------
-    # single_pass / no enrichment / converged-search-failed.
-    if not final_items and not merged_pool:
-        logger.warning(
-            "finalize: empty result, merged_pool=0 (path_results=%d accumulated=%d)",
-            len(path_results),
-            len(accumulated),
-        )
-    if not final_items and merged_pool:
-        try:
-            result = deps.tool.rerank_pool(
-                RerankToolRequest(
-                    query_text=state["query"],
-                    candidates=merged_pool,
-                    job_context=job_context,
-                    top_k=top_k,
-                    routing=state["routing"],
-                )
-            )
-            rerank_used = True
-            final_items = list(result.items[:top_k])
-        except Exception:  # noqa: BLE001 - fallback per 15.4
-            _, reason = degrade("rerank_pool", "llm_failed")
-            degraded_reason = reason
-            final_items = sorted(merged_pool, key=lambda tc: tc.score, reverse=True)[:top_k]
-
-    # --- fill any shortfall from the judged accumulated pool ----------------
-    if len(final_items) < top_k and accumulated:
-        have = {tc.doc_id for tc in final_items}
-        fill = [
-            pool_by_id[j.doc_id]
-            for j in accumulated.values()
-            if j.doc_id not in have and j.doc_id in pool_by_id
-        ]
-        fill.sort(key=lambda tc: tc.score, reverse=True)
-        final_items = final_items + fill[: top_k - len(final_items)]
-
-    final_items = final_items[:top_k]
-
-    # --- judge converged-search new candidates -------------------------------
-    # The converged search surfaces people the path loop never judged. Verify
-    # they actually match (grounding-checked) so the final ranking + metrics
-    # reflect true quality. ~1 LLM call, batched.
     final_judged = 0
-    if converged is not None and final_items:
-        final_judged = _judge_converged_new(deps, state, final_items, accumulated)
+    _job = state.get("job_profile")
+    _must_abilities = list(_job.must_abilities) if _job else []
 
-    final_items = [_enrich(tc, accumulated, path_rationale) for tc in final_items]
+    if converged is not None and converged_pool:
+        # Union the enriched converged page with the already-judged path pool,
+        # then judge every newly surfaced candidate before choosing top-k.
+        candidate_pool = _dedupe_candidates(converged_pool, merged_pool)
+        final_judged = _judge_converged_new(deps, state, candidate_pool, accumulated)
+        final_items = [
+            _enrich(tc, accumulated, path_rationale) for tc in candidate_pool
+        ]
+        final_items.sort(
+            key=lambda tc: _selection_key(tc, accumulated, _must_abilities)
+        )
+        final_items = final_items[:top_k]
+    else:
+        # --- fallback: global rerank over the accumulated cross-path pool ---
+        # single_pass / no enrichment / converged-search-failed.
+        if not merged_pool:
+            logger.warning(
+                "finalize: empty result, merged_pool=0 (path_results=%d accumulated=%d)",
+                len(path_results),
+                len(accumulated),
+            )
+        if merged_pool:
+            try:
+                result = deps.tool.rerank_pool(
+                    RerankToolRequest(
+                        query_text=state["query"],
+                        candidates=merged_pool,
+                        job_context=job_context,
+                        top_k=top_k,
+                        routing=state["routing"],
+                    )
+                )
+                rerank_used = True
+                final_items = list(result.items[:top_k])
+            except Exception:  # noqa: BLE001 - fallback per 15.4
+                _, reason = degrade("rerank_pool", "llm_failed")
+                degraded_reason = reason
+                final_items = sorted(
+                    merged_pool, key=lambda tc: tc.score, reverse=True
+                )[:top_k]
 
-    # Precision sort when all final items are judged: fallback path always
-    # (candidates from judged path results); converged path only after the
-    # new-candidate judge pass. Unjudged converged candidates keep backend ranking.
-    _all_judged = all(tc.doc_id in accumulated for tc in final_items) if final_items else True
-    if (converged is None or _all_judged) and final_items:
-        _job = state.get("job_profile")
-        _must_names = {a.name for a in _job.must_abilities} if _job else set()
-        if _must_names:
+        # Fill any shortfall from the judged accumulated pool.
+        if len(final_items) < top_k and accumulated:
+            have = {tc.doc_id for tc in final_items}
+            fill = [
+                pool_by_id[j.doc_id]
+                for j in accumulated.values()
+                if j.doc_id not in have and j.doc_id in pool_by_id
+            ]
+            fill.sort(key=lambda tc: tc.score, reverse=True)
+            final_items = final_items + fill[: top_k - len(final_items)]
 
-            def _precision_key(tc):
-                ma = set((tc.match_explanation or {}).get("matchedAbilities", []) or [])
-                return (-len(ma & _must_names), -tc.score)
-
-            final_items = sorted(final_items, key=_precision_key)
+        final_items = [
+            _enrich(tc, accumulated, path_rationale) for tc in final_items[:top_k]
+        ]
+        final_items.sort(
+            key=lambda tc: _selection_key(tc, accumulated, _must_abilities)
+        )
 
     validation_issues = _validate_output(final_items, state)
 

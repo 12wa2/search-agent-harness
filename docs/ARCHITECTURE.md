@@ -71,7 +71,7 @@
 ```text
 understand ──(need_clarify)──> 返回澄清问题
     │
-    ├──(难度路由)──> single_pass：跳过 plan/reflect/revise，直接执行单路径
+    ├──(简单查询路由)──> single_pass：跳过 plan/reflect/revise，直接执行单路径
     │
     v
   plan ──> execute ──> judge ──> evaluate
@@ -84,9 +84,10 @@ understand ──(need_clarify)──> 返回澄清问题
 关键分支：
 
 - **难度路由**（`core/difficulty.py`）：understand 产出 `subjective_difficulty` 后立即生效——
-  `high → single_pass`（`max_iterations=0`、单路径；evaluate 后跳过反思直接 finalize，
-  `finalize_reason=difficulty_single_pass`）、`low → reduced`（迭代 1、每轮 2 路径）、
-  `mid → standard`。目的是不让「客观就难」的查询白烧预算，也不让简单查询多轮空转。
+  `low → single_pass`（`max_iterations=0`、单路径；evaluate 后跳过反思直接 finalize，
+  `finalize_reason=difficulty_single_pass`）、`mid → reduced`（迭代 1、每轮 2 路径）、
+  `high → standard`（完整反思循环）。难度衡量的是搜索策略的不确定性，而不是抽取到的
+  硬条件数量：简单明确的查询不烧多轮预算，抽象、可迁移或容易漏召的查询才进入反思循环。
 - **预算守卫**：非 understand / finalize 阶段发现时间或 LLM 调用超预算，直接跳 finalize
   （`budget_exceeded`）。
 - **全路径失败检测**：execute 后若本轮没有任何新 PathResult，判定所有路径失败，

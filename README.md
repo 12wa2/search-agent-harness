@@ -242,6 +242,49 @@ search-agent eval --generated 120 --seed 7 --ablate --baseline docs/eval_baselin
 > `search-agent corpus --out DIR` 落盘的固定语料）。目的不是刷分，而是展示
 > **效果与成本的定量权衡**与**可回归、去自证的评测入口**。
 
+### 真实模型 + Hybrid V2 的 A/B 复核（100 人合成基准）
+
+离线消融验证机制是否按设计工作；真实模型实验验证换到 Hybrid V2 + 真实 LLM 后结论是否还成立。
+`examples/real_ab_experiment.py` 固定同一 Qwen 网关、Elasticsearch 索引、`top-k=5` 和同一标注集：
+基线为 `understand → 单路径 → judge → finalize`，Agent 为完整反思循环；两条链路共享模型、检索工具、
+语料和 top-k，唯一结构变量是 `reflect + revise`。
+
+正式复核使用索引 `search-agent-hybrid-v2-bench100`、`qwen3.8-flash`（网关别名
+`search-agent-primary`）、100 个种子化虚构候选人、10 条复杂 query 和 `synthetic_oracle` 标签。
+单次观测结果如下：
+
+| 指标 | 单趟基线 | Agent 反思循环 | 变化 |
+|---|---:|---:|---:|
+| 平均 recall@5 | 0.392 | 0.473 | +0.081（bootstrap 95% CI -0.031 ~ +0.201） |
+| 平均池召回 | 0.735 | 0.937 | +0.202（CI +0.065 ~ +0.351） |
+| 平均 precision@5 | 0.740 | 0.840 | +0.100 |
+| 新增相关候选 | — | 17 人（1.7/query） | — |
+| 新增候选相关率 | — | 0.708 | — |
+| LLM 调用 | 20 | 59 | ×3.0 |
+| tokens | 148,428 | 446,704 | ×3.0 |
+| p50 延迟 | 50.7 s | 139.9 s | ×2.8 |
+| 降级次数 | 0 | 2 | — |
+
+结论要分两层读。**探索层**的变化更明确：池召回从 0.735 升到 0.937，bootstrap 区间不跨 0，
+说明多路径规划与反思确实扩大了有效候选的覆盖面。**交付层**的平均 recall@5 也上升，但这 10 条 query
+的配对区间跨 0，不能据此宣称稳定的统计显著提升；precision@5 从 0.740 升到 0.840，说明新增候选
+并非单纯扩大噪声。与此同时，Agent 在 `microservice_backend` 上出现回退，并在 2 条 query 触发
+`budget_exceeded`，成本约为主模型的 3 倍。下一轮应优先优化 judge / rerank、收敛搜索和预算分配，
+而不是继续盲目增加反思轮数。
+
+> 这是 100 个虚构候选人、10 条 query 的**单次 `synthetic_oracle` 实验**，不是人工标注基准或统计
+> 显著性结论，也不能与简历中公司真实简历库的 13.4 个新增相关 / 79.8% 混用；后者不可公开复现。
+> 完整逐条结果与环境见 [`docs/real_llm_ab_results_100.md`](docs/real_llm_ab_results_100.md)，
+> 标注 query 见 [`examples/real_ab_queries_100.json`](examples/real_ab_queries_100.json)，
+> 语料与重建/索引说明见 [`examples/bench100/README.md`](examples/bench100/README.md)。
+
+复现入口：
+
+```powershell
+.\.venv\Scripts\python.exe examples\real_ab_experiment.py `
+  --benchmark examples\real_ab_queries_100.json --top-k 5 --workers 4
+```
+
 ## 策略记忆：跨请求复用「哪一类策略有效」
 
 循环解决「这一次怎么搜」，策略记忆回答「这类岗位下次先试哪一招」。每次运行结束后，每个合格候选人
@@ -547,7 +590,7 @@ $env:SEARCH_AGENT_MODEL = "search-agent-primary"
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 361 个测试通过（含可选 ES 集成）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
+- [x] 383 个测试通过（含可选 ES 集成）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] Web 控制台：零构建单页（八阶段时间线 / 候选人匹配证据 / metrics / trace），`GET /` 直接托管，
@@ -561,6 +604,8 @@ $env:SEARCH_AGENT_MODEL = "search-agent-primary"
 - [x] 向量通道：`dense_vector` + kNN，与 BM25 做 RRF 混合召回（`examples/es_hybrid_recall.py`）。
 - [x] Docker 全栈：多阶段镜像 + compose（`api` 等待 ES 健康后启动，自动灌入演示语料）。
 - [x] Oracle 基准：种子化合成语料 + 生成器真值，去自证评测（`search-agent eval --generated / --oracle`）。
+- [x] 100 人真实模型 A/B 复核：Qwen + Hybrid V2 + ES、10 条复杂 query、逐 query trace / 成本 /
+      bootstrap 区间与失败分析（`examples/bench100/`、`docs/real_llm_ab_results_100.md`）。
 - [x] 宽召回池语义：每路径召回 `max(top_k*3, 30)`（`SEARCH_AGENT_RECALL_POOL_SIZE`），judge 全量池、交付 top_k。
 - [x] 策略记忆：按查询族累计「哪一类策略有效」，并作为先验注入 plan / reflect（`core/experience.py`，Redis 可选）。
 - [x] 消融实验 + 评测门禁：`eval --ablate` 单开关对照表；`docs/eval_baseline.json` 作为 CI 基线，回归即红。
@@ -572,18 +617,20 @@ $env:SEARCH_AGENT_MODEL = "search-agent-primary"
 
 ## 诚实声明
 
-- 仓库内所有演示数据均为虚构：16 个候选人（`c001`–`c016`），其中的公司 / 院校名仅作为行业背景用于演示，与真实个人无关。
+- 仓库内所有公开演示数据均为虚构：16 人离线 demo（`c001`–`c016`）与 100 人真实模型基准
+  （`g001`–`g100`）。其中的公司 / 院校名仅作为行业背景，与真实个人或真实简历库无关。
 - 仓库内置内存 / SQLite / Elasticsearch 简版 / Hybrid V2 四条检索路径；前两条零依赖，后两条需要使用者自己的 Elasticsearch 8。
-- 未在生产环境部署过；上面的耗时数字来自本机离线 demo（纯 CPU、单进程）。
+- 未在生产环境部署过；离线 demo 的耗时来自本机纯 CPU 单进程，真实模型 A/B 的延迟来自本机到模型网关
+  与 Elasticsearch 的观测，均不代表生产 SLA。
 - 简历 / 汇报口径里的「平均每条 Query 新增 13.4 个相关候选、独有候选相关率 79.8%」来自一次
   **非公开评测**，不在本仓库复现；仓库不包含该评测数据或执行环境。该对照是一次**消融实验**：基线 = 同一套
   understand → plan → execute → judge 的单趟链路，唯一变量是关掉 reflect + revise，因此新增收益可归因到
   反思闭环；指标口径为 `A_only = A − B`、新增相关候选 = `|A_only ∩ R|` 的均值、独有候选相关率 =
   `|A_only ∩ R| / |A_only|`（R = 人工标注相关集）。
-- 本仓库用**同一套消融设计、同一对指标定义**离线复现（`search-agent eval --generated 120 --seed 7` 报告里的
-  「仅全循环发现」就是这两个指标），但语料是刻意构造的对抗性合成语料、LLM 是规则替身，所以复现出的数字
-  低得多（9.0 人 / 7.4%）——这一步的目的是**量出当前实现的天花板**并把短板写进 Roadmap，
-  两边口径不同，数值不可直接对比。
+- 本仓库用**同一套消融设计、同一对指标定义**做了两级公开复核：离线规则替身基准给出 9.0 人 / 7.4%，
+  100 人真实模型基准给出 1.7 人/query（合计 17 人）/ 70.8%。两组数字都来自合成语料：前者用于量出实现
+  天花板，后者用于验证真实 LLM + Hybrid V2 下的链路行为；它们都不是公司数据复现，也不能与 13.4 / 79.8%
+  直接对比。
 
 <details>
 <summary>English</summary>
@@ -619,6 +666,9 @@ included and connects to an operator-provided Elasticsearch 8 cluster.
 
 > Honesty note: no production data or credentials are included; the demo
 > ships 16 fictional candidates and runs without any API key.
+> An optional reproducible real-LLM benchmark ships 100 synthetic candidates
+> and 10 complex queries; its `synthetic_oracle` results are reported separately
+> and must not be compared with company metrics.
 
 </details>
 

@@ -272,6 +272,24 @@ def test_metrics_to_dict_structure():
     assert d["meta"]["totalTokens"] == 0
 
 
+def test_surfaced_ids_include_judged_converged_candidates():
+    state = {
+        "accumulated": {
+            "final-only": CandidateJudgment(doc_id="final-only", score=0.8),
+        },
+        "budget": _budget(),
+        "path_results": [],
+        "job_profile": None,
+        "talent_profile": None,
+        "paths": [],
+        "iteration": 0,
+        "qualified_per_round": [],
+        "final_items": [],
+    }
+    metrics = collect_metrics(state, BudgetState(budget=_budget()))
+    assert metrics.surfaced_doc_ids == ["final-only"]
+
+
 # ── harness integration: metrics in state ──
 
 

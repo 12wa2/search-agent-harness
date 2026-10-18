@@ -123,7 +123,7 @@ def _initial_state(query: str, top_k: int, budget: Budget) -> dict[str, Any]:
 
 
 def _surfaced_ids(state: dict[str, Any]) -> tuple[str, ...]:
-    """Doc ids any path result returned so far (deduped, first-seen order)."""
+    """Doc ids any path or judged pool contains (deduped, first-seen order)."""
     seen: set[str] = set()
     ids: list[str] = []
     for pr in state.get("path_results") or []:
@@ -131,6 +131,10 @@ def _surfaced_ids(state: dict[str, Any]) -> tuple[str, ...]:
             if candidate.doc_id not in seen:
                 seen.add(candidate.doc_id)
                 ids.append(candidate.doc_id)
+    for doc_id in state.get("accumulated") or {}:
+        if doc_id not in seen:
+            seen.add(doc_id)
+            ids.append(doc_id)
     for candidate in state.get("final_items") or []:
         if candidate.doc_id not in seen:
             seen.add(candidate.doc_id)
