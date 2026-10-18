@@ -14,11 +14,11 @@ import re
 from datetime import datetime
 from typing import Any
 
+from search_agent.core.difficulty import apply_difficulty_floor
 from search_agent.llm.prompts import (
     build_understand_payload,
     understand_prompt,
 )
-from search_agent.core.difficulty import apply_difficulty_floor
 from search_agent.models.artifacts import (
     CandidateSource,
     JobAbility,
@@ -92,8 +92,7 @@ def _relax_unstated_entity_filters(
             kept.append(condition)
             continue
         mentioned = any(
-            normalized_value
-            and normalized_value in normalized_query
+            normalized_value and normalized_value in normalized_query
             for normalized_value in (
                 re.sub(r"\s+", "", str(value).casefold()) for value in condition.values
             )

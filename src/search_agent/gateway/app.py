@@ -121,9 +121,7 @@ def create_gateway_app(
         _authorize(config, authorization)
         request_id = x_request_id or uuid.uuid4().hex
         alias = str(
-            payload.get("model")
-            or config.default_model_alias
-            or next(iter(config.model_aliases))
+            payload.get("model") or config.default_model_alias or next(iter(config.model_aliases))
         )
         if payload.get("stream"):
             return _error_response(

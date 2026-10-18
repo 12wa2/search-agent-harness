@@ -222,9 +222,7 @@ class OpenAILlmClient:
             base_url or os.environ.get("SEARCH_AGENT_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
         )
         self._timeout = (
-            timeout
-            if timeout is not None
-            else _env_float("SEARCH_AGENT_LLM_TIMEOUT_SEC", 60.0)
+            timeout if timeout is not None else _env_float("SEARCH_AGENT_LLM_TIMEOUT_SEC", 60.0)
         )
         self._max_retries = _env_int("SEARCH_AGENT_LLM_RETRIES", 2)
         self._repair_retries = _env_int("SEARCH_AGENT_LLM_JSON_REPAIRS", 1)

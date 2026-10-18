@@ -101,8 +101,7 @@ class GatewayConfig(BaseModel):
     def public_summary(self) -> dict[str, object]:
         """Non-secret metadata suitable for health checks."""
         return {
-            "defaultAlias": self.default_model_alias
-            or next(iter(self.model_aliases), None),
+            "defaultAlias": self.default_model_alias or next(iter(self.model_aliases), None),
             "modelAliases": {
                 alias: [target.name for target in targets]
                 for alias, targets in self.model_aliases.items()

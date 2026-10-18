@@ -209,9 +209,8 @@ def classify_work_tenure_intent(query: str) -> WorkTenureIntent:
     if target is None or not target.title:
         return "generic"
 
-    if (
-        target.title in _GENERIC_TENURE_TITLES
-        or any(blocker in target.title for blocker in _GENERIC_TENURE_BLOCKERS)
+    if target.title in _GENERIC_TENURE_TITLES or any(
+        blocker in target.title for blocker in _GENERIC_TENURE_BLOCKERS
     ):
         return "generic"
     return "title"

@@ -88,9 +88,7 @@ def test_finalize_judges_full_converged_pool_before_top_k_cut() -> None:
     deps = Deps(
         llm=llm,
         tool=tool,
-        budget_state=BudgetState(
-            budget=Budget(max_llm_calls=20, time_budget_sec=120.0)
-        ),
+        budget_state=BudgetState(budget=Budget(max_llm_calls=20, time_budget_sec=120.0)),
     )
     state = {
         "need_clarify": False,
@@ -153,12 +151,8 @@ def test_selection_prefers_transferable_backend_evidence_on_llm_tie() -> None:
         ),
     )
     accumulated = {
-        "architect": CandidateJudgment(
-            doc_id="architect", matched_abilities=["高并发系统设计"]
-        ),
-        "backend": CandidateJudgment(
-            doc_id="backend", matched_abilities=["高并发系统设计"]
-        ),
+        "architect": CandidateJudgment(doc_id="architect", matched_abilities=["高并发系统设计"]),
+        "backend": CandidateJudgment(doc_id="backend", matched_abilities=["高并发系统设计"]),
     }
 
     assert _selection_key(backend, accumulated, abilities) < _selection_key(

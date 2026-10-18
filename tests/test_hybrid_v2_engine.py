@@ -186,8 +186,7 @@ def test_search_with_intent_returns_the_recall_pool_not_only_top_k() -> None:
         "hits": {
             "total": {"value": 10, "relation": "eq"},
             "hits": [
-                {"_id": f"doc-{index}", "_score": 1.0, "_source": _source()}
-                for index in range(10)
+                {"_id": f"doc-{index}", "_score": 1.0, "_source": _source()} for index in range(10)
             ],
         }
     }

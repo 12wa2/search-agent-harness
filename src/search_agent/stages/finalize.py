@@ -66,9 +66,7 @@ def _hard_required_violations(tc: ToolCandidate) -> int:
     return sum(
         1
         for hm in hard
-        if isinstance(hm, dict)
-        and hm.get("matched") is False
-        and hm.get("required", True)
+        if isinstance(hm, dict) and hm.get("matched") is False and hm.get("required", True)
     )
 
 
@@ -132,12 +130,7 @@ def _candidate_text(tc: ToolCandidate) -> str:
     for work in item.workExperiences or []:
         if isinstance(work, dict):
             parts.append(
-                str(
-                    work.get("job_title")
-                    or work.get("jobTitle")
-                    or work.get("position")
-                    or ""
-                )
+                str(work.get("job_title") or work.get("jobTitle") or work.get("position") or "")
             )
             parts.append(str(work.get("company_name") or work.get("companyName") or ""))
     parts.extend(str(position) for position in item.expectedPositions or [])
@@ -392,12 +385,8 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
         # then judge every newly surfaced candidate before choosing top-k.
         candidate_pool = _dedupe_candidates(converged_pool, merged_pool)
         final_judged = _judge_converged_new(deps, state, candidate_pool, accumulated)
-        final_items = [
-            _enrich(tc, accumulated, path_rationale) for tc in candidate_pool
-        ]
-        final_items.sort(
-            key=lambda tc: _selection_key(tc, accumulated, _must_abilities)
-        )
+        final_items = [_enrich(tc, accumulated, path_rationale) for tc in candidate_pool]
+        final_items.sort(key=lambda tc: _selection_key(tc, accumulated, _must_abilities))
         final_items = final_items[:top_k]
     else:
         # --- fallback: global rerank over the accumulated cross-path pool ---
@@ -424,9 +413,7 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
             except Exception:  # noqa: BLE001 - fallback per 15.4
                 _, reason = degrade("rerank_pool", "llm_failed")
                 degraded_reason = reason
-                final_items = sorted(
-                    merged_pool, key=lambda tc: tc.score, reverse=True
-                )[:top_k]
+                final_items = sorted(merged_pool, key=lambda tc: tc.score, reverse=True)[:top_k]
 
         # Fill any shortfall from the judged accumulated pool.
         if len(final_items) < top_k and accumulated:
@@ -439,12 +426,8 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
             fill.sort(key=lambda tc: tc.score, reverse=True)
             final_items = final_items + fill[: top_k - len(final_items)]
 
-        final_items = [
-            _enrich(tc, accumulated, path_rationale) for tc in final_items[:top_k]
-        ]
-        final_items.sort(
-            key=lambda tc: _selection_key(tc, accumulated, _must_abilities)
-        )
+        final_items = [_enrich(tc, accumulated, path_rationale) for tc in final_items[:top_k]]
+        final_items.sort(key=lambda tc: _selection_key(tc, accumulated, _must_abilities))
 
     validation_issues = _validate_output(final_items, state)
 

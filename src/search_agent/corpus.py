@@ -478,11 +478,9 @@ def _make_candidate(
         "certificates": [{"name": "PMP 项目管理认证"}] if rng.random() < 0.15 else [],
         "expectedPositions": [title],
     }
-    for work, (start_date, end_date) in zip(
-        record['workExperiences'], dates, strict=True
-    ):
-        work['startDate'] = start_date
-        work['endDate'] = end_date
+    for work, (start_date, end_date) in zip(record["workExperiences"], dates, strict=True):
+        work["startDate"] = start_date
+        work["endDate"] = end_date
     return record, frozenset(abilities), frozenset(implicit), years
 
 
