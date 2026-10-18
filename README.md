@@ -114,7 +114,7 @@ pip install -e ".[dev]"
 
 search-agent demo        # 离线演示：脚本化 LLM + 16 个合成候选人，零 API key
 search-agent eval        # 离线评测：单趟基线 vs Agent 全循环（确定性、可复现）
-search-agent serve --offline   # 可选：HTTP 服务 + Web 体验 → http://127.0.0.1:8000（需 .[api]）
+search-agent serve --offline   # 快速演示：脚本 LLM + 16 人内存库 → http://127.0.0.1:8000
 ```
 
 接入真实 LLM（任何 OpenAI 兼容端点：OpenAI / Qwen / DeepSeek / vLLM …）：
@@ -330,8 +330,18 @@ search-agent demo --repeat 3 --top-k 5     # 同一查询跑 3 次，打印策�
 
 ```bash
 pip install -e ".[api]"
-search-agent serve --offline    # http://127.0.0.1:8000；浏览器打开即 Agent 体验
+search-agent serve --offline    # 快速演示：脚本化 LLM + InMemorySearchTool
+search-agent serve --backend hybrid_v2  # 完整在线：在线 LLM + Hybrid V2 + 你的 ES 索引
 ```
+
+Web 控制台只保留两个完整预设，切换时会同时替换 LLM、SearchTool 和候选人数据：
+
+| 预设 | LLM | 检索 | 数据 | 用途 |
+|---|---|---|---|---|
+| 快速演示（默认） | `ScriptedLlmClient` | `InMemorySearchTool` | 16 个内置虚构候选人 | 零 key、零 ES，快速展示完整八阶段链路 |
+| 完整在线 | OpenAI-compatible 在线模型 | `HybridV2SearchService` | 使用者的 Elasticsearch 索引 | 真实模型、真实检索与会话记忆 |
+
+快速演示不连接 Elasticsearch；完整在线需要网关/模型 key 与已建好的 Hybrid V2 索引。
 
 | 端点 | 说明 |
 |---|---|
@@ -341,8 +351,8 @@ search-agent serve --offline    # http://127.0.0.1:8000；浏览器打开即 Age
 | `POST /search/stream` | 同一 SSE 流的 JSON body 版本（查询不进 URL / 访问日志）；客户端断开即请求后端取消 |
 | `GET /sessions/{queryToken}?offset=5&limit=5` | 分页读取本次 Agent 结果池，不重新检索、不调用 LLM |
 | `DELETE /sessions/{queryToken}` | 主动删除分页会话；不调用也会按 1 小时 TTL 过期 |
-| `GET /healthz` | 健康检查：版本 / LLM 模式 / 在线模型配置状态 / 后端与当前 LLM 类型 |
-| `POST /runtime/mode` | 运行时切换后续搜索使用的 LLM：`{"mode":"offline"}` 或 `{"mode":"online"}`；搜索执行中返回 `409`，在线模型未配置时也返回 `409` |
+| `GET /healthz` | 健康检查：当前预设、LLM、当前后端，以及 `offlineBackend` / `onlineBackend` / `onlineConfigured` |
+| `POST /runtime/mode` | 同时切换后续搜索的 LLM 与 SearchTool：`{"mode":"offline"}`（快速演示）或 `{"mode":"online"}`（完整在线）；执行中或完整在线未配置时返回 `409` |
 
 SSE 事件协议：
 
@@ -358,13 +368,15 @@ curl -s http://127.0.0.1:8000/search -H "Content-Type: application/json" \
   -d '{"query": "找有 3 年以上经验的后端工程师", "topK": 5}'
 ```
 
-`create_app(tool=..., llm_client=..., online_llm_client=...)` 同样接受自定义后端，与本地调用共用同一套 `SearchTool` 协议。
+`create_app(tool=..., online_tool=..., dual_backend=True, llm_client=..., online_llm_client=...)`
+可以注入两个完整预设；不传 `dual_backend` 时仍保持原有单后端用法。
 
-Web 顶栏的「离线演示 / 在线模型」是可点击的模式按钮：它只切换后续搜索使用的 LLM，**不会切换
-检索后端或候选人数据**。在线模式要求服务启动时已经配置 `SEARCH_AGENT_API_KEY`（或
-`OPENAI_API_KEY`）以及可用的 OpenAI 兼容端点；未配置时按钮会给出明确提示，不会静默降级。切换是
-进程内运行时状态，服务重启后回到启动参数决定的初始模式；多 worker 部署需要另做共享控制。
-搜索执行期间按钮和后端都会拒绝切换，避免同一次 trace 混用两个模型。
+Web 顶栏的「快速演示 / 完整在线」是可点击的预设按钮：快速演示固定使用脚本化 LLM + 16 人内存库；
+完整在线使用在线 LLM + Hybrid V2 + Elasticsearch 索引，二者不会混用。通过 `scripts/start-dev.cmd`
+启动时，脚本会读取仓库根目录 `.env`；检测到 `PRIMARY_LLM_API_KEY` / `FALLBACK_LLM_API_KEY` 后
+自动启动或复用本地网关，Web API 仍以快速演示启动。完整在线未配置时按钮会给出明确提示，不会静默
+降级。切换是进程内运行时状态，服务重启后回到启动参数决定的初始模式；搜索执行期间按钮和后端都会
+拒绝切换，避免同一次 trace 混用两个预设。多 worker 部署需要另做共享控制。
 
 ### 多轮会话与结果分页
 
@@ -422,14 +434,21 @@ PRIMARY_LLM_API_KEY=...
 FALLBACK_LLM_API_KEY=...
 ```
 
-本地不启动 Docker 时，可以用脚本后台启动网关和 API：
+本地不启动 Docker 时，可以用脚本后台启动网关和 API。首次使用只需把模板复制为仓库根目录的
+`.env`，填好上游 key；脚本以后每次启动都会自动读取它：
 
 ```powershell
-.\scripts\start-dev.cmd          # gateway + API
-.\scripts\start-dev.cmd -SkipApi # 只启动 gateway
+Copy-Item .env.example .env
+# 填写 PRIMARY_LLM_API_KEY / FALLBACK_LLM_API_KEY
+
+.\scripts\start-dev.cmd              # gateway + API；Web API 默认离线启动
+.\scripts\start-dev.cmd -StartOnline # 可选：Web API 初始就在线
+.\scripts\start-dev.cmd -SkipApi     # 只启动 gateway
 ```
 
-脚本会把日志写到 `logs/`，并复用已经健康的 4000 / 8000 服务。`.cmd` 包装器使用
+检测到上游 key 时，脚本会自动启动网关；4000 网关或 8000 API 已经健康时则直接复用。没有上游
+key 时会跳过网关，只启动纯离线演示。启动后需要在线模型时直接点页面按钮，不需要重新启动服务。
+脚本会把日志写到 `logs/`。`.cmd` 包装器使用
 PowerShell 的 `-ExecutionPolicy Bypass`；如果直接运行 `.ps1`，请使用
 `powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1`。
 

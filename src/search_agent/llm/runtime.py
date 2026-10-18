@@ -105,12 +105,12 @@ class RuntimeLlmRouter:
                 self._active_runs -= 1
 
     def switch_mode(self, mode: RuntimeMode) -> None:
-        """Switch the LLM used by subsequent search calls."""
+        """Switch the complete runtime preset used by subsequent searches."""
         if mode not in _VALID_MODES:
-            raise RuntimeModeError(f"不支持的模型模式：{mode}")
+            raise RuntimeModeError(f"不支持的运行模式：{mode}")
         with self._lock:
             if self._active_runs:
-                raise RuntimeModeError("Agent 正在执行搜索，完成或停止后再切换模型模式。")
+                raise RuntimeModeError("Agent 正在执行搜索，完成或停止后再切换运行模式。")
             if mode == "online" and not self._online_configured:
                 raise RuntimeModeError(
                     "在线模型尚未配置。请设置 SEARCH_AGENT_API_KEY（或 OPENAI_API_KEY），"

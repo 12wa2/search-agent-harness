@@ -98,8 +98,8 @@ const modeLabel = $("mode-label");
 
 function defaultComposerNote() {
   return state.runtimeMode === "offline" || !state.runtimeMode
-    ? "当前离线演示：脚本化 LLM + 合成候选人，无需 API Key · Enter 发送，Shift+Enter 换行"
-    : "当前在线模型：每次发送都会调用模型 API；检索后端不变 · Enter 发送，Shift+Enter 换行";
+    ? "当前快速演示：脚本化 LLM + 16 人内存库，无需 API Key · Enter 发送，Shift+Enter 换行"
+    : "当前完整在线：在线 LLM + Hybrid V2 + Elasticsearch 候选人库 · Enter 发送，Shift+Enter 换行";
 }
 
 function setComposerNote(text, { error = false } = {}) {
@@ -120,7 +120,7 @@ function renderRuntimeMode({ healthy = true } = {}) {
   if (!mode) {
     modeChip.dataset.mode = "";
     modeChip.setAttribute("aria-pressed", "false");
-    modeChip.title = healthy ? "正在读取 LLM 模式" : "无法读取 LLM 模式";
+    modeChip.title = healthy ? "正在读取运行模式" : "无法读取运行模式";
     if (modeLabel) modeLabel.textContent = healthy ? "读取中…" : "状态未知";
     composerMode.textContent = healthy ? "读取中…" : "状态未知";
     syncModeToggleState();
@@ -128,18 +128,18 @@ function renderRuntimeMode({ healthy = true } = {}) {
   }
 
   const offline = mode === "offline";
-  const label = offline ? "离线演示" : "在线模型";
-  const targetLabel = offline ? "在线模型" : "离线演示";
+  const label = offline ? "快速演示" : "完整在线";
+  const targetLabel = offline ? "完整在线" : "快速演示";
   modeChip.dataset.mode = mode;
   modeChip.setAttribute("aria-pressed", String(!offline));
   if (modeLabel) modeLabel.textContent = label;
   composerMode.textContent = label;
 
-  let title = `LLM 模式：${label}。点击切换到${targetLabel}；检索后端保持不变。`;
+  let title = `运行模式：${label}。点击切换到${targetLabel}；LLM、检索工具与候选人库会一起切换。`;
   if (state.running) {
-    title = `LLM 模式：${label}。Agent 运行中，完成或停止后可切换。`;
+    title = `运行模式：${label}。Agent 运行中，完成或停止后可切换。`;
   } else if (offline && !state.onlineConfigured) {
-    title = "LLM 模式：离线演示。在线模型未配置；点击查看配置提示。";
+    title = "运行模式：快速演示。完整在线尚未配置；点击查看配置提示。";
   }
   modeChip.title = title;
   modeChip.setAttribute("aria-label", title);
@@ -156,8 +156,8 @@ function applyRuntimeHealth(health) {
     runHint.classList.remove("error");
     runHint.textContent =
       state.runtimeMode === "offline"
-        ? "离线模式：脚本化 LLM + 合成候选人，零 API key · Ctrl+Enter 运行。"
-        : "在线模型模式：每次运行都会调用模型 API；检索后端不变 · Ctrl+Enter 运行。";
+        ? "快速演示：脚本化 LLM + 16 人内存库，零 API key · Ctrl+Enter 运行。"
+        : "完整在线：在线 LLM + Hybrid V2 + Elasticsearch 候选人库 · Ctrl+Enter 运行。";
     setComposerNote(defaultComposerNote());
   }
 }
@@ -171,7 +171,7 @@ function setRuntimeNotice(text, { error = false } = {}) {
 async function toggleRuntimeMode() {
   if (!state.runtimeMode || state.running || state.modeSwitching) return;
   const target = state.runtimeMode === "offline" ? "online" : "offline";
-  const targetLabel = target === "online" ? "在线模型" : "离线演示";
+  const targetLabel = target === "online" ? "完整在线" : "快速演示";
   state.modeSwitching = true;
   renderRuntimeMode();
   try {
@@ -194,10 +194,10 @@ async function toggleRuntimeMode() {
     }
     applyRuntimeHealth(payload);
     setRuntimeNotice(
-      `已切换到${targetLabel}。${target === "online" ? "下一次搜索会调用在线模型 API" : "下一次搜索使用离线脚本"}；检索后端和候选人数据保持不变。`,
+      `已切换到${targetLabel}。${target === "online" ? "下一次搜索使用在线 LLM + Hybrid V2 检索" : "下一次搜索使用脚本 LLM + 16 人内存库"}。`,
     );
   } catch (err) {
-    setRuntimeNotice(`模型模式切换失败：${err.message}`, { error: true });
+    setRuntimeNotice(`运行模式切换失败：${err.message}`, { error: true });
   } finally {
     state.modeSwitching = false;
     renderRuntimeMode();

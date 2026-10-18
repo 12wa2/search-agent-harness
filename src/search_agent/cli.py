@@ -9,8 +9,8 @@ Examples::
     search-agent eval --markdown            # single-pass baseline comparison
     search-agent eval --generated 120       # oracle-labeled benchmark corpus
     search-agent corpus --out data/bench    # write a seeded corpus + oracle labels
-    search-agent serve --offline            # optional HTTP service (.[api])
-    search-agent serve --backend es         # same service on a real Elasticsearch
+    search-agent serve --offline            # quick demo: scripted LLM + memory corpus
+    search-agent serve --backend hybrid_v2  # full online preset: real LLM + Hybrid V2
     search-agent gateway --config gateway.local.json  # optional LLM gateway (.[api])
 """
 
@@ -184,9 +184,13 @@ def _default_backend() -> str:
     return "hybrid_v2" if _hybrid_v2_available() else "memory"
 
 
-def _add_backend_flags(parser: argparse.ArgumentParser) -> None:
+def _add_backend_flags(
+    parser: argparse.ArgumentParser,
+    *,
+    default_backend: str | None = None,
+) -> None:
     """Backend-selection flags shared by ``search`` and ``serve``."""
-    default_backend = _default_backend()
+    default_backend = default_backend or _default_backend()
     parser.add_argument("--data", default=None, help="candidate JSONL path")
     parser.add_argument(
         "--backend",
@@ -281,8 +285,15 @@ def _build_parser() -> argparse.ArgumentParser:
     serve_cmd = sub.add_parser("serve", help='optional HTTP service (pip install ".[api]")')
     serve_cmd.add_argument("--host", default="127.0.0.1")
     serve_cmd.add_argument("--port", type=int, default=8000)
-    serve_cmd.add_argument("--offline", action="store_true", help="force the scripted demo LLM")
-    _add_backend_flags(serve_cmd)
+    serve_cmd.add_argument(
+        "--offline",
+        action="store_true",
+        help="start in quick-demo mode (scripted LLM + in-memory corpus)",
+    )
+    _add_backend_flags(
+        serve_cmd,
+        default_backend=os.environ.get("SEARCH_AGENT_BACKEND") or "hybrid_v2",
+    )
     gateway_cmd = sub.add_parser(
         "gateway",
         help='optional OpenAI-compatible LLM gateway (pip install ".[api]")',
@@ -508,8 +519,11 @@ def _run_serve_command(args: argparse.Namespace) -> int:
     offline = args.offline or not (
         os.environ.get("SEARCH_AGENT_API_KEY") or os.environ.get("OPENAI_API_KEY")
     )
+    offline_tool = InMemorySearchTool(args.data or DEMO_DATA)
+    online_tool = None
+    online_error: str | None = None
     try:
-        tool = build_search_tool(
+        online_tool = build_search_tool(
             args.backend,
             data_path=args.data,
             sqlite_path=args.sqlite_path,
@@ -517,14 +531,23 @@ def _run_serve_command(args: argparse.Namespace) -> int:
             recreate=args.recreate_index,
         )
     except RuntimeError as exc:
-        print(f"错误: {exc}", file=sys.stderr)
-        return 1
-    app = create_app(tool=tool, offline=offline)
-    mode = "offline（脚本化 LLM）" if offline else "openai 兼容端点"
-    print(
-        f"search-agent HTTP 服务启动：http://{args.host}:{args.port}"
-        f"  ({mode} · 检索后端 {type(tool).__name__})"
+        online_error = str(exc)
+        if not offline:
+            print(f"错误: {exc}", file=sys.stderr)
+            return 1
+    app = create_app(
+        tool=offline_tool,
+        online_tool=online_tool,
+        dual_backend=True,
+        offline=offline,
     )
+    if offline:
+        mode = "快速演示（脚本化 LLM + InMemorySearchTool）"
+    else:
+        mode = f"完整在线（在线 LLM + {type(online_tool).__name__}）"
+    print(f"search-agent HTTP 服务启动：http://{args.host}:{args.port}  ({mode})")
+    if online_error:
+        print(f"完整在线预置暂不可用：{online_error}", file=sys.stderr)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     return 0
 

@@ -38,7 +38,7 @@
     </button>
   </nav>
   <div class="statuses" aria-label="运行状态">
-    <button class="chip chip-live mode-toggle" id="mode-chip" type="button" aria-pressed="false" disabled title="正在读取 LLM 模式">
+    <button class="chip chip-live mode-toggle" id="mode-chip" type="button" aria-pressed="false" disabled title="正在读取运行模式">
       <i aria-hidden="true"></i>
       <span id="mode-label">连接中…</span>
       <span class="mode-switch-glyph" aria-hidden="true">⇄</span>
@@ -126,7 +126,7 @@
           <label for="chat-top-k">交付人数</label>
           <input id="chat-top-k" type="number" min="1" max="50" value="20" inputmode="numeric">
           <span class="composer-separator" aria-hidden="true"></span>
-          <span class="composer-mode" id="composer-mode">离线演示</span>
+          <span class="composer-mode" id="composer-mode">快速演示</span>
           <button id="chat-new" class="chat-new" type="button">新对话</button>
         </div>
         <div class="composer-actions">
@@ -137,7 +137,7 @@
         </div>
       </div>
     </form>
-    <p class="composer-note" id="composer-note" aria-live="polite">默认使用离线脚本化 LLM 与合成候选人，无需 API Key · Enter 发送，Shift+Enter 换行</p>
+    <p class="composer-note" id="composer-note" aria-live="polite">快速演示：脚本化 LLM + 16 人内存库，无需 API Key · Enter 发送，Shift+Enter 换行</p>
   </section>
 </main>
 
@@ -177,7 +177,7 @@
           停止
         </button>
       </div>
-      <p class="run-hint" id="run-hint" aria-live="polite">离线模式：脚本化 LLM + 合成候选人，零 API key · Ctrl+Enter 运行。</p>
+      <p class="run-hint" id="run-hint" aria-live="polite">快速演示：脚本化 LLM + 16 人内存库，零 API key · Ctrl+Enter 运行。</p>
     </form>
 
     <section class="session-card" aria-live="polite">

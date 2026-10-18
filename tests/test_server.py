@@ -12,8 +12,9 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from search_agent.demo import DEMO_QUERIES, ScriptedLlmClient  # noqa: E402
+from search_agent.demo import DEMO_DATA, DEMO_QUERIES, ScriptedLlmClient  # noqa: E402
 from search_agent.server import create_app  # noqa: E402
+from search_agent.tools.memory import InMemorySearchTool  # noqa: E402
 
 QUERY = DEMO_QUERIES[0]
 
@@ -62,6 +63,88 @@ def test_runtime_mode_switch_uses_online_client_for_next_stream_search() -> None
 
     assert online.calls
     assert offline.calls == []
+
+
+class _MemorySearchSpy:
+    def __init__(self) -> None:
+        self._delegate = InMemorySearchTool(DEMO_DATA)
+        self.search_calls = 0
+        self.rerank_calls = 0
+
+    def search_with_intent(self, req):
+        self.search_calls += 1
+        return self._delegate.search_with_intent(req)
+
+    def rerank_pool(self, req):
+        self.rerank_calls += 1
+        return self._delegate.rerank_pool(req)
+
+
+class _OfflineMemorySearchSpy(_MemorySearchSpy):
+    pass
+
+
+class _OnlineMemorySearchSpy(_MemorySearchSpy):
+    pass
+
+
+def test_dual_backend_presets_switch_llm_and_search_tool() -> None:
+    offline_tool = _OfflineMemorySearchSpy()
+    online_tool = _OnlineMemorySearchSpy()
+    offline_llm = ScriptedLlmClient()
+    online_llm = ScriptedLlmClient()
+    app = create_app(
+        tool=offline_tool,
+        online_tool=online_tool,
+        dual_backend=True,
+        llm_client=offline_llm,
+        online_llm_client=online_llm,
+    )
+
+    with TestClient(app) as switched:
+        health = switched.get("/healthz").json()
+        assert health["mode"] == "offline"
+        assert health["backend"] == "_OfflineMemorySearchSpy"
+        assert health["offlineBackend"] == "_OfflineMemorySearchSpy"
+        assert health["onlineBackend"] == "_OnlineMemorySearchSpy"
+        assert health["onlineConfigured"] is True
+
+        switch = switched.post("/runtime/mode", json={"mode": "online"})
+        assert switch.status_code == 200
+        assert switch.json()["mode"] == "online"
+        assert switch.json()["backend"] == "_OnlineMemorySearchSpy"
+
+        response = switched.post("/search", json={"query": QUERY, "topK": 5})
+        assert response.status_code == 200
+        assert response.json()["items"]
+
+    assert offline_tool.search_calls == 0
+    assert online_tool.search_calls > 0
+    assert offline_llm.calls == []
+    assert online_llm.calls
+
+
+def test_dual_backend_rejects_online_without_online_search_tool() -> None:
+    offline_tool = _OfflineMemorySearchSpy()
+    app = create_app(
+        tool=offline_tool,
+        online_tool=None,
+        dual_backend=True,
+        llm_client=ScriptedLlmClient(),
+        online_llm_client=ScriptedLlmClient(),
+    )
+
+    with TestClient(app) as client:
+        health = client.get("/healthz").json()
+        assert health["mode"] == "offline"
+        assert health["backend"] == "_OfflineMemorySearchSpy"
+        assert health["onlineBackend"] is None
+        assert health["onlineConfigured"] is False
+
+        switch = client.post("/runtime/mode", json={"mode": "online"})
+        assert switch.status_code == 409
+        assert "Hybrid V2" in switch.json()["detail"]
+        assert client.get("/healthz").json()["mode"] == "offline"
 
 
 def test_runtime_mode_rejects_unconfigured_online_client(
@@ -261,6 +344,13 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "/runtime/mode" in script.text
     assert "toggleRuntimeMode" in script.text
     assert "onlineConfigured" in script.text
+    assert "快速演示" in script.text
+    assert "完整在线" in script.text
+    assert "LLM、检索工具与候选人库会一起切换" in script.text
+
+    index = client.get("/")
+    assert "快速演示" in index.text
+    assert 'id="composer-mode"' in index.text
 
     styles = client.get("/styles.css")
     assert styles.status_code == 200

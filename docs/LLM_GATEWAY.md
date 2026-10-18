@@ -27,17 +27,21 @@ pip install -e ".[api]"
 Copy-Item examples/gateway.example.json gateway.local.json
 ```
 
-Set the gateway token and the upstream provider keys. The keys are read from
-environment variables named in the JSON file; they are never stored in the
-repository:
+Create the ignored root `.env` file once. `scripts/start-dev.cmd` loads it
+automatically; values already present in the environment take precedence:
 
 ```powershell
-$env:SEARCH_AGENT_GATEWAY_API_KEY = "local-gateway-key"
-$env:PRIMARY_LLM_API_KEY = "sk-..."
-$env:FALLBACK_LLM_API_KEY = "..."
+Copy-Item .env.example .env
+# Fill PRIMARY_LLM_API_KEY and FALLBACK_LLM_API_KEY in .env
 
 search-agent gateway --config gateway.local.json --host 127.0.0.1 --port 4000
 ```
+
+The manual `search-agent gateway` command above still reads its keys from the
+current process environment. For the one-time local setup, prefer the helper in
+[One-command start](#one-command-start), which imports `.env` before launching
+the gateway. Manual launches can export the same variables into the current
+PowerShell session.
 
 ## One-command start
 
@@ -58,9 +62,18 @@ injected from `.env` and are never baked into the image. The service uses
 On Windows without Docker, use the local helper (logs go to `logs/`):
 
 ```powershell
-.\scripts\start-dev.cmd          # gateway plus API
-.\scripts\start-dev.cmd -SkipApi # gateway only
+.\scripts\start-dev.cmd              # gateway plus API; API starts in quick demo
+.\scripts\start-dev.cmd -StartOnline # API starts in full online mode
+.\scripts\start-dev.cmd -SkipApi     # gateway only
 ```
+
+The helper imports the repository-root `.env` on every launch. When at least
+one upstream key is present it starts or reuses the gateway, while the Web API
+still starts in the quick-demo preset by default. The in-page “完整在线” button
+switches the complete preset for subsequent searches: online LLM, Hybrid V2 and
+the configured Elasticsearch candidate index. “快速演示” switches back to the
+scripted LLM and the 16-candidate in-memory corpus. Without an upstream key the
+gateway is skipped and the quick demo still runs.
 
 The `.cmd` wrapper invokes PowerShell with `-ExecutionPolicy Bypass`; to run the
 `.ps1` directly, use `powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1`.

@@ -7,12 +7,17 @@
 
 ### Added
 
-- **Web 运行时模型切换**（`llm/runtime.py`、`server.py`、`web/`）：HTTP 服务现在同时持有
-  offline 脚本化 LLM 与 online OpenAI-compatible LLM，新增 `POST /runtime/mode`；Web 顶栏
-  的模式胶囊可一键切换后续搜索使用的模型，`/healthz` 返回 `mode` 与 `onlineConfigured`。
-  在线模型未配置或 Agent 正在执行时返回 `409`，不会静默假装切换成功；搜索运行期间用加锁
-  计数器阻止模式变更，避免同一条 trace 混用模型。新增运行时路由单测、SSE 切换集成测试和前端
-  静态资源断言。该按钮只切换 LLM，不切换 SearchTool 检索后端或候选人数据。
+- **Web 双预设运行时切换**（`llm/runtime.py`、`tools/runtime.py`、`server.py`、`web/`）：HTTP 服务
+  现在同时持有两个完整预设——快速演示（脚本化 LLM + `InMemorySearchTool` + 16 人内存库）与完整在线
+  （OpenAI-compatible LLM + Hybrid V2 + Elasticsearch 索引）。新增 `POST /runtime/mode`，Web 顶栏
+  的模式胶囊会同时切换 LLM 与 SearchTool；`/healthz` 返回 `mode`、`backend`、`offlineBackend`、
+  `onlineBackend` 与 `onlineConfigured`。完整在线未配置或 Agent 正在执行时返回 `409`，不会静默
+  假装切换成功；搜索运行期间用加锁计数器阻止模式变更，避免同一条 trace 混用两个预设。
+- **本地启动默认快速演示**（`scripts/start-dev.ps1`、`.env.example`）：启动器现在每次自动读取仓库根目录
+  `.env`，已有环境变量优先；Web API 默认追加 `--offline`，因此即使配置了上游 key，页面首次打开仍是
+  快速演示，可在运行时切换到完整在线。检测到 `PRIMARY_LLM_API_KEY` / `FALLBACK_LLM_API_KEY` 时自动
+  启动或复用网关；没有上游 key 时跳过网关，避免把不可用的在线模型误报为已配置。新增 `-StartOnline`
+  用于需要初始完整在线启动的场景。
 - **对话式 Agent 前端（默认体验）**（`src/search_agent/web/`）：`GET /` 的首屏从三栏监控台改为
   面向招聘用户的对话界面——提供 8 条复杂招聘示例、自然语言输入、需求解析标签、按真实 SSE
   阶段事件生成的可读进度、可折叠执行详情和内联候选人卡片。候选人证据、硬条件、来源路径与

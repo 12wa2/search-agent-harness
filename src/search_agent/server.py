@@ -10,9 +10,10 @@ Endpoints:
   final ``result`` frame.
 - ``POST /search/stream`` -- the same stream from a JSON body, keeping queries
   out of URLs and access logs.
-- ``GET  /healthz``       -- version, mode and backend class names.
-- ``POST /runtime/mode``  -- switch the LLM used by later searches between the
-  offline scripted client and the configured online provider.
+- ``GET  /healthz``       -- version, active mode and backend class names.
+- ``POST /runtime/mode``  -- switch later searches between two complete presets:
+  quick demo (scripted LLM + in-memory tool) and full online (real LLM +
+  configured retrieval tool, normally Hybrid V2).
 
 ``create_app`` accepts ``tool`` / ``llm_client`` so the same server can front
 a real backend; defaults to the zero-key offline stack. Run it via::
@@ -49,13 +50,14 @@ from search_agent.models.api import SearchRequest, SearchResponse
 from search_agent.service import SearchAgentService
 from search_agent.session import AgentSessionPage, AgentSessionStore
 from search_agent.tools.memory import InMemorySearchTool
+from search_agent.tools.runtime import RuntimeSearchTool
 
 #: Console assets live inside the package so wheels and the Docker image both ship them.
 _WEB_DIR = Path(__file__).resolve().parent / "web"
 
 
 class RuntimeModeRequest(BaseModel):
-    """Request body for switching the runtime LLM mode."""
+    """Request body for switching the complete runtime preset."""
 
     mode: Literal["offline", "online"]
 
@@ -189,14 +191,23 @@ def create_app(
     tool: SearchTool | None = None,
     llm_client: LlmClient | None = None,
     online_llm_client: LlmClient | None = None,
+    online_tool: SearchTool | None = None,
+    dual_backend: bool = False,
     data_path: str | None = None,
     offline: bool = True,
     intent_router: IntentRouter | None = None,
     conversation_store: ConversationStore | None = None,
     session_store: AgentSessionStore | None = None,
 ) -> FastAPI:
-    """Build the HTTP app. Defaults to the zero-key offline stack."""
-    resolved_tool = tool or InMemorySearchTool(str(data_path or DEMO_DATA))
+    """Build the HTTP app. Defaults to the zero-key quick-demo preset.
+
+    With ``dual_backend=True``, ``tool`` is the quick-demo tool and
+    ``online_tool`` is the full-online tool. The same runtime mode controls
+    both the LLM router and ``RuntimeSearchTool`` so a search never mixes
+    presets.
+    """
+    resolved_offline_tool = tool or InMemorySearchTool(str(data_path or DEMO_DATA))
+    resolved_online_tool = online_tool if dual_backend else resolved_offline_tool
     if llm_client is None:
         resolved_offline = ScriptedLlmClient()
         resolved_online = online_llm_client or OpenAILlmClient()
@@ -209,16 +220,23 @@ def create_app(
         else:
             resolved_offline = ScriptedLlmClient()
             resolved_online = llm_client
+    if initial_mode == "online" and resolved_online_tool is None:
+        raise ValueError("online mode requires an online search backend")
     runtime = RuntimeLlmRouter(
         resolved_offline,
         resolved_online,
         initial_mode=initial_mode,
     )
+    runtime_tool = RuntimeSearchTool(
+        resolved_offline_tool,
+        resolved_online_tool,
+        mode=lambda: runtime.mode,
+    )
     router = intent_router or IntentRouter()
     resolved_conversations = conversation_store or ConversationStore()
     resolved_sessions = session_store or AgentSessionStore()
     service = SearchAgentService(
-        tool=resolved_tool,
+        tool=runtime_tool,
         llm_client=runtime,
         conversation_store=resolved_conversations,
         session_store=resolved_sessions,
@@ -230,14 +248,17 @@ def create_app(
         description="Eight-stage reflective retrieval agent over HTTP.",
     )
     app.state.runtime_llm = runtime
+    app.state.runtime_tool = runtime_tool
 
     def runtime_health() -> dict[str, Any]:
         return {
             "status": "ok",
             "version": __version__,
             "mode": runtime.mode,
-            "onlineConfigured": runtime.online_configured,
-            "backend": type(resolved_tool).__name__,
+            "onlineConfigured": runtime.online_configured and runtime_tool.online_configured,
+            "backend": runtime_tool.active_tool_name,
+            "offlineBackend": runtime_tool.offline_tool_name,
+            "onlineBackend": runtime_tool.online_tool_name,
             "llm": runtime.active_client_name,
         }
 
@@ -247,6 +268,11 @@ def create_app(
 
     @app.post("/runtime/mode")
     def switch_runtime_mode(req: RuntimeModeRequest) -> dict[str, Any]:
+        if req.mode == "online" and not runtime_tool.online_configured:
+            raise HTTPException(
+                status_code=409,
+                detail="完整在线模式需要配置 Hybrid V2 检索后端（Elasticsearch）。",
+            )
         try:
             runtime.switch_mode(req.mode)
         except RuntimeModeError as exc:
@@ -269,7 +295,7 @@ def create_app(
             runtime.begin_run()
             body = _tracked_search_events(
                 _stream_search(
-                    resolved_tool,
+                    runtime_tool,
                     runtime,
                     req,
                     conversation_store=resolved_conversations,
