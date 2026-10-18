@@ -276,6 +276,49 @@ details[open] > summary::after {
   background: var(--danger);
 }
 
+.mode-toggle {
+  appearance: none;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease;
+}
+
+.mode-toggle:hover:not(:disabled) {
+  border-color: var(--accent-line);
+  background: var(--accent-wash);
+  color: var(--accent-strong);
+}
+
+.mode-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mode-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.mode-toggle[data-mode="online"] {
+  border-color: var(--accent-line);
+  background: var(--accent-wash);
+  color: var(--accent-strong);
+}
+
+.mode-toggle[data-mode="online"] i {
+  background: var(--accent);
+}
+
+.mode-toggle .mode-switch-glyph {
+  margin-left: 1px;
+  color: var(--quiet);
+  font-size: 10px;
+}
+
 #backend-chip,
 #version-chip {
   font-family: var(--mono);

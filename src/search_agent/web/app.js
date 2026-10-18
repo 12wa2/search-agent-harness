@@ -27,6 +27,9 @@ const VIEW_KEY = "search-agent:view";
 
 const state = {
   viewMode: "agent",
+  runtimeMode: null,
+  onlineConfigured: false,
+  modeSwitching: false,
   running: false,
   controller: null,
   startedAt: 0,
@@ -90,16 +93,115 @@ const chatStopBtn = $("chat-stop");
 const chatNewBtn = $("chat-new");
 const composerMode = $("composer-mode");
 const composerNote = $("composer-note");
+const modeChip = $("mode-chip");
+const modeLabel = $("mode-label");
 
 function defaultComposerNote() {
-  return composerMode.textContent.includes("离线")
-    ? "默认使用离线脚本化 LLM 与合成候选人，无需 API Key · Enter 发送，Shift+Enter 换行"
-    : "真实 LLM 模式：每次发送都会调用模型 API · Enter 发送，Shift+Enter 换行";
+  return state.runtimeMode === "offline" || !state.runtimeMode
+    ? "当前离线演示：脚本化 LLM + 合成候选人，无需 API Key · Enter 发送，Shift+Enter 换行"
+    : "当前在线模型：每次发送都会调用模型 API；检索后端不变 · Enter 发送，Shift+Enter 换行";
 }
 
 function setComposerNote(text, { error = false } = {}) {
   composerNote.textContent = text;
   composerNote.classList.toggle("is-error", error);
+}
+
+function syncModeToggleState() {
+  if (!modeChip) return;
+  modeChip.disabled = !state.runtimeMode || state.running || state.modeSwitching;
+}
+
+function renderRuntimeMode({ healthy = true } = {}) {
+  if (!modeChip) return;
+  const mode = state.runtimeMode;
+  modeChip.classList.toggle("ok", healthy && Boolean(mode));
+  modeChip.classList.toggle("err", !healthy);
+  if (!mode) {
+    modeChip.dataset.mode = "";
+    modeChip.setAttribute("aria-pressed", "false");
+    modeChip.title = healthy ? "正在读取 LLM 模式" : "无法读取 LLM 模式";
+    if (modeLabel) modeLabel.textContent = healthy ? "读取中…" : "状态未知";
+    composerMode.textContent = healthy ? "读取中…" : "状态未知";
+    syncModeToggleState();
+    return;
+  }
+
+  const offline = mode === "offline";
+  const label = offline ? "离线演示" : "在线模型";
+  const targetLabel = offline ? "在线模型" : "离线演示";
+  modeChip.dataset.mode = mode;
+  modeChip.setAttribute("aria-pressed", String(!offline));
+  if (modeLabel) modeLabel.textContent = label;
+  composerMode.textContent = label;
+
+  let title = `LLM 模式：${label}。点击切换到${targetLabel}；检索后端保持不变。`;
+  if (state.running) {
+    title = `LLM 模式：${label}。Agent 运行中，完成或停止后可切换。`;
+  } else if (offline && !state.onlineConfigured) {
+    title = "LLM 模式：离线演示。在线模型未配置；点击查看配置提示。";
+  }
+  modeChip.title = title;
+  modeChip.setAttribute("aria-label", title);
+  syncModeToggleState();
+}
+
+function applyRuntimeHealth(health) {
+  state.runtimeMode = health.mode === "offline" ? "offline" : "online";
+  state.onlineConfigured = Boolean(health.onlineConfigured);
+  if (health.backend) $("backend-chip").textContent = health.backend;
+  if (health.version) $("version-chip").textContent = `v${health.version}`;
+  renderRuntimeMode();
+  if (!state.running) {
+    runHint.classList.remove("error");
+    runHint.textContent =
+      state.runtimeMode === "offline"
+        ? "离线模式：脚本化 LLM + 合成候选人，零 API key · Ctrl+Enter 运行。"
+        : "在线模型模式：每次运行都会调用模型 API；检索后端不变 · Ctrl+Enter 运行。";
+    setComposerNote(defaultComposerNote());
+  }
+}
+
+function setRuntimeNotice(text, { error = false } = {}) {
+  runHint.classList.toggle("error", error);
+  runHint.textContent = text;
+  setComposerNote(text, { error });
+}
+
+async function toggleRuntimeMode() {
+  if (!state.runtimeMode || state.running || state.modeSwitching) return;
+  const target = state.runtimeMode === "offline" ? "online" : "offline";
+  const targetLabel = target === "online" ? "在线模型" : "离线演示";
+  state.modeSwitching = true;
+  renderRuntimeMode();
+  try {
+    const resp = await fetch("/runtime/mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: target }),
+      cache: "no-store",
+    });
+    let payload = {};
+    try {
+      payload = await resp.json();
+    } catch (err) {
+      // Keep the HTTP status as the fallback error message.
+    }
+    if (!resp.ok) {
+      const detail =
+        typeof payload.detail === "string" ? payload.detail : `HTTP ${resp.status}`;
+      throw new Error(detail);
+    }
+    applyRuntimeHealth(payload);
+    setRuntimeNotice(
+      `已切换到${targetLabel}。${target === "online" ? "下一次搜索会调用在线模型 API" : "下一次搜索使用离线脚本"}；检索后端和候选人数据保持不变。`,
+    );
+  } catch (err) {
+    setRuntimeNotice(`模型模式切换失败：${err.message}`, { error: true });
+  } finally {
+    state.modeSwitching = false;
+    renderRuntimeMode();
+  }
 }
 
 function el(tag, className, text) {
@@ -751,6 +853,8 @@ function setRunning(active) {
   if (active) {
     runHint.textContent = "Agent 正在运行：阶段事件会实时出现在中间轨迹。";
   }
+  if (state.runtimeMode) renderRuntimeMode();
+  else syncModeToggleState();
 }
 
 function addRoundDivider(round) {
@@ -1445,27 +1549,14 @@ function startNewConversation() {
 
 async function loadHealth() {
   try {
-    const resp = await fetch("/healthz");
+    const resp = await fetch("/healthz", { cache: "no-store" });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const health = await resp.json();
-    const mode = health.mode === "offline" ? "离线演示" : "真实模型";
-    const modeChip = $("mode-chip");
-    modeChip.replaceChildren();
-    modeChip.append(el("i"), document.createTextNode(` ${mode}`));
-    modeChip.classList.add("ok");
-    $("backend-chip").textContent = health.backend || "backend —";
-    $("version-chip").textContent = health.version ? `v${health.version}` : "v—";
-    composerMode.textContent = mode;
-    if (!state.running) {
-      runHint.textContent =
-        health.mode === "offline"
-          ? "离线模式：脚本化 LLM + 合成候选人，零 API key · Ctrl+Enter 运行。"
-          : "真实 LLM 模式：每次运行都会调用模型 API · Ctrl+Enter 运行。";
-      setComposerNote(defaultComposerNote());
-    }
+    applyRuntimeHealth(health);
   } catch (err) {
-    $("mode-chip").classList.add("err");
-    $("mode-chip").textContent = "offline";
+    state.runtimeMode = null;
+    state.onlineConfigured = false;
+    renderRuntimeMode({ healthy: false });
   }
 }
 
@@ -1562,6 +1653,7 @@ function bindEvents() {
 
   viewAgentBtn.addEventListener("click", () => setViewMode("agent"));
   viewConsoleBtn.addEventListener("click", () => setViewMode("console"));
+  modeChip.addEventListener("click", toggleRuntimeMode);
 
   newConversationBtn.addEventListener("click", startNewConversation);
   chatNewBtn.addEventListener("click", startNewConversation);

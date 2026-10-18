@@ -38,7 +38,11 @@
     </button>
   </nav>
   <div class="statuses" aria-label="运行状态">
-    <span class="chip chip-live" id="mode-chip"><i></i> connecting</span>
+    <button class="chip chip-live mode-toggle" id="mode-chip" type="button" aria-pressed="false" disabled title="正在读取 LLM 模式">
+      <i aria-hidden="true"></i>
+      <span id="mode-label">连接中…</span>
+      <span class="mode-switch-glyph" aria-hidden="true">⇄</span>
+    </button>
     <span class="chip" id="backend-chip">backend —</span>
     <span class="chip" id="version-chip">v—</span>
   </div>
@@ -133,7 +137,7 @@
         </div>
       </div>
     </form>
-    <p class="composer-note" id="composer-note">默认使用离线脚本化 LLM 与合成候选人，无需 API Key · Enter 发送，Shift+Enter 换行</p>
+    <p class="composer-note" id="composer-note" aria-live="polite">默认使用离线脚本化 LLM 与合成候选人，无需 API Key · Enter 发送，Shift+Enter 换行</p>
   </section>
 </main>
 

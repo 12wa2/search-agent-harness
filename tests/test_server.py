@@ -12,7 +12,7 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from search_agent.demo import DEMO_QUERIES  # noqa: E402
+from search_agent.demo import DEMO_QUERIES, ScriptedLlmClient  # noqa: E402
 from search_agent.server import create_app  # noqa: E402
 
 QUERY = DEMO_QUERIES[0]
@@ -29,7 +29,72 @@ def test_healthz(client: TestClient) -> None:
     body = resp.json()
     assert body["status"] == "ok"
     assert body["mode"] == "offline"
+    assert isinstance(body["onlineConfigured"], bool)
+    assert body["llm"] == "ScriptedLlmClient"
     assert body["backend"] == "InMemorySearchTool"
+
+
+def test_runtime_mode_switch_uses_online_client_for_next_stream_search() -> None:
+    offline = ScriptedLlmClient()
+    online = ScriptedLlmClient()
+    app = create_app(llm_client=offline, online_llm_client=online)
+
+    with TestClient(app) as switched:
+        health = switched.get("/healthz").json()
+        assert health["mode"] == "offline"
+        assert health["onlineConfigured"] is True
+
+        switch = switched.post("/runtime/mode", json={"mode": "online"})
+        assert switch.status_code == 200
+        assert switch.json()["mode"] == "online"
+        assert switch.json()["llm"] == "ScriptedLlmClient"
+
+        with switched.stream(
+            "POST",
+            "/search/stream",
+            json={"query": QUERY, "topK": 5, "details": True},
+        ) as resp:
+            assert resp.status_code == 200
+            text = "".join(resp.iter_text())
+
+        assert "event: result" in text
+        assert app.state.runtime_llm.active_runs == 0
+
+    assert online.calls
+    assert offline.calls == []
+
+
+def test_runtime_mode_rejects_unconfigured_online_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SEARCH_AGENT_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with TestClient(create_app(offline=True)) as client:
+        health = client.get("/healthz").json()
+        assert health["mode"] == "offline"
+        assert health["onlineConfigured"] is False
+
+        switch = client.post("/runtime/mode", json={"mode": "online"})
+        assert switch.status_code == 409
+        assert "SEARCH_AGENT_API_KEY" in switch.json()["detail"]
+        assert client.get("/healthz").json()["mode"] == "offline"
+
+
+def test_runtime_mode_rejects_switch_while_run_is_active() -> None:
+    app = create_app(offline=True, online_llm_client=ScriptedLlmClient())
+    with TestClient(app) as client:
+        runtime = app.state.runtime_llm
+        runtime.begin_run()
+        try:
+            switch = client.post("/runtime/mode", json={"mode": "online"})
+            assert switch.status_code == 409
+            assert "正在执行搜索" in switch.json()["detail"]
+            assert client.get("/healthz").json()["mode"] == "offline"
+        finally:
+            runtime.end_run()
+
+        assert client.post("/runtime/mode", json={"mode": "online"}).status_code == 200
 
 
 def test_search_returns_camel_case_payload(client: TestClient) -> None:
@@ -151,6 +216,8 @@ def test_root_serves_the_web_console(client: TestClient) -> None:
     assert "Search Agent" in resp.text
     assert "app.js" in resp.text
     assert 'id="agent-view"' in resp.text
+    assert 'id="mode-chip"' in resp.text
+    assert "mode-toggle" in resp.text
     assert "你好，我可以帮你寻找合适的候选人。" in resp.text
     assert "执行观测" in resp.text
 
@@ -191,11 +258,15 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "agent-delivery" in script.text
     assert "chat-progress-item" in script.text
     assert "renderChatResult" in script.text
+    assert "/runtime/mode" in script.text
+    assert "toggleRuntimeMode" in script.text
+    assert "onlineConfigured" in script.text
 
     styles = client.get("/styles.css")
     assert styles.status_code == 200
     assert "text/css" in styles.headers["content-type"]
     assert styles.text.strip()
+    assert ".mode-toggle" in styles.text
 
 
 def test_web_assets_are_present_in_the_package() -> None:

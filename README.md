@@ -341,7 +341,8 @@ search-agent serve --offline    # http://127.0.0.1:8000；浏览器打开即 Age
 | `POST /search/stream` | 同一 SSE 流的 JSON body 版本（查询不进 URL / 访问日志）；客户端断开即请求后端取消 |
 | `GET /sessions/{queryToken}?offset=5&limit=5` | 分页读取本次 Agent 结果池，不重新检索、不调用 LLM |
 | `DELETE /sessions/{queryToken}` | 主动删除分页会话；不调用也会按 1 小时 TTL 过期 |
-| `GET /healthz` | 健康检查：版本 / 模式 / 后端与 LLM 类型 |
+| `GET /healthz` | 健康检查：版本 / LLM 模式 / 在线模型配置状态 / 后端与当前 LLM 类型 |
+| `POST /runtime/mode` | 运行时切换后续搜索使用的 LLM：`{"mode":"offline"}` 或 `{"mode":"online"}`；搜索执行中返回 `409`，在线模型未配置时也返回 `409` |
 
 SSE 事件协议：
 
@@ -357,7 +358,13 @@ curl -s http://127.0.0.1:8000/search -H "Content-Type: application/json" \
   -d '{"query": "找有 3 年以上经验的后端工程师", "topK": 5}'
 ```
 
-`create_app(tool=..., llm_client=...)` 同样接受自定义后端，与本地调用共用同一套 `SearchTool` 协议。
+`create_app(tool=..., llm_client=..., online_llm_client=...)` 同样接受自定义后端，与本地调用共用同一套 `SearchTool` 协议。
+
+Web 顶栏的「离线演示 / 在线模型」是可点击的模式按钮：它只切换后续搜索使用的 LLM，**不会切换
+检索后端或候选人数据**。在线模式要求服务启动时已经配置 `SEARCH_AGENT_API_KEY`（或
+`OPENAI_API_KEY`）以及可用的 OpenAI 兼容端点；未配置时按钮会给出明确提示，不会静默降级。切换是
+进程内运行时状态，服务重启后回到启动参数决定的初始模式；多 worker 部署需要另做共享控制。
+搜索执行期间按钮和后端都会拒绝切换，避免同一次 trace 混用两个模型。
 
 ### 多轮会话与结果分页
 

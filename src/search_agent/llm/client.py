@@ -237,6 +237,11 @@ class OpenAILlmClient:
         self.repairs = 0
         self.last_repairs = 0
 
+    @property
+    def is_configured(self) -> bool:
+        """Whether an API key was available when this client was constructed."""
+        return bool(self._api_key)
+
     def complete_json(
         self,
         *,

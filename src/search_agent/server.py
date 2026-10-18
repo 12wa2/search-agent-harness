@@ -11,6 +11,8 @@ Endpoints:
 - ``POST /search/stream`` -- the same stream from a JSON body, keeping queries
   out of URLs and access logs.
 - ``GET  /healthz``       -- version, mode and backend class names.
+- ``POST /runtime/mode``  -- switch the LLM used by later searches between the
+  offline scripted client and the configured online provider.
 
 ``create_app`` accepts ``tool`` / ``llm_client`` so the same server can front
 a real backend; defaults to the zero-key offline stack. Run it via::
@@ -29,11 +31,12 @@ import json
 import queue
 import threading
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from search_agent import __version__
 from search_agent.contract.tool import SearchTool
@@ -41,6 +44,7 @@ from search_agent.conversation_memory import ConversationStore
 from search_agent.demo import DEMO_DATA, ScriptedLlmClient
 from search_agent.intent_router import Intent, IntentRouter, RouteDecision
 from search_agent.llm.client import LlmClient, OpenAILlmClient
+from search_agent.llm.runtime import RuntimeLlmRouter, RuntimeMode, RuntimeModeError
 from search_agent.models.api import SearchRequest, SearchResponse
 from search_agent.service import SearchAgentService
 from search_agent.session import AgentSessionPage, AgentSessionStore
@@ -48,6 +52,12 @@ from search_agent.tools.memory import InMemorySearchTool
 
 #: Console assets live inside the package so wheels and the Docker image both ship them.
 _WEB_DIR = Path(__file__).resolve().parent / "web"
+
+
+class RuntimeModeRequest(BaseModel):
+    """Request body for switching the runtime LLM mode."""
+
+    mode: Literal["offline", "online"]
 
 
 def _stage_payload(event: str, state: dict[str, Any]) -> dict[str, Any]:
@@ -112,6 +122,17 @@ async def _stream_reply(decision: RouteDecision) -> AsyncIterator[str]:
     yield _sse("reply", decision.to_payload())
 
 
+async def _tracked_search_events(
+    events: AsyncIterator[str], runtime: RuntimeLlmRouter
+) -> AsyncIterator[str]:
+    """Release the runtime run guard after the SSE generator closes."""
+    try:
+        async for event in events:
+            yield event
+    finally:
+        runtime.end_run()
+
+
 async def _stream_search(
     tool: SearchTool,
     llm: LlmClient,
@@ -167,6 +188,7 @@ def create_app(
     *,
     tool: SearchTool | None = None,
     llm_client: LlmClient | None = None,
+    online_llm_client: LlmClient | None = None,
     data_path: str | None = None,
     offline: bool = True,
     intent_router: IntentRouter | None = None,
@@ -175,13 +197,29 @@ def create_app(
 ) -> FastAPI:
     """Build the HTTP app. Defaults to the zero-key offline stack."""
     resolved_tool = tool or InMemorySearchTool(str(data_path or DEMO_DATA))
-    resolved_llm = llm_client or (ScriptedLlmClient() if offline else OpenAILlmClient())
+    if llm_client is None:
+        resolved_offline = ScriptedLlmClient()
+        resolved_online = online_llm_client or OpenAILlmClient()
+        initial_mode: RuntimeMode = "offline" if offline else "online"
+    else:
+        initial_mode = "offline" if isinstance(llm_client, ScriptedLlmClient) else "online"
+        if initial_mode == "offline":
+            resolved_offline = llm_client
+            resolved_online = online_llm_client or OpenAILlmClient()
+        else:
+            resolved_offline = ScriptedLlmClient()
+            resolved_online = llm_client
+    runtime = RuntimeLlmRouter(
+        resolved_offline,
+        resolved_online,
+        initial_mode=initial_mode,
+    )
     router = intent_router or IntentRouter()
     resolved_conversations = conversation_store or ConversationStore()
     resolved_sessions = session_store or AgentSessionStore()
     service = SearchAgentService(
         tool=resolved_tool,
-        llm_client=resolved_llm,
+        llm_client=runtime,
         conversation_store=resolved_conversations,
         session_store=resolved_sessions,
     )
@@ -191,37 +229,56 @@ def create_app(
         version=__version__,
         description="Eight-stage reflective retrieval agent over HTTP.",
     )
+    app.state.runtime_llm = runtime
 
-    @app.get("/healthz")
-    def healthz() -> dict[str, Any]:
+    def runtime_health() -> dict[str, Any]:
         return {
             "status": "ok",
             "version": __version__,
-            "mode": "offline" if isinstance(resolved_llm, ScriptedLlmClient) else "openai",
+            "mode": runtime.mode,
+            "onlineConfigured": runtime.online_configured,
             "backend": type(resolved_tool).__name__,
-            "llm": type(resolved_llm).__name__,
+            "llm": runtime.active_client_name,
         }
+
+    @app.get("/healthz")
+    def healthz() -> dict[str, Any]:
+        return runtime_health()
+
+    @app.post("/runtime/mode")
+    def switch_runtime_mode(req: RuntimeModeRequest) -> dict[str, Any]:
+        try:
+            runtime.switch_mode(req.mode)
+        except RuntimeModeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return runtime_health()
 
     @app.post("/search")
     def search(req: SearchRequest) -> SearchResponse:
+        runtime.begin_run()
         try:
             return service.search(req)
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        finally:
+            runtime.end_run()
 
     def stream_response(req: SearchRequest) -> StreamingResponse:
         decision = router.route(req.query)
-        body = (
-            _stream_search(
-                resolved_tool,
-                resolved_llm,
-                req,
-                conversation_store=resolved_conversations,
-                session_store=resolved_sessions,
+        if decision.intent is Intent.SEARCH:
+            runtime.begin_run()
+            body = _tracked_search_events(
+                _stream_search(
+                    resolved_tool,
+                    runtime,
+                    req,
+                    conversation_store=resolved_conversations,
+                    session_store=resolved_sessions,
+                ),
+                runtime,
             )
-            if decision.intent is Intent.SEARCH
-            else _stream_reply(decision)
-        )
+        else:
+            body = _stream_reply(decision)
         return StreamingResponse(
             body,
             media_type="text/event-stream",
