@@ -13,12 +13,22 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![version](https://img.shields.io/badge/version-v0.1.0-blue)
 
-![Web console](docs/console.png)
+![Search Agent — conversational candidate search](docs/console.png)
 
-> 内置 Web 控制台（零构建，FastAPI 直接托管）：`search-agent serve --offline` → <http://127.0.0.1:8000>。
-> 左侧提交招聘需求，中间实时展示八阶段时间线，右侧是交付候选人、命中能力与来源路径。
+> 内置 Web 体验（零构建，FastAPI 直接托管）：`search-agent serve --offline` → <http://127.0.0.1:8000>。
+> 默认是 **Agent 体验**：像和招聘助手对话一样提交复杂需求，实时看到条件解析、搜索路径、
+> 能力覆盖检查、反思改写和内联候选人卡片；技术细节收进可展开的执行详情。
+> 右上角可切到 **执行观测**，保留原三栏控制台，专门查看八阶段状态、路径、指标和原始 Trace。
+> 两种模式共享同一条 SSE 运行，切换视图不会重新搜索；会话续接、停止语义和结果分页均保留。
 
-### 本地查看 Web 控制台
+<details>
+<summary>查看一次完整搜索的对话交付</summary>
+
+![Search Agent — completed run with criteria, live progress and inline candidates](docs/console-run.png)
+
+</details>
+
+### 本地查看 Web 体验
 
 目前**没有托管公网在线 Demo**；仓库提供的是可一键复现的本地演示，默认模式使用脚本化 LLM
 和 16 个虚构候选人，**不需要任何 API Key**：
@@ -29,12 +39,12 @@ search-agent serve --offline
 # 浏览器打开 http://127.0.0.1:8000
 ```
 
-页面上的“停止”会断开 SSE 连接并通知后端取消：后端会在当前阶段结束后、下一次 LLM 调用前
+“Agent 体验”和“执行观测”只改变展示方式，不会重跑 Agent。页面上的“停止”会断开 SSE 连接并通知后端取消：后端会在当前阶段结束后、下一次 LLM 调用前
 或进入下一阶段检索前停止后续工作。已经在途的模型请求不会被强杀，因此界面文案使用“已请求停止”，不宣称立即终止。
 
 ### 有边界的请求路由
 
-Web 控制台和两个 `/search/stream` 入口会先经过确定性的 `IntentRouter`，再决定是否启动八阶段 Agent：
+两种 Web 视图和两个 `/search/stream` 入口会先经过确定性的 `IntentRouter`，再决定是否启动八阶段 Agent：
 
 | 输入类型 | 路由 | 行为 | LLM / 检索 |
 |---|---|---|---|
@@ -104,7 +114,7 @@ pip install -e ".[dev]"
 
 search-agent demo        # 离线演示：脚本化 LLM + 16 个合成候选人，零 API key
 search-agent eval        # 离线评测：单趟基线 vs Agent 全循环（确定性、可复现）
-search-agent serve --offline   # 可选：HTTP 服务 + Web 控制台 → http://127.0.0.1:8000（需 .[api]）
+search-agent serve --offline   # 可选：HTTP 服务 + Web 体验 → http://127.0.0.1:8000（需 .[api]）
 ```
 
 接入真实 LLM（任何 OpenAI 兼容端点：OpenAI / Qwen / DeepSeek / vLLM …）：
@@ -320,12 +330,12 @@ search-agent demo --repeat 3 --top-k 5     # 同一查询跑 3 次，打印策�
 
 ```bash
 pip install -e ".[api]"
-search-agent serve --offline    # http://127.0.0.1:8000；浏览器打开即 Web 控制台
+search-agent serve --offline    # http://127.0.0.1:8000；浏览器打开即 Agent 体验
 ```
 
 | 端点 | 说明 |
 |---|---|
-| `GET /` | 内置 Web 控制台（零构建静态页：输入需求 → 实时八阶段时间线 → 候选人证据） |
+| `GET /` | 内置 Web 体验（默认对话式 Agent；可切换三栏执行观测视图） |
 | `POST /search` | `SearchRequest` → `SearchResponse`（camelCase JSON；`details=true` 附带 `agentTrace` / `agentMetrics`） |
 | `GET /search/stream?query=…&topK=10` | SSE：非搜索请求返回单帧 `reply`；搜索请求逐阶段推送，最后 `result` 帧返回完整结果 |
 | `POST /search/stream` | 同一 SSE 流的 JSON body 版本（查询不进 URL / 访问日志）；客户端断开即请求后端取消 |
@@ -371,8 +381,8 @@ curl -s -X POST http://127.0.0.1:8000/search -H "Content-Type: application/json"
 curl -s "http://127.0.0.1:8000/sessions/<queryToken>?offset=5&limit=5"
 ```
 
-Web 控制台已接入同一协议：同一标签页会复用 `conversationId`，显示历史 query 与当前轮次；
-候选人列表底部可翻页，点击“新对话”后下一轮不会继承旧上下文。未配置 Redis 时使用进程内降级，
+两种 Web 视图都已接入同一协议：同一标签页会复用 `conversationId`，显示历史 query 与当前轮次；
+对话内候选人和执行观测中的列表都可翻页，点击“新对话”后下一轮不会继承旧上下文。未配置 Redis 时使用进程内降级，
 多进程部署请设置 `SEARCH_AGENT_REDIS_URL` 或 `REDIS_URL`。
 
 演示时可以先输入“找有 3 年以上经验的后端工程师”，随后在同一会话输入“最好有大厂背景”，
@@ -468,7 +478,7 @@ search-agent-harness/
 │   ├── corpus.py            # 合成语料生成器：种子化 + 生成器真值（oracle 标注）
 │   ├── oracle.py            # 去自证指标：交付列表打分 / 仅全循环发现增量
 │   ├── tools/embedding.py   # 确定性哈希向量（换真实模型只改这一个函数）
-│   ├── web/                 # 内置 Web 控制台（HTML/CSS/JS，零构建；FastAPI 托管 GET /）
+│   ├── web/                 # 内置 Web 体验（HTML/CSS/JS，零构建；FastAPI 托管 GET /）
 │   └── cli.py               # 命令行入口：demo / corpus / search / eval / serve
 ├── scripts/                 # Windows 本地开发：start-dev.ps1（gateway + API）
 ├── tests/                   # pytest suite（离线 + 可选 ES 集成）
@@ -626,10 +636,12 @@ $env:SEARCH_AGENT_MODEL = "search-agent-primary"
 - [x] 373 个离线测试通过（另有 24 个可选 ES 集成测试）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
-- [x] Web 控制台：零构建单页（八阶段时间线 / 候选人匹配证据 / metrics / trace），`GET /` 直接托管，
-      截图 `docs/console.png`；SSE 支持 `POST /search/stream`（查询不进 URL），客户端断开触发阶段边界取消。
+- [x] Web 体验：零构建双模式单页——默认对话式 Agent（需求解析 / 自然语言进度 / 内联候选人 / 可展开执行详情），
+      可切换三栏执行观测（八阶段摘要 / SearchTool / metrics / raw trace），`GET /` 直接托管；
+      截图 `docs/console.png`、`docs/console-run.png`；SSE 支持 `POST /search/stream`（查询不进 URL），
+      客户端断开触发阶段边界取消。
 - [x] 轻量多轮会话（结构化摘要、最近 3 轮注入、租户隔离）与结果池分页（`/sessions/{queryToken}`，
-      翻页不重新运行 Agent）；Web 控制台支持续接会话、新对话和上一页 / 下一页。
+      翻页不重新运行 Agent）；两种 Web 视图都支持续接会话、新对话和上一页 / 下一页。
 - [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）
 - [x] SQLite/FTS5 后端（`tools/sqlite_fts.py`，标准库）：where 树编译 SQL + 跨后端一致性测试。
 - [x] Elasticsearch 真实后端 + `docker compose` 端到端示例（ES DSL 编译，`examples/es_end_to_end.py`）。

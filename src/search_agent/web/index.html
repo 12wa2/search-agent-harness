@@ -3,75 +3,207 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#0a0e14">
-<title>Search Agent Harness · Agent Console</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235eead4'/%3E%3Ctext x='16' y='22' font-family='monospace' font-size='15' font-weight='700' text-anchor='middle' fill='%230a0e14'%3ESA%3C/text%3E%3C/svg%3E">
+<meta name="theme-color" content="#f7faf8">
+<title>Search Agent Harness</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%2317232a'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='%23fbfaf6' stroke-width='1.4'/%3E%3Ccircle cx='16' cy='8' r='2' fill='%23a23a2c'/%3E%3Ccircle cx='16' cy='24' r='2' fill='%23a23a2c'/%3E%3Ccircle cx='8' cy='16' r='2' fill='%23a23a2c'/%3E%3Ccircle cx='24' cy='16' r='2' fill='%23a23a2c'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
+<a class="skip-link" href="#chat-query">跳到招聘需求</a>
+
 <header class="topbar">
   <div class="brand">
-    <span class="brand-mark">SA</span>
+    <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
+      <circle cx="20" cy="20" r="12" fill="none" stroke="currentColor" stroke-opacity=".32"></circle>
+      <circle cx="20" cy="6" r="2.2" fill="currentColor"></circle>
+      <circle cx="29.9" cy="10.1" r="2.2" fill="currentColor"></circle>
+      <circle cx="34" cy="20" r="2.2" fill="currentColor"></circle>
+      <circle cx="29.9" cy="29.9" r="2.2" fill="currentColor"></circle>
+      <circle cx="20" cy="34" r="2.2" fill="currentColor"></circle>
+      <circle cx="10.1" cy="29.9" r="2.2" fill="currentColor"></circle>
+      <circle cx="6" cy="20" r="2.2" fill="currentColor"></circle>
+      <circle cx="10.1" cy="10.1" r="2.2" fill="currentColor"></circle>
+    </svg>
     <div class="brand-text">
       <h1>Search Agent <em>Harness</em></h1>
-      <p>八阶段反思检索 · 可观察的 Agent 控制台</p>
+      <p>八阶段反思检索 · 每一次搜索都能被审计</p>
     </div>
   </div>
-  <div class="statuses">
+  <nav class="view-switch" aria-label="界面模式">
+    <button id="view-agent" class="view-switch-btn is-active" type="button" aria-pressed="true">
+      Agent 体验
+    </button>
+    <button id="view-console" class="view-switch-btn" type="button" aria-pressed="false">
+      执行观测
+    </button>
+  </nav>
+  <div class="statuses" aria-label="运行状态">
     <span class="chip chip-live" id="mode-chip"><i></i> connecting</span>
     <span class="chip" id="backend-chip">backend —</span>
     <span class="chip" id="version-chip">v—</span>
   </div>
 </header>
 
-<main class="layout">
-  <aside class="panel query-panel">
+<main class="agent-app" id="agent-view" aria-label="Agent 对话体验">
+  <div class="chat-scroll" id="chat-scroll">
+    <section class="agent-intro" id="agent-intro">
+      <div class="intro-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32">
+          <circle cx="16" cy="16" r="10"></circle>
+          <path d="M16 10.5v5.8l3.7 2.1"></path>
+          <path d="M25.5 8.5v4h-4"></path>
+        </svg>
+      </div>
+      <p class="intro-kicker">Recruiting research agent</p>
+      <h2>你好，我可以帮你寻找合适的候选人。</h2>
+      <p class="intro-copy">
+        告诉我你要招聘什么岗位、需要哪些能力，以及工作年限、城市和硬性要求。我会先复述理解，再规划多条检索路径，并在覆盖不足时主动反思后续搜索。
+      </p>
+
+      <section class="start-section" aria-labelledby="start-heading">
+        <div class="start-heading">
+          <h3 id="start-heading">从这些复杂需求开始</h3>
+          <span>点击填入，确认后发送</span>
+        </div>
+        <div class="start-grid" id="chat-examples">
+          <button type="button" class="chat-example" data-q="帮我找 5 年以上后端经验，必须有高并发和分布式系统经验，上海或杭州优先，排除只有运维经历的候选人。">
+            <span class="example-title">高并发后端 · 排查相邻经历</span>
+            <span class="example-copy">跨岗位寻找真实做过高并发系统设计的人。</span>
+            <span class="example-arrow" aria-hidden="true">→</span>
+          </button>
+          <button type="button" class="chat-example" data-q="寻找做过大规模消息队列和在线交易系统稳定性建设的工程师，不限定原岗位名称。">
+            <span class="example-title">可迁移经验 · 不锁岗位名称</span>
+            <span class="example-copy">从项目证据反推能力，而不是只匹配职位关键词。</span>
+            <span class="example-arrow" aria-hidden="true">→</span>
+          </button>
+          <button type="button" class="chat-example" data-q="找推荐系统工程师，有召回、排序和线上 A/B 实验经验，排除只有离线模型训练经历的人。">
+            <span class="example-title">推荐系统 · 线上实验</span>
+            <span class="example-copy">区分离线训练与真实线上收益。</span>
+            <span class="example-arrow" aria-hidden="true">→</span>
+          </button>
+          <button type="button" class="chat-example" data-q="招聘数据平台负责人，要求做过实时计算、湖仓一体和数据治理，8 年以上经验。">
+            <span class="example-title">数据平台 · 复合能力</span>
+            <span class="example-copy">同时覆盖架构、治理和团队负责经验。</span>
+            <span class="example-arrow" aria-hidden="true">→</span>
+          </button>
+          <button type="button" class="chat-example" data-q="寻找有支付核心链路经验、熟悉高可用与故障演练的后端工程师，北京或深圳。">
+            <span class="example-title">支付核心链路 · 高可用</span>
+            <span class="example-copy">用稳定性证据筛选，而不是只看电商标签。</span>
+            <span class="example-arrow" aria-hidden="true">→</span>
+          </button>
+          <button type="button" class="chat-example" data-q="帮我在算法、后端和基础架构候选人里找真正做过 LLM 推理优化的人，必须说明生产环境收益。">
+            <span class="example-title">LLM 推理 · 生产收益</span>
+            <span class="example-copy">跨职能搜索，要求可验证的部署结果。</span>
+            <span class="example-arrow" aria-hidden="true">→</span>
+          </button>
+          <button type="button" class="chat-example" data-q="找有跨境业务经验的风控策略工程师，熟悉规则引擎和行为序列建模，5 年以上。">
+            <span class="example-title">风控策略 · 跨境业务</span>
+            <span class="example-copy">组合业务场景、策略和建模能力。</span>
+            <span class="example-arrow" aria-hidden="true">→</span>
+          </button>
+          <button type="button" class="chat-example" data-q="寻找做过搜索排序和语义召回的质量工程师，能拿出具体指标改善案例。">
+            <span class="example-title">搜索质量 · 语义召回</span>
+            <span class="example-copy">从指标改善案例反找合适的人。</span>
+            <span class="example-arrow" aria-hidden="true">→</span>
+          </button>
+        </div>
+      </section>
+    </section>
+
+    <section class="chat-transcript" id="chat-transcript" aria-live="polite" aria-label="与 Search Agent 的对话"></section>
+  </div>
+
+  <section class="composer-zone" aria-label="输入招聘需求">
+    <form class="chat-composer" id="chat-form" autocomplete="off">
+      <label class="sr-only" for="chat-query">招聘需求</label>
+      <textarea id="chat-query" rows="2" placeholder="描述目标岗位、必备能力、城市与排除条件…"></textarea>
+      <div class="composer-toolbar">
+        <div class="composer-settings">
+          <label for="chat-top-k">交付人数</label>
+          <input id="chat-top-k" type="number" min="1" max="50" value="20" inputmode="numeric">
+          <span class="composer-separator" aria-hidden="true"></span>
+          <span class="composer-mode" id="composer-mode">离线演示</span>
+          <button id="chat-new" class="chat-new" type="button">新对话</button>
+        </div>
+        <div class="composer-actions">
+          <button id="chat-stop" class="chat-stop" type="button" hidden>停止</button>
+          <button id="chat-run" class="chat-send" type="submit" aria-label="开始搜索">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M6.5 8.5 10 5l3.5 3.5"></path></svg>
+          </button>
+        </div>
+      </div>
+    </form>
+    <p class="composer-note" id="composer-note">默认使用离线脚本化 LLM 与合成候选人，无需 API Key · Enter 发送，Shift+Enter 换行</p>
+  </section>
+</main>
+
+<div class="console-view" id="console-view" hidden>
+<main class="layout" id="console-main">
+  <aside class="panel query-panel" aria-label="招聘需求与会话">
     <div class="panel-head">
-      <h2>Search request</h2>
-      <span class="hint">自然语言 → IR → 检索</span>
+      <div>
+        <h2>招聘需求</h2>
+        <p>描述目标人才，Agent 会规划检索方向。</p>
+      </div>
+      <span class="hint">自然语言</span>
     </div>
 
     <form id="search-form" autocomplete="off">
-      <label class="field-label" for="query">招聘需求</label>
+      <label class="field-label" for="query">岗位简报</label>
       <textarea id="query" rows="5" placeholder="例如：找有 3 年以上经验、做过高并发系统的后端工程师，最好来自大厂"></textarea>
 
-      <div class="examples" id="examples">
+      <div class="examples" id="examples" aria-label="示例招聘需求">
         <button type="button" class="example" data-q="找有 3 年以上经验、做过高并发系统的后端工程师，最好来自大厂">高并发后端 · 3 年+</button>
         <button type="button" class="example" data-q="推荐算法工程师，要求 3 年以上推荐系统与机器学习经验">推荐算法 · 3 年+</button>
         <button type="button" class="example" data-q="数据工程师，熟悉 Spark 和 Flink，做过数据平台架构，3 年以上经验">数据平台 · Spark/Flink</button>
       </div>
 
       <div class="row">
-        <label class="field-label" for="top-k">交付人数 topK</label>
-        <input id="top-k" type="number" min="1" max="50" value="20">
+        <label class="field-label" for="top-k">交付人数</label>
+        <input id="top-k" type="number" min="1" max="50" value="20" inputmode="numeric" aria-label="交付人数 topK">
       </div>
 
       <div class="actions">
-        <button id="run" class="run-btn" type="submit"><span aria-hidden="true">▶</span> 运行 Agent</button>
-        <button id="stop" class="stop-btn" type="button" hidden title="当前阶段结束后停止后续检索与模型调用"><span aria-hidden="true">■</span> 停止</button>
+        <button id="run" class="run-btn" type="submit">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3.8 12 8l-6.5 4.2V3.8Z"></path></svg>
+          运行 Agent
+        </button>
+        <button id="stop" class="stop-btn" type="button" hidden title="当前阶段结束后停止后续检索与模型调用">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4.5" y="4.5" width="7" height="7"></rect></svg>
+          停止
+        </button>
       </div>
-      <p class="run-hint" id="run-hint">离线模式：脚本化 LLM + 合成候选人，零 API key · Ctrl+Enter 运行。</p>
+      <p class="run-hint" id="run-hint" aria-live="polite">离线模式：脚本化 LLM + 合成候选人，零 API key · Ctrl+Enter 运行。</p>
     </form>
 
     <section class="session-card" aria-live="polite">
       <div class="session-top">
         <div>
-          <span class="session-kicker">CONVERSATION</span>
+          <h3>当前会话</h3>
           <strong id="conversation-label">新会话 · 第 1 轮</strong>
         </div>
-        <button id="new-conversation" class="session-reset" type="button">新对话</button>
+        <button id="new-conversation" class="session-reset" type="button">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 5.3V2.8m0 2.5H10.5M12.6 4.2A5.5 5.5 0 1 0 13.4 9"></path></svg>
+          新对话
+        </button>
       </div>
       <ol id="conversation-history" class="conversation-history" hidden></ol>
       <p class="session-note" id="session-note">Redis 可用时保存最近 10 轮摘要，当前会话只注入最近 3 轮。</p>
     </section>
 
-    <section class="metrics" id="metrics" hidden>
-      <div class="metric"><span id="m-calls">—</span><small>LLM 调用</small></div>
-      <div class="metric"><span id="m-tokens">—</span><small>tokens</small></div>
-      <div class="metric"><span id="m-iterations">—</span><small>迭代轮数</small></div>
-      <div class="metric"><span id="m-elapsed">—</span><small>耗时</small></div>
-      <div class="metric"><span id="m-judged">—</span><small>判定候选</small></div>
-      <div class="metric"><span id="m-degraded">—</span><small>降级</small></div>
+    <section class="metrics" id="metrics" hidden aria-label="运行指标">
+      <div class="metrics-heading">
+        <h3>运行账本</h3>
+        <span>本次执行</span>
+      </div>
+      <div class="metric-list">
+        <div class="metric"><span id="m-calls">—</span><small>LLM 调用</small></div>
+        <div class="metric"><span id="m-tokens">—</span><small>tokens</small></div>
+        <div class="metric"><span id="m-iterations">—</span><small>迭代轮数</small></div>
+        <div class="metric"><span id="m-elapsed">—</span><small>耗时</small></div>
+        <div class="metric"><span id="m-judged">—</span><small>判定候选</small></div>
+        <div class="metric"><span id="m-degraded">—</span><small>降级</small></div>
+      </div>
     </section>
 
     <section class="trace-wrap" id="trace-wrap" hidden>
@@ -82,34 +214,102 @@
     </section>
   </aside>
 
-  <section class="panel timeline-panel">
+  <section class="panel timeline-panel" aria-label="Search Agent 执行现场">
     <div class="panel-head">
-      <h2>Agent timeline</h2>
-      <span class="hint" id="timeline-hint">等待运行</span>
+      <div class="agent-heading">
+        <span class="agent-avatar" aria-hidden="true">SA</span>
+        <div>
+          <h2>Search Agent</h2>
+          <p>自主规划路径、调用工具、检查覆盖，需要时改变策略。</p>
+        </div>
+      </div>
+      <span class="hint" id="timeline-hint">等待任务</span>
     </div>
 
-    <div class="stage-rail" id="stage-rail"></div>
-
-    <div class="empty" id="timeline-empty">
-      <div class="pulse" aria-hidden="true"></div>
-      <p>提交一条招聘需求后，这里会实时显示<br><code>understand → plan → execute → … → finalize</code></p>
+    <div class="agent-runbar" id="agent-runbar" data-state="idle">
+      <span class="agent-runbar-pulse" aria-hidden="true"></span>
+      <div class="agent-runbar-copy" aria-live="polite">
+        <strong id="agent-state">Agent 待命</strong>
+        <span id="agent-state-detail">等待岗位简报；收到后会先拆解能力，再决定从哪里搜。</span>
+      </div>
+      <div class="agent-runbar-meta" aria-label="执行进度">
+        <span><b id="agent-stage-count">0</b> 阶段</span>
+        <span><b id="agent-round">0</b> 轮</span>
+      </div>
     </div>
-    <ol id="timeline" class="timeline" aria-live="polite"></ol>
+
+    <div class="stage-rail" id="stage-rail" aria-label="八阶段进度"></div>
+
+    <div class="timeline-viewport">
+      <div class="empty agent-ready" id="timeline-empty">
+        <div class="agent-ready-head">
+          <span class="agent-ready-mark" aria-hidden="true">
+            <svg viewBox="0 0 28 28">
+              <path d="M21.5 10.5A8 8 0 1 0 22 17"></path>
+              <path d="M22 6.5v4.5h-4.5"></path>
+              <circle cx="14" cy="14" r="2.5"></circle>
+            </svg>
+          </span>
+          <div>
+            <strong>把一个岗位交给它</strong>
+            <span>它不是把一句话翻译成一次查询，而是会规划、观察、判断，并在覆盖不足时主动换方向。</span>
+          </div>
+        </div>
+        <ol class="agent-ready-plan">
+          <li>
+            <span>01</span>
+            <div><b>先读岗位</b><small>从 JD 中抽取必备能力、硬条件与可迁移经验。</small></div>
+          </li>
+          <li>
+            <span>02</span>
+            <div><b>再定计划</b><small>按公司、行业、岗位与项目拆成互补的检索路径。</small></div>
+          </li>
+          <li>
+            <span>03</span>
+            <div><b>边搜边判断</b><small>结果不够时定位能力缺口，改写策略后继续搜，而不是重复原查询。</small></div>
+          </li>
+        </ol>
+        <div class="agent-ready-tools" aria-label="可用工具">
+          <span>SearchTool · 多路召回</span>
+          <span>Judge · 能力判定</span>
+          <span>Reflect · 覆盖反思</span>
+        </div>
+      </div>
+      <ol id="timeline" class="timeline" aria-live="polite"></ol>
+    </div>
   </section>
 
-  <section class="panel results-panel">
+  <section class="panel results-panel" aria-label="候选人结果">
     <div class="panel-head">
-      <h2>Delivered candidates</h2>
+      <div>
+        <h2>候选人档案</h2>
+        <p>按匹配证据与来源路径交付。</p>
+      </div>
       <span class="hint" id="results-hint">—</span>
     </div>
-    <div class="empty" id="results-empty">
-      <p>最终交付的候选人、匹配证据与来源路径会显示在这里。</p>
+
+    <div class="results-viewport">
+      <div class="empty results-empty" id="results-empty">
+        <svg class="empty-art dossier-art" viewBox="0 0 120 88" aria-hidden="true">
+          <rect x="18" y="12" width="84" height="64" rx="2"></rect>
+          <path d="M30 28h34M30 40h60M30 52h52M30 64h24"></path>
+          <circle cx="84" cy="28" r="7"></circle>
+        </svg>
+        <p><strong>等待 Agent 交付</strong><span>这里不会只给名字：命中能力、硬条件与来源路径会一起到达。</span></p>
+      </div>
+      <ul id="results" class="results"></ul>
     </div>
-    <ul id="results" class="results"></ul>
+
     <nav class="pager" id="pager" hidden aria-label="候选人分页">
-      <button id="prev-page" type="button">上一页</button>
+      <button id="prev-page" type="button">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m9.5 3.5-4.5 4.5 4.5 4.5"></path></svg>
+        上一页
+      </button>
       <span id="page-state">—</span>
-      <button id="next-page" type="button">下一页</button>
+      <button id="next-page" type="button">
+        下一页
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6.5 3.5 4.5 4.5-4.5 4.5"></path></svg>
+      </button>
     </nav>
   </section>
 </main>
@@ -118,6 +318,7 @@
   <span><code>SearchTool</code> · memory / SQLite / Elasticsearch</span>
   <span>SSE live events · budget-governed loop</span>
 </footer>
+</div>
 
 <noscript><div class="err-card">这个控制台需要启用 JavaScript。</div></noscript>
 <script src="/app.js"></script>

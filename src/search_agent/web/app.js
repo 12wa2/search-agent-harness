@@ -1,23 +1,38 @@
 const STAGES = [
-  ["understand", "理解岗位"],
-  ["plan", "规划路径"],
-  ["execute", "执行检索"],
-  ["judge", "能力判定"],
-  ["evaluate", "评估收敛"],
-  ["reflect", "反思缺口"],
-  ["revise", "修订策略"],
-  ["finalize", "交付"],
+  ["understand", "读取岗位"],
+  ["plan", "制定计划"],
+  ["execute", "调用工具"],
+  ["judge", "筛选候选人"],
+  ["evaluate", "检查覆盖"],
+  ["reflect", "定位缺口"],
+  ["revise", "改写策略"],
+  ["finalize", "交付名单"],
 ];
 
 const STAGE_LABEL = Object.fromEntries(STAGES);
 const STAGE_ORDER = new Map(STAGES.map(([key], i) => [key, i]));
+const STAGE_META = {
+  understand: { kind: "READ", glyph: "01" },
+  plan: { kind: "PLAN", glyph: "02" },
+  execute: { kind: "TOOL CALL", glyph: "↳" },
+  judge: { kind: "CHECK", glyph: "✓" },
+  evaluate: { kind: "DECIDE", glyph: "?" },
+  reflect: { kind: "REFLECT", glyph: "!" },
+  revise: { kind: "REVISE", glyph: "↻" },
+  finalize: { kind: "DELIVER", glyph: "◆" },
+};
 const PAGE_SIZE = 5;
 const CONVERSATION_KEY = "search-agent:conversation";
+const VIEW_KEY = "search-agent:view";
 
 const state = {
+  viewMode: "agent",
   running: false,
   controller: null,
   startedAt: 0,
+  activeRun: null,
+  lastResult: null,
+  runEvents: [],
   executeCount: 0,
   stageCount: 0,
   conversationId: null,
@@ -48,6 +63,11 @@ const metrics = $("metrics");
 const traceWrap = $("trace-wrap");
 const traceJson = $("trace-json");
 const timelineHint = $("timeline-hint");
+const agentRunbar = $("agent-runbar");
+const agentState = $("agent-state");
+const agentStateDetail = $("agent-state-detail");
+const agentStageCount = $("agent-stage-count");
+const agentRound = $("agent-round");
 const pager = $("pager");
 const pageState = $("page-state");
 const prevPageBtn = $("prev-page");
@@ -55,6 +75,32 @@ const nextPageBtn = $("next-page");
 const conversationLabel = $("conversation-label");
 const conversationHistory = $("conversation-history");
 const newConversationBtn = $("new-conversation");
+const agentView = $("agent-view");
+const consoleView = $("console-view");
+const viewAgentBtn = $("view-agent");
+const viewConsoleBtn = $("view-console");
+const chatScroll = $("chat-scroll");
+const chatIntro = $("agent-intro");
+const chatTranscript = $("chat-transcript");
+const chatForm = $("chat-form");
+const chatQueryInput = $("chat-query");
+const chatTopKInput = $("chat-top-k");
+const chatRunBtn = $("chat-run");
+const chatStopBtn = $("chat-stop");
+const chatNewBtn = $("chat-new");
+const composerMode = $("composer-mode");
+const composerNote = $("composer-note");
+
+function defaultComposerNote() {
+  return composerMode.textContent.includes("离线")
+    ? "默认使用离线脚本化 LLM 与合成候选人，无需 API Key · Enter 发送，Shift+Enter 换行"
+    : "真实 LLM 模式：每次发送都会调用模型 API · Enter 发送，Shift+Enter 换行";
+}
+
+function setComposerNote(text, { error = false } = {}) {
+  composerNote.textContent = text;
+  composerNote.classList.toggle("is-error", error);
+}
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -67,10 +113,496 @@ function chip(text, extra = "") {
   return el("span", `tag ${extra}`.trim(), text);
 }
 
+function setAgentState(stateName, title, detail) {
+  if (!agentRunbar) return;
+  agentRunbar.dataset.state = stateName;
+  agentState.textContent = title;
+  agentStateDetail.textContent = detail;
+}
+
+function setAgentProgress() {
+  if (!agentStageCount || !agentRound) return;
+  agentStageCount.textContent = String(state.stageCount);
+  agentRound.textContent = String(Math.max(0, state.executeCount));
+}
+
 function kv(label, value) {
   const wrap = el("span", "kv");
   wrap.append(el("span", "", `${label}: `), el("b", "", value));
   return wrap;
+}
+
+function setViewMode(mode, { persist = true } = {}) {
+  const next = mode === "console" ? "console" : "agent";
+  state.viewMode = next;
+  document.body.dataset.view = next;
+  if (agentView) agentView.hidden = next !== "agent";
+  if (consoleView) consoleView.hidden = next !== "console";
+  if (viewAgentBtn) {
+    const active = next === "agent";
+    viewAgentBtn.classList.toggle("is-active", active);
+    viewAgentBtn.setAttribute("aria-pressed", String(active));
+  }
+  if (viewConsoleBtn) {
+    const active = next === "console";
+    viewConsoleBtn.classList.toggle("is-active", active);
+    viewConsoleBtn.setAttribute("aria-pressed", String(active));
+  }
+  const skipLink = document.querySelector(".skip-link");
+  if (skipLink) skipLink.setAttribute("href", next === "agent" ? "#chat-query" : "#query");
+  if (persist) {
+    try {
+      sessionStorage.setItem(VIEW_KEY, next);
+    } catch (err) {
+      // View preference is optional.
+    }
+  }
+  if (next === "agent") scrollChatToEnd("auto");
+}
+
+function scrollChatToEnd(behavior = "smooth") {
+  requestAnimationFrame(() => {
+    if (!chatScroll || chatScroll.hidden) return;
+    chatScroll.scrollTo({ top: chatScroll.scrollHeight, behavior });
+  });
+}
+
+function createChatMessage(role, extraClass = "") {
+  const article = el("article", `chat-message chat-message-${role} ${extraClass}`.trim());
+  if (role === "agent") {
+    const avatar = el("span", "chat-avatar", "SA");
+    avatar.setAttribute("aria-hidden", "true");
+    const body = el("div", "chat-message-body");
+    const label = el("div", "chat-message-label");
+    const status = el("span", "chat-message-status", "执行中");
+    label.append(el("strong", "", "Search Agent"), status);
+    body.append(label);
+    article.append(avatar, body);
+    chatTranscript.append(article);
+    return { article, body, status };
+  }
+  const body = el("div", "chat-message-body");
+  article.append(body);
+  chatTranscript.append(article);
+  return { article, body, status: null };
+}
+
+function appendChatUserMessage(query, topK) {
+  const { body } = createChatMessage("user", "agent-task-message");
+  const bubble = el("div", "chat-user-bubble");
+  bubble.append(el("p", "", query));
+  const meta = el("div", "chat-user-meta");
+  meta.append(el("span", "", `目标交付 ${topK} 人`), el("span", "", "招聘需求"));
+  bubble.append(meta);
+  body.append(bubble);
+  scrollChatToEnd();
+}
+
+function appendChatPending() {
+  const { article, body } = createChatMessage("agent", "chat-pending-message");
+  const pending = el("div", "chat-typing");
+  pending.append(el("span"), el("span"), el("span"), el("small", "", "正在理解你的需求"));
+  body.append(pending);
+  scrollChatToEnd();
+  return article;
+}
+
+const CONDITION_LABEL = {
+  name: "姓名",
+  skill: "技能",
+  company: "公司",
+  position: "岗位",
+  city: "城市",
+  intention_city: "意向城市",
+  live_city: "现居城市",
+  work_years: "工作年限",
+  degree: "学历",
+  school: "学校",
+  major: "专业",
+  expected_salary: "期望薪资",
+  age: "年龄",
+  language: "语言",
+  certificate: "证书",
+};
+
+function formatCondition(condition = {}) {
+  const label = CONDITION_LABEL[condition.field] || condition.field || "条件";
+  const values = (condition.values || []).join(" / ");
+  if (condition.operator === "not") return `排除 ${values}`;
+  if (condition.field === "work_years") {
+    if (condition.operator === "gte") return `${values} 年以上经验`;
+    if (condition.operator === "lte") return `${values} 年以内经验`;
+    if (condition.operator === "range") return `${values} 年经验`;
+    return `${label} ${values}`;
+  }
+  if (condition.field === "city" || condition.field === "intention_city" || condition.field === "live_city") {
+    return `${label}：${values}`;
+  }
+  return `${label}：${values}`;
+}
+
+function renderChatCriteria(run, detail = {}) {
+  const abilities = detail.mustAbilities || [];
+  const constraints = detail.hardConstraintDetails || [];
+  const chips = run.criteriaChips;
+  chips.replaceChildren();
+
+  if (detail.jobTitle) chips.append(chip(detail.jobTitle, "criterion-title"));
+  abilities.slice(0, 8).forEach((ability) => chips.append(chip(ability, "criterion-skill")));
+  constraints.slice(0, 8).forEach((condition) => {
+    const label = formatCondition(condition);
+    chips.append(chip(label, condition.operator === "not" ? "criterion-exclude" : "criterion-condition"));
+  });
+  if (!constraints.length && detail.hardConstraints) {
+    chips.append(chip(`硬条件 ${detail.hardConstraints} 项`, "criterion-condition"));
+  }
+  if (detail.historyTurns) chips.append(chip(`承接此前 ${detail.historyTurns} 轮会话`, "criterion-history"));
+  if (!chips.childElementCount) chips.append(chip("从原始需求中提取检索条件", "criterion-condition"));
+
+  const title = detail.jobTitle ? `「${detail.jobTitle}」` : "这个岗位";
+  run.criteriaCopy.textContent = `我会优先寻找${title}方向，并重点核对以下能力与硬性条件。`;
+  run.criteriaBadge.textContent = "已完成";
+  run.criteriaBadge.classList.add("is-ready");
+  run.criteriaCard.classList.add("is-ready");
+}
+
+function chatStageCopy(stage, detail = {}) {
+  const list = (values) => (values || []).filter(Boolean).join("、");
+  if (stage === "understand") return "正在读取岗位描述，提取必备能力、硬条件和可迁移经验。";
+  if (stage === "plan") return `正在规划 ${detail.paths || 0} 条互补的搜索路径，避免只依赖一个关键词。`;
+  if (stage === "execute") {
+    return `已执行第 ${Math.max(1, state.executeCount)} 轮检索，召回 ${detail.recalled || 0} 人次，正在整理候选人证据。`;
+  }
+  if (stage === "judge") return `已逐个核对能力证据与硬条件，累计 ${detail.qualified || 0} 人通过当前门槛。`;
+  if (stage === "evaluate") {
+    if (detail.next === "reflect") return "覆盖检查发现仍有能力缺口，准备换一个搜索方向继续验证。";
+    if (detail.next === "finalize") return "能力覆盖检查通过，开始收敛名单并整理匹配依据。";
+    return `本轮覆盖检查触发终止条件${detail.stopReason ? `：${detail.stopReason}` : ""}。`;
+  }
+  if (stage === "reflect") {
+    return detail.gaps?.length
+      ? `定位到尚未覆盖的能力：${list(detail.gaps)}。下一轮会调整搜索策略。`
+      : "正在比较已命中候选人，定位仍需补齐的能力缺口。";
+  }
+  if (stage === "revise") return "已把缺口转换为新的搜索信号，并重新排列下一轮路径。";
+  if (stage === "finalize") return `正在收敛结果，本次计划交付 ${detail.total || 0} 位候选人。`;
+  if (stage.startsWith("degrade")) return `执行触发降级${detail.reason ? `：${detail.reason}` : ""}，已完成的结果会保留。`;
+  return "Agent 已记录本阶段结果，并继续判断下一步。";
+}
+
+function beginChatRun() {
+  if (state.activeRun?.chatRun) return state.activeRun.chatRun;
+  state.activeRun?.pending?.remove();
+
+  const message = createChatMessage("agent", "chat-run-message agent-task-message");
+  message.body.append(el("p", "chat-lead", "收到，我先确认一下你的招聘条件。"));
+
+  const criteriaCard = el("section", "chat-criteria-card");
+  const criteriaHead = el("div", "chat-criteria-head");
+  const criteriaTitle = el("div");
+  criteriaTitle.append(el("h3", "", "需求解析"), el("p", "chat-criteria-note", "来自本轮 understand 事件"));
+  const criteriaBadge = el("span", "chat-criteria-badge", "读取中");
+  criteriaHead.append(criteriaTitle, criteriaBadge);
+  const criteriaCopy = el("p", "chat-criteria-copy", "正在读取岗位描述，提取可以执行的条件…");
+  const criteriaChips = el("div", "chat-criteria-chips");
+  criteriaCard.append(criteriaHead, criteriaCopy, criteriaChips);
+
+  const progress = el("section", "chat-progress");
+  const progressHead = el("div", "chat-progress-head");
+  const progressTitle = el("strong", "", "Agent 正在执行");
+  const progressMeta = el("span", "", "实时");
+  progressHead.append(progressTitle, progressMeta);
+  const progressList = el("ol", "chat-progress-list");
+  progress.append(progressHead, progressList);
+
+  const details = el("details", "chat-run-details");
+  const detailsSummary = el("summary");
+  detailsSummary.append(el("span", "", "Agent 执行详情"), el("small", "", "阶段 · 路径 · Trace"));
+  const detailsBody = el("div", "chat-details-body");
+  details.append(detailsSummary, detailsBody);
+
+  message.body.append(criteriaCard, progress, details);
+  const run = {
+    ...message,
+    criteriaCard,
+    criteriaBadge,
+    criteriaCopy,
+    criteriaChips,
+    progress,
+    progressTitle,
+    progressMeta,
+    progressList,
+    details,
+    detailsSummary,
+    detailsBody,
+    resultArticle: null,
+  };
+  state.activeRun.chatRun = run;
+  scrollChatToEnd();
+  return run;
+}
+
+function addChatStage(stage, detail = {}) {
+  const run = beginChatRun();
+  if (stage === "understand") renderChatCriteria(run, detail);
+
+  for (const item of run.progressList.querySelectorAll(".chat-progress-item.is-active")) {
+    item.classList.remove("is-active");
+    item.classList.add("is-done");
+  }
+  if (stage === "execute" && state.executeCount > 1) {
+    run.progressList.append(el("li", "chat-round", `第 ${state.executeCount} 轮检索`));
+  }
+  const item = el("li", "chat-progress-item is-active");
+  const marker = el("span", "chat-progress-marker");
+  const copy = el("div", "chat-progress-copy");
+  copy.append(
+    el("strong", "", STAGE_LABEL[stage] || stage),
+    el("span", "", chatStageCopy(stage, detail)),
+  );
+  item.append(marker, copy);
+  run.progressList.append(item);
+  if (stage === "finalize") {
+    item.classList.remove("is-active");
+    item.classList.add("is-done");
+  }
+  run.progressMeta.textContent = `${state.stageCount} 个阶段事件`;
+  run.progressTitle.textContent = stage === "finalize" ? "执行完成" : "Agent 正在执行";
+  rebuildChatDetails(run);
+  scrollChatToEnd();
+}
+
+function rebuildChatDetails(run) {
+  const body = run.detailsBody;
+  body.replaceChildren();
+
+  if (state.lastResult?.debug?.agentMetrics) {
+    const metrics = state.lastResult.debug.agentMetrics;
+    const meta = metrics.meta || {};
+    const rounds = metrics.rounds || {};
+    const recall = metrics.recall || {};
+    const stats = el("div", "chat-detail-metrics");
+    const add = (label, value) => {
+      const stat = el("span");
+      stat.append(el("b", "", value ?? "—"), el("small", "", label));
+      stats.append(stat);
+    };
+    add("LLM 调用", meta.llmCalls);
+    add("Tokens", `${meta.tokensEstimated ? "≈" : ""}${Number(meta.totalTokens || 0).toLocaleString()}`);
+    add("迭代轮次", rounds.iterations);
+    add("耗时", meta.elapsedMs ? `${meta.elapsedMs} ms` : "—");
+    add("通过判定", recall.judged ?? "—");
+    body.append(stats);
+  }
+
+  const timeline = el("ol", "chat-detail-timeline");
+  for (const event of state.runEvents) {
+    const item = el("li");
+    const head = el("div", "chat-detail-stage");
+    head.append(
+      el("strong", "", STAGE_LABEL[event.stage] || event.stage),
+      el("code", "", event.stage),
+      el("span", "", `+${event.at} ms`),
+    );
+    item.append(head, el("p", "", chatStageCopy(event.stage, event.detail)));
+    const parts = stageDetail(event.stage, event.detail);
+    if (parts.length) {
+      const facts = el("div", "chat-detail-facts");
+      facts.append(...parts);
+      item.append(facts);
+    }
+    const raw = el("details", "chat-raw");
+    raw.append(
+      el("summary", "", "raw event"),
+      el("pre", "", JSON.stringify(event.detail, null, 2)),
+    );
+    item.append(raw);
+    timeline.append(item);
+  }
+  body.append(timeline);
+
+  if (state.lastResult?.debug) {
+    const debug = state.lastResult.debug;
+    const raw = el("details", "chat-raw chat-raw-trace");
+    raw.append(
+      el("summary", "", "原始 agentTrace / agentMetrics"),
+      el("pre", "", JSON.stringify({
+        agentTrace: debug.agentTrace,
+        agentMetrics: debug.agentMetrics,
+        degradedReason: debug.degradedReason,
+      }, null, 2)),
+    );
+    body.append(raw);
+  }
+  run.detailsSummary.querySelector("small").textContent =
+    `${state.runEvents.length} 个阶段事件 · 路径 · Trace`;
+}
+
+function addChatCandidateCards(run, items, offset = 0) {
+  const list = el("ul", "chat-candidates");
+  items.forEach((item, index) => {
+    const card = renderCandidate(item, offset + index + 1);
+    card.classList.add("chat-candidate");
+    const rank = card.querySelector(".rank");
+    if (rank) rank.textContent = `#${offset + index + 1}`;
+    list.append(card);
+  });
+  return list;
+}
+
+function replaceChatCandidateCards(items, offset = 0) {
+  const run = state.activeRun?.chatRun;
+  if (!run?.resultList) return;
+  run.resultList.replaceChildren();
+  items.forEach((item, index) => {
+    const card = renderCandidate(item, offset + index + 1);
+    card.classList.add("chat-candidate");
+    const rank = card.querySelector(".rank");
+    if (rank) rank.textContent = `#${offset + index + 1}`;
+    run.resultList.append(card);
+  });
+}
+
+function updateChatPager(payload = {}) {
+  const run = state.activeRun?.chatRun;
+  if (!run?.resultPager) return;
+  const totalPages = Number(payload.totalPages || payload.page?.totalPages || 1);
+  const currentPage = Number(payload.currentPage || payload.page?.currentPage || 1);
+  const total = Number(payload.total ?? payload.page?.total ?? 0);
+  const hasMore = Boolean(payload.hasMore ?? payload.page?.hasMore);
+  run.resultPager.hidden = totalPages <= 1;
+  if (totalPages <= 1) return;
+  run.resultPageState.textContent = `第 ${currentPage} / ${totalPages} 页 · 共 ${total} 人`;
+  run.resultPrevBtn.disabled = state.pageLoading || currentPage <= 1;
+  run.resultNextBtn.disabled = state.pageLoading || !hasMore;
+}
+
+function createChatPager() {
+  const pagerNode = el("nav", "chat-pager");
+  pagerNode.setAttribute("aria-label", "候选人分页");
+  const prev = el("button", "", "上一页");
+  const stateLabel = el("span", "", "—");
+  const next = el("button", "", "下一页");
+  prev.type = "button";
+  next.type = "button";
+  prev.addEventListener("click", () => loadSessionPage(Math.max(0, state.pageOffset - state.pageLimit), { updateChat: true }));
+  next.addEventListener("click", () => {
+    if (state.pageHasMore) loadSessionPage(state.pageOffset + state.pageLimit, { updateChat: true });
+  });
+  pagerNode.append(prev, stateLabel, next);
+  return { pagerNode, prev, next, stateLabel };
+}
+
+function renderChatResult(payload) {
+  const run = beginChatRun();
+  const cancelled = Boolean(payload.debug?.cancelled);
+  run.status.textContent = cancelled ? "已停止" : "已完成";
+  run.status.classList.add(cancelled ? "is-stopped" : "is-complete");
+  run.progressTitle.textContent = cancelled ? "搜索已停止" : "执行完成";
+  run.progressMeta.textContent = `${Math.max(1, state.executeCount)} 轮 · ${state.stageCount} 个阶段事件`;
+
+  const message = createChatMessage("agent", "chat-result-message agent-delivery");
+  message.status.textContent = cancelled ? "已停止" : "已完成";
+  message.status.classList.add(cancelled ? "is-stopped" : "is-complete");
+  const head = el("div", "chat-result-head");
+  const marker = el("span", "chat-result-check", cancelled ? "■" : "✓");
+  const heading = el("div");
+  heading.append(
+    el("h3", "", cancelled ? "本次搜索已停止" : "本次搜索已完成"),
+    el("p", "", cancelled
+      ? "已保留停止前完成的工作，未继续发起新的检索或模型调用。"
+      : "以下是根据当前需求筛选出的候选人。展开卡片可查看匹配证据与来源路径。"),
+  );
+  head.append(marker, heading);
+  message.body.append(head);
+
+  const metrics = payload.debug?.agentMetrics;
+  if (metrics) {
+    const stats = el("div", "chat-result-stats");
+    const add = (value, label) => {
+      const item = el("span");
+      item.append(el("b", "", value ?? "—"), el("small", "", label));
+      stats.append(item);
+    };
+    add(Number(payload.total || 0), "交付候选人");
+    add(metrics.rounds?.iterations ?? Math.max(1, state.executeCount), "检索轮次");
+    add(metrics.recall?.judged ?? "—", "通过判定");
+    message.body.append(stats);
+  }
+
+  if (payload.clarification?.needClarification) {
+    const clarify = el("div", "chat-clarification");
+    clarify.append(el("strong", "", "还需要补充一些信息"));
+    const list = el("ul");
+    for (const question of payload.clarification.questions || []) list.append(el("li", "", question));
+    clarify.append(list);
+    message.body.append(clarify);
+  } else {
+    const items = payload.items || [];
+    const list = addChatCandidateCards(run, items, Number(payload.page?.offset || 0));
+    run.resultList = list;
+    message.body.append(list);
+    const pagerParts = createChatPager();
+    run.resultPager = pagerParts.pagerNode;
+    run.resultPrevBtn = pagerParts.prev;
+    run.resultNextBtn = pagerParts.next;
+    run.resultPageState = pagerParts.stateLabel;
+    message.body.append(pagerParts.pagerNode);
+    updateChatPager(payload.page ? { ...payload.page, totalPages: payload.page.totalPages } : {});
+    if (!items.length) message.body.append(el("p", "chat-no-results", "本轮没有找到符合条件的候选人，可以补充或放宽条件后重试。"));
+  }
+  run.resultArticle = message.article;
+  rebuildChatDetails(run);
+  scrollChatToEnd();
+}
+
+function renderChatReply(payload) {
+  const pending = state.activeRun?.pending;
+  pending?.remove();
+  const message = createChatMessage("agent", "chat-reply-message");
+  message.status.textContent = INTENT_LABEL[payload.intent] || "已回复";
+  message.status.classList.add("is-complete");
+  message.body.append(el("p", "chat-reply-text", payload.message || ""));
+  message.body.append(el("p", "chat-route-note", "意图路由直接回复 · 未启动 Harness · 未调用搜索工具或 LLM"));
+  const suggestions = payload.suggestions || [];
+  if (suggestions.length) {
+    const actions = el("div", "chat-reply-suggestions");
+    for (const item of suggestions) {
+      const button = el("button", "", item.label || item.query || "示例需求");
+      button.type = "button";
+      button.addEventListener("click", () => {
+        chatQueryInput.value = item.query || "";
+        chatQueryInput.focus();
+      });
+      actions.append(button);
+    }
+    message.body.append(actions);
+  }
+  scrollChatToEnd();
+}
+
+function renderChatError(message) {
+  state.activeRun?.pending?.remove();
+  const run = state.activeRun?.chatRun;
+  if (run) run.status.textContent = "中断";
+  const chatMessage = createChatMessage("agent", "chat-error-message");
+  chatMessage.status.textContent = "执行中断";
+  chatMessage.status.classList.add("is-stopped");
+  chatMessage.body.append(
+    el("h3", "", "这次执行没有完成"),
+    el("p", "", message),
+  );
+  scrollChatToEnd();
+}
+
+function resetChatView() {
+  chatTranscript.replaceChildren();
+  chatIntro.hidden = false;
+  chatQueryInput.value = "";
+  state.activeRun = null;
+  state.lastResult = null;
+  state.runEvents = [];
+  if (state.viewMode === "agent") chatScroll.scrollTop = 0;
 }
 
 function loadConversationState() {
@@ -103,7 +635,7 @@ function saveConversationState() {
 
 function renderConversation() {
   const round = Math.max(1, state.conversationTurns || 1);
-  conversationLabel.textContent = state.conversationId
+  conversationLabel.textContent = state.conversationId && round > 1
     ? `第 ${round} 轮 · 续接当前会话`
     : "新会话 · 第 1 轮";
   conversationHistory.replaceChildren();
@@ -170,11 +702,19 @@ function markRail(stage) {
   }
 }
 
+function completeRail() {
+  for (const item of document.querySelectorAll(".rail-item")) {
+    item.classList.add("hit");
+    item.classList.remove("active");
+  }
+}
+
 function resetUI() {
   timeline.replaceChildren();
   results.replaceChildren();
   timelineEmpty.hidden = true;
   resultsEmpty.hidden = true;
+  setResultsEmptyCopy("等待 Agent 交付", "这里不会只给名字：命中能力、硬条件与来源路径会一起到达。");
   metrics.hidden = true;
   traceWrap.hidden = true;
   traceJson.textContent = "";
@@ -191,6 +731,8 @@ function resetUI() {
   for (const item of document.querySelectorAll(".rail-item")) {
     item.classList.remove("hit", "active");
   }
+  setAgentProgress();
+  setAgentState("idle", "Agent 待命", "等待岗位简报；收到后会先拆解能力，再决定从哪里搜。");
 }
 
 function setRunning(active) {
@@ -199,9 +741,15 @@ function setRunning(active) {
   stopBtn.hidden = !active;
   stopBtn.disabled = false;
   newConversationBtn.disabled = active;
+  if (chatRunBtn) chatRunBtn.disabled = active;
+  if (chatStopBtn) {
+    chatStopBtn.hidden = !active;
+    chatStopBtn.disabled = false;
+  }
+  if (chatNewBtn) chatNewBtn.disabled = active;
   runHint.classList.remove("error");
   if (active) {
-    runHint.textContent = "Agent 正在运行：阶段事件会实时出现在右侧时间线。";
+    runHint.textContent = "Agent 正在运行：阶段事件会实时出现在中间轨迹。";
   }
 }
 
@@ -211,7 +759,13 @@ function addRoundDivider(round) {
 }
 
 function addWaiting() {
-  const waiting = el("li", "waiting", "等待下一个阶段事件…");
+  const waiting = el("li", "waiting");
+  const copy = el("div", "waiting-copy");
+  copy.append(
+    el("strong", "", "Agent 正在继续执行"),
+    el("span", "", "下一阶段完成后会自动更新，不需要刷新页面。"),
+  );
+  waiting.append(copy);
   waiting.id = "waiting-row";
   timeline.append(waiting);
 }
@@ -231,14 +785,20 @@ function stageDetail(stage, detail = {}) {
     if (detail.historyTurns) parts.push(kv("历史上下文", `${detail.historyTurns} 轮`));
   } else if (stage === "plan") {
     if (detail.paths !== undefined) parts.push(kv("路径", detail.paths));
-    for (const rationale of detail.rationales || []) {
-      const line = el("span", "line", `↳ ${rationale}`);
-      parts.push(line);
+    if (detail.rationales?.length) {
+      const stack = el("div", "plan-path-list");
+      detail.rationales.forEach((rationale, index) => {
+        const item = el("div", "plan-path");
+        item.append(
+          el("span", "plan-path-no", String(index + 1).padStart(2, "0")),
+          el("span", "plan-path-copy", rationale),
+        );
+        stack.append(item);
+      });
+      parts.push(stack);
     }
   } else if (stage === "execute") {
-    if (detail.paths !== undefined) parts.push(kv("路径", detail.paths));
-    if (detail.recalled !== undefined) parts.push(kv("召回人次", detail.recalled));
-    if (detail.qualities?.length) parts.push(kv("质量", list(detail.qualities)));
+    parts.push(toolCallCard(detail));
   } else if (stage === "judge") {
     if (detail.qualified !== undefined) parts.push(kv("累计判定", detail.qualified));
   } else if (stage === "evaluate") {
@@ -264,6 +824,147 @@ function stageDetail(stage, detail = {}) {
   return parts;
 }
 
+function toolCallCard(detail = {}) {
+  const card = el("div", "tool-call");
+  const head = el("div", "tool-call-head");
+  head.append(
+    el("span", "tool-call-icon", "↳"),
+    el("strong", "", "SearchTool"),
+    el("code", "", "search_batch"),
+    el("span", "tool-call-status", "RETURNED"),
+  );
+  const metrics = el("div", "tool-call-metrics");
+  const addMetric = (label, value) => {
+    if (value === undefined || value === null) return;
+    const metric = el("span", "tool-call-metric");
+    metric.append(el("small", "", label), el("b", "", value));
+    metrics.append(metric);
+  };
+  addMetric("PATHS", detail.paths);
+  addMetric("RECALLED", detail.recalled);
+  addMetric("QUALITY", (detail.qualities || []).join(" · "));
+  card.append(head, metrics);
+  return card;
+}
+
+function stageNarrative(stage, detail = {}) {
+  const list = (values) => (values || []).filter(Boolean).join("、");
+  if (stage === "understand") {
+    const abilities = detail.mustAbilities?.length
+      ? `我锁定了 ${detail.mustAbilities.length} 项必备能力：${list(detail.mustAbilities)}。`
+      : "我先读取岗位目标，提取可以检索的能力与条件。";
+    const hard = detail.hardConstraints
+      ? `同时保留 ${detail.hardConstraints} 项硬条件。`
+      : "";
+    return `${abilities}${hard}接下来不会只搜一个关键词，而会把这些要求拆成互补路径。`;
+  }
+  if (stage === "plan") {
+    return `我形成了 ${detail.paths || 0} 条检索路径。每条路径承担不同的证据来源，先并行召回，再根据覆盖情况决定是否继续。`;
+  }
+  if (stage === "execute") {
+    return `第 ${Math.max(1, state.executeCount)} 轮检索已发起。我调用 SearchTool 同时执行 ${detail.paths || 0} 条路径，共召回 ${detail.recalled || 0} 人次，现在交给能力判定。`;
+  }
+  if (stage === "judge") {
+    return `我逐个核对候选人的能力证据与硬条件，目前累计 ${detail.qualified || 0} 人通过门槛。接下来检查这些结果是否覆盖岗位的全部要求。`;
+  }
+  if (stage === "evaluate") {
+    if (detail.next === "reflect") {
+      return "覆盖检查没有通过：现有候选人还不足以支撑交付。我会进入反思，定位缺口并改写下一轮策略。";
+    }
+    if (detail.next === "finalize") {
+      return "覆盖检查通过，现有候选已经可以交付。我会收敛名单，并把匹配证据整理完整。";
+    }
+    return `本轮评估触发终止条件${detail.stopReason ? `：${detail.stopReason}` : ""}，不再继续搜索。`;
+  }
+  if (stage === "reflect") {
+    const gaps = detail.gaps?.length ? `当前缺口是：${list(detail.gaps)}。` : "当前能力覆盖仍有缺口。";
+    return `我比较了已命中的候选人，发现共同特征还不能覆盖全部要求。${gaps}下一轮需要换一个搜索方向，而不是重复原查询。`;
+  }
+  if (stage === "revise") {
+    const signals = detail.softSignals ? `我把缺口转成 ${detail.softSignals} 个新的软信号，` : "我更新了检索条件，";
+    const convergence = detail.converged ? "画像已经收敛，准备再验证一轮。" : "画像尚未收敛，继续进行下一轮验证。";
+    return `${signals}并重新排序搜索路径。${convergence}`;
+  }
+  if (stage === "finalize") {
+    return `搜索闭环结束。本轮最终交付 ${detail.total || 0} 位候选人，共收敛 ${detail.searchTotal || 0} 条检索结果，匹配证据与来源路径已经整理完成。`;
+  }
+  if (stage.startsWith("degrade")) {
+    return `执行过程中触发降级${detail.reason ? `：${detail.reason}` : ""}。系统保留了已完成的结果，并记录降级原因。`;
+  }
+  return "Agent 已记录本阶段结果，并继续判断下一步。";
+}
+
+function stageRunDetail(stage, detail = {}) {
+  if (stage === "understand") return "正在读取岗位要求，提取能力与硬条件。";
+  if (stage === "plan") return `正在形成互补的检索路径${detail.paths ? `，当前 ${detail.paths} 条` : ""}。`;
+  if (stage === "execute") return `SearchTool 正在召回候选人${detail.recalled ? `，已返回 ${detail.recalled} 人次` : ""}。`;
+  if (stage === "judge") return "正在逐个核对候选人的能力证据与硬条件。";
+  if (stage === "evaluate") return "正在判断当前结果是否覆盖全部岗位要求。";
+  if (stage === "reflect") return "正在比较已命中候选人，定位还没有覆盖的能力缺口。";
+  if (stage === "revise") return "正在把缺口转换为新的搜索信号，并重排下一轮路径。";
+  if (stage === "finalize") return "正在收敛结果，整理最终名单与匹配证据。";
+  return "正在处理阶段结果，并判断下一步。";
+}
+
+function addMission(query, topK) {
+  const li = el("li", "agent-task-message");
+  li.id = "agent-mission-row";
+  const avatar = el("span", "agent-task-avatar", "你");
+  const bubble = el("div", "agent-task-bubble");
+  const head = el("div", "agent-task-head");
+  head.append(el("strong", "", "本轮任务"), el("span", "", "交给 Search Agent"));
+  const meta = el("div", "agent-task-meta");
+  meta.append(
+    el("span", "", `目标交付 ${topK} 人`),
+    el("span", "", "自主规划 · 预算受控 · 可追溯"),
+  );
+  bubble.append(head, el("p", "agent-task-query", query), meta);
+  li.append(avatar, bubble);
+  timeline.append(li);
+  timeline.scrollTop = timeline.scrollHeight;
+}
+
+function snapTimelineToLatestCard() {
+  requestAnimationFrame(() => {
+    const maxScroll = Math.max(0, timeline.scrollHeight - timeline.clientHeight);
+    if (!maxScroll) return;
+    let target = 0;
+    for (const item of timeline.children) {
+      if (item.offsetTop <= maxScroll + 1) target = item.offsetTop;
+    }
+    timeline.scrollTop = Math.min(maxScroll, target);
+  });
+}
+
+function appendDeliverySummary(payload) {
+  const metrics = payload.debug?.agentMetrics || {};
+  const rounds = metrics.rounds?.iterations ?? state.executeCount;
+  const judged = metrics.recall?.judged;
+  const li = el("li", "agent-delivery");
+  const head = el("div", "delivery-head");
+  head.append(
+    el("span", "delivery-check", "✓"),
+    el("div", "delivery-copy"),
+  );
+  const copy = head.lastElementChild;
+  copy.append(
+    el("strong", "", "候选人名单已交付"),
+    el("span", "", "匹配证据、硬条件与来源路径已经同步到候选人档案。"),
+  );
+  const stats = el("div", "delivery-stats");
+  const addStat = (value, label) => {
+    const stat = el("span");
+    stat.append(el("b", "", value), el("small", "", label));
+    stats.append(stat);
+  };
+  addStat(Number(payload.total || 0), "交付");
+  addStat(rounds, "检索轮次");
+  if (judged !== undefined) addStat(judged, "通过判定");
+  li.append(head, stats);
+  timeline.append(li);
+  timeline.scrollTop = timeline.scrollHeight;
+}
+
 function addEvent(stage, detail) {
   removeWaiting();
   state.stageCount += 1;
@@ -273,19 +974,23 @@ function addEvent(stage, detail) {
     state.executeCount += 1;
   }
 
-  const li = el("li", "event");
+  const meta = STAGE_META[stage] || { kind: "EVENT", glyph: "·" };
+  const li = el("li", `event event-${stage}`);
   if (stage.startsWith("degrade")) li.classList.add("degrade");
   if (stage === "finalize") li.classList.add("final");
 
-  const dot = el("span", "event-dot");
+  const marker = el("span", "event-glyph", meta.glyph);
+  marker.title = meta.kind;
   const body = el("div", "event-body");
   const head = el("div", "event-head");
   head.append(
     el("span", "stage-name", STAGE_LABEL[stage] || stage),
+    el("span", "stage-kind", meta.kind),
     el("code", "", stage),
     el("span", "event-time", `+${Math.round(performance.now() - state.startedAt)} ms`),
   );
 
+  const narration = el("p", "event-narration", stageNarrative(stage, detail));
   const detailWrap = el("div", "event-detail");
   const parts = stageDetail(stage, detail);
   if (parts.length) detailWrap.append(...parts);
@@ -294,13 +999,19 @@ function addEvent(stage, detail) {
   raw.append(el("summary", "", "raw event"), el("pre", "", JSON.stringify(detail, null, 2)));
   detailWrap.append(raw);
 
-  body.append(head, detailWrap);
-  li.append(dot, body);
+  body.append(head, narration, detailWrap);
+  li.append(marker, body);
   timeline.append(li);
   timeline.scrollTop = timeline.scrollHeight;
 
   markRail(stage);
-  timelineHint.textContent = `${state.stageCount} 个阶段事件 · 第 ${Math.max(1, state.executeCount)} 轮检索`;
+  timelineHint.textContent = `Agent 正在执行 · ${state.stageCount} 个阶段事件`;
+  setAgentProgress();
+  setAgentState(
+    "running",
+    `正在${STAGE_LABEL[stage] || stage}`,
+    stageRunDetail(stage, detail),
+  );
 }
 
 function renderSkills(item) {
@@ -411,7 +1122,14 @@ function renderResults(payload) {
   $("results").scrollTop = 0;
 }
 
-async function loadSessionPage(offset) {
+function setResultsEmptyCopy(title, detail) {
+  const titleNode = resultsEmpty.querySelector("strong");
+  const detailNode = resultsEmpty.querySelector("span");
+  if (titleNode) titleNode.textContent = title;
+  if (detailNode) detailNode.textContent = detail;
+}
+
+async function loadSessionPage(offset, { updateChat = false } = {}) {
   if (!state.queryToken || state.pageLoading) return;
   state.pageLoading = true;
   updatePager({
@@ -422,6 +1140,7 @@ async function loadSessionPage(offset) {
     totalPages: state.pageTotalPages,
     hasMore: state.pageHasMore,
   });
+  if (updateChat) updateChatPager();
   try {
     const resp = await fetch(
       `/sessions/${encodeURIComponent(state.queryToken)}?offset=${offset}&limit=${state.pageLimit}`,
@@ -430,8 +1149,10 @@ async function loadSessionPage(offset) {
     if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
     const payload = await resp.json();
     renderCandidateList(payload.items || [], Number(payload.offset || 0));
+    if (updateChat) replaceChatCandidateCards(payload.items || [], Number(payload.offset || 0));
     resultsEmpty.hidden = (payload.items || []).length > 0;
     updatePager(payload);
+    if (updateChat) updateChatPager(payload);
     resultsHint.textContent = `${(payload.items || []).length} 人本页${payload.total ? ` · 共 ${payload.total} 人` : ""}`;
     $("results").scrollTop = 0;
   } catch (err) {
@@ -447,6 +1168,7 @@ async function loadSessionPage(offset) {
       totalPages: state.pageTotalPages,
       hasMore: state.pageHasMore,
     });
+    if (updateChat) updateChatPager();
   }
 }
 
@@ -509,6 +1231,7 @@ function parseFrame(frame) {
 function showError(message) {
   runHint.classList.add("error");
   runHint.textContent = message;
+  setAgentState("error", "执行中断", message);
   const card = el("li", "err-card", message);
   results.append(card);
   resultsEmpty.hidden = true;
@@ -520,26 +1243,15 @@ const INTENT_LABEL = {
   OUT_OF_SCOPE: "范围说明",
 };
 
-function addRoutingNote() {
-  const li = el("li", "routing-note");
-  const body = el("div", "routing-copy");
-  body.append(
-    el("strong", "", "意图路由已完成"),
-    el("span", "", "本次输入未启动八阶段 Agent，也未调用 LLM。"),
-  );
-  li.append(el("span", "routing-dot"), body);
-  timeline.append(li);
-  timeline.scrollTop = timeline.scrollHeight;
-}
-
 function renderAssistantReply(payload) {
   results.replaceChildren();
-  resultsEmpty.hidden = true;
+  resultsEmpty.hidden = false;
+  setResultsEmptyCopy("本次未启动检索", "这条输入由意图路由直接回复，不会调用搜索工具或生成候选人名单。");
   metrics.hidden = true;
   traceWrap.hidden = true;
-  resultsHint.textContent = "未启动 Agent";
+  resultsHint.textContent = "未启动检索";
 
-  const card = el("li", "assistant-card");
+  const card = el("li", "assistant-card agent-reply-card");
   const head = el("div", "assistant-head");
   const title = el("div", "assistant-title");
   title.append(
@@ -548,6 +1260,7 @@ function renderAssistantReply(payload) {
   );
   head.append(el("span", "assistant-mark", "SA"), title);
   card.append(head, el("p", "assistant-message", payload.message || ""));
+  card.append(el("p", "assistant-routing", "意图路由直接回复 · 未启动 Harness · 未调用 LLM"));
 
   const suggestions = payload.suggestions || [];
   if (suggestions.length) {
@@ -566,15 +1279,33 @@ function renderAssistantReply(payload) {
     }
     card.append(el("p", "suggestion-label", "可以试试"), actions);
   }
-  results.append(card);
+  timeline.append(card);
+  timeline.scrollTop = timeline.scrollHeight;
 }
 
 async function runSearch(query, topK) {
   if (state.running) return;
   resetUI();
+  queryInput.value = query;
+  chatQueryInput.value = query;
+  topKInput.value = topK;
+  chatTopKInput.value = topK;
+  chatIntro.hidden = true;
+  state.runEvents = [];
+  state.lastResult = null;
+  appendChatUserMessage(query, topK);
+  state.activeRun = {
+    query,
+    topK,
+    startedAt: performance.now(),
+    pending: appendChatPending(),
+    chatRun: null,
+  };
   setRunning(true);
   state.startedAt = performance.now();
   timelineHint.textContent = "连接中…";
+  setAgentState("running", "正在接管任务", "Agent 正在解析岗位简报并准备检索策略。");
+  addMission(query, topK);
   addWaiting();
 
   const controller = new AbortController();
@@ -615,12 +1346,20 @@ async function runSearch(query, topK) {
         const { event, payload } = parsed;
         if (event === "stage") {
           addEvent(payload.stage, payload.detail);
+          state.runEvents.push({
+            stage: payload.stage,
+            detail: payload.detail || {},
+            at: Math.round(performance.now() - state.startedAt),
+          });
+          addChatStage(payload.stage, payload.detail || {});
         } else if (event === "reply") {
           sawReply = true;
           removeWaiting();
-          addRoutingNote();
+          document.getElementById("agent-mission-row")?.remove();
           renderAssistantReply(payload);
+          renderChatReply(payload);
           timelineHint.textContent = "已回复 · Agent 未启动";
+          setAgentState("routed", "未启动 Agent", "意图路由直接回复，本次没有调用模型或检索工具。");
         } else if (event === "result") {
           sawResult = true;
           sawCancelled = Boolean(payload.debug && payload.debug.cancelled);
@@ -630,24 +1369,39 @@ async function runSearch(query, topK) {
             saveConversationState();
           }
           state.queryToken = payload.queryToken || null;
+          state.lastResult = payload;
           removeWaiting();
           renderResults(payload);
           renderMetrics(payload);
           renderTrace(payload);
+          renderChatResult(payload);
+          if (!sawCancelled) appendDeliverySummary(payload);
+          if (!sawCancelled) completeRail();
+          if (!sawCancelled) snapTimelineToLatestCard();
           if (!sawCancelled) {
             rememberConversationTurn(query, Number(payload.total || 0));
           }
           timelineHint.textContent = sawCancelled
             ? "已取消 · 未产出部分结果"
             : `完成 · ${state.stageCount} 个阶段事件 · ${Math.max(1, state.executeCount)} 轮`;
+          setAgentProgress();
+          setAgentState(
+            sawCancelled ? "stopped" : "completed",
+            sawCancelled ? "已请求停止" : "本轮完成",
+            sawCancelled
+              ? "当前阶段结束后会停止后续检索与模型调用。"
+              : `已交付 ${Number(payload.total || 0)} 位候选人，匹配证据与来源路径已同步。`,
+          );
         } else if (event === "error") {
           sawError = true;
           showError(`Agent 执行失败：${payload.message || "unknown error"}`);
+          renderChatError(`Agent 执行失败：${payload.message || "unknown error"}`);
         }
       }
     }
     if (!sawResult && !sawReply && !sawError && state.running) {
       showError("连接已结束，但没有收到最终结果。");
+      renderChatError("连接已结束，但没有收到最终结果。");
     }
     if (sawResult && sawCancelled) {
       runHint.textContent = "已取消。后端会在当前阶段结束后停止后续工作。";
@@ -659,8 +1413,11 @@ async function runSearch(query, topK) {
   } catch (err) {
     if (err.name === "AbortError") {
       runHint.textContent = "已请求停止：当前阶段结束后不会再发起新的检索或模型调用。";
+      setAgentState("stopped", "正在停止", "当前阶段结束后不会再发起新的检索或模型调用。");
+      if (state.activeRun?.chatRun) state.activeRun.chatRun.status.textContent = "停止中";
     } else {
       showError(`请求失败：${err.message}`);
+      renderChatError(`请求失败：${err.message}`);
     }
   } finally {
     state.controller = null;
@@ -673,28 +1430,55 @@ function currentQuery() {
   return queryInput.value.trim();
 }
 
+function startNewConversation() {
+  if (state.running) return;
+  resetConversation();
+  resetUI();
+  resetChatView();
+  timelineEmpty.hidden = false;
+  resultsEmpty.hidden = false;
+  runHint.classList.remove("error");
+  runHint.textContent = "已开启新会话。下一条需求不会引用之前的上下文。";
+  if (state.viewMode === "agent") chatQueryInput.focus();
+  else queryInput.focus();
+}
+
 async function loadHealth() {
   try {
     const resp = await fetch("/healthz");
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const health = await resp.json();
-    const mode = health.mode === "offline" ? "offline demo" : "real LLM";
+    const mode = health.mode === "offline" ? "离线演示" : "真实模型";
     const modeChip = $("mode-chip");
     modeChip.replaceChildren();
     modeChip.append(el("i"), document.createTextNode(` ${mode}`));
     modeChip.classList.add("ok");
     $("backend-chip").textContent = health.backend || "backend —";
     $("version-chip").textContent = health.version ? `v${health.version}` : "v—";
+    composerMode.textContent = mode;
     if (!state.running) {
       runHint.textContent =
         health.mode === "offline"
           ? "离线模式：脚本化 LLM + 合成候选人，零 API key · Ctrl+Enter 运行。"
           : "真实 LLM 模式：每次运行都会调用模型 API · Ctrl+Enter 运行。";
+      setComposerNote(defaultComposerNote());
     }
   } catch (err) {
     $("mode-chip").classList.add("err");
     $("mode-chip").textContent = "offline";
   }
+}
+
+function initViewMode() {
+  const params = new URLSearchParams(location.search);
+  let saved = null;
+  try {
+    saved = sessionStorage.getItem(VIEW_KEY);
+  } catch (err) {
+    // Default to the conversational view when storage is unavailable.
+  }
+  const requested = params.get("view") || saved || "agent";
+  setViewMode(requested, { persist: false });
 }
 
 function bindEvents() {
@@ -727,6 +1511,40 @@ function bindEvents() {
     }
   });
 
+  chatForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const query = chatQueryInput.value.trim();
+    if (!query) {
+      chatQueryInput.focus();
+      setComposerNote("请先描述目标岗位或需要的能力。", { error: true });
+      return;
+    }
+    setComposerNote(defaultComposerNote());
+    const topK = Math.max(1, Math.min(50, Number(chatTopKInput.value) || 20));
+    chatTopKInput.value = topK;
+    runSearch(query, topK);
+    chatQueryInput.value = "";
+  });
+
+  chatQueryInput.addEventListener("input", () => {
+    if (composerNote.classList.contains("is-error")) setComposerNote(defaultComposerNote());
+  });
+
+  chatQueryInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      chatForm.requestSubmit();
+    }
+  });
+
+  chatStopBtn.addEventListener("click", () => {
+    if (!state.controller) return;
+    chatStopBtn.disabled = true;
+    runHint.classList.remove("error");
+    runHint.textContent = "正在停止：等待当前阶段结束…";
+    state.controller.abort();
+  });
+
   for (const button of document.querySelectorAll(".example")) {
     button.addEventListener("click", () => {
       queryInput.value = button.dataset.q || "";
@@ -734,17 +1552,19 @@ function bindEvents() {
     });
   }
 
-  newConversationBtn.addEventListener("click", () => {
-    if (state.running) return;
-    resetConversation();
-    resetUI();
-    queryInput.value = "";
-    timelineEmpty.hidden = false;
-    resultsEmpty.hidden = false;
-    runHint.classList.remove("error");
-    runHint.textContent = "已开启新会话。下一条需求不会引用之前的上下文。";
-    queryInput.focus();
-  });
+  for (const button of document.querySelectorAll(".chat-example")) {
+    button.addEventListener("click", () => {
+      chatQueryInput.value = button.dataset.q || "";
+      chatQueryInput.focus();
+      scrollChatToEnd("smooth");
+    });
+  }
+
+  viewAgentBtn.addEventListener("click", () => setViewMode("agent"));
+  viewConsoleBtn.addEventListener("click", () => setViewMode("console"));
+
+  newConversationBtn.addEventListener("click", startNewConversation);
+  chatNewBtn.addEventListener("click", startNewConversation);
 
   prevPageBtn.addEventListener("click", () => {
     loadSessionPage(Math.max(0, state.pageOffset - state.pageLimit));
@@ -771,5 +1591,6 @@ loadConversationState();
 buildRail();
 renderConversation();
 bindEvents();
+initViewMode();
 initFromUrl();
 loadHealth();

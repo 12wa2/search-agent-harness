@@ -150,6 +150,9 @@ def test_root_serves_the_web_console(client: TestClient) -> None:
     assert resp.headers["content-type"].startswith("text/html")
     assert "Search Agent" in resp.text
     assert "app.js" in resp.text
+    assert 'id="agent-view"' in resp.text
+    assert "你好，我可以帮你寻找合适的候选人。" in resp.text
+    assert "执行观测" in resp.text
 
 
 def test_post_search_stream_emits_stage_and_result_frames(client: TestClient) -> None:
@@ -164,6 +167,7 @@ def test_post_search_stream_emits_stage_and_result_frames(client: TestClient) ->
 
     assert '"stage": "understand"' in text
     assert '"stage": "finalize"' in text
+    assert '"hardConstraintDetails"' in text
     result_frames = [c for c in text.split("\n\n") if c.startswith("event: result")]
     assert result_frames, text[:500]
     data_line = next(line for line in result_frames[0].splitlines() if line.startswith("data: "))
@@ -182,6 +186,11 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "async function runSearch" in script.text
     assert "conversationId" in script.text
     assert "/sessions/" in script.text
+    assert "agent-task-message" in script.text
+    assert "tool-call" in script.text
+    assert "agent-delivery" in script.text
+    assert "chat-progress-item" in script.text
+    assert "renderChatResult" in script.text
 
     styles = client.get("/styles.css")
     assert styles.status_code == 200

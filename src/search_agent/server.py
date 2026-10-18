@@ -60,6 +60,9 @@ def _stage_payload(event: str, state: dict[str, Any]) -> dict[str, Any]:
             "jobTitle": job.title,
             "mustAbilities": [a.name for a in job.must_abilities],
             "hardConstraints": len(job.hard_constraints),
+            "hardConstraintDetails": [
+                constraint.model_dump() for constraint in job.hard_constraints
+            ],
             "historyTurns": len((state.get("conversation_history") or [])[-3:]),
         }
     if event == "plan":
