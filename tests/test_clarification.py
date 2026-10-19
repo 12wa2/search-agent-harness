@@ -43,6 +43,13 @@ def test_follow_up_turn_does_not_reinterrupt_the_conversation() -> None:
     assert detect_skill_only_clarification("找会 Python 的", has_history=True) is None
 
 
+def test_generic_search_verb_does_not_imply_a_role() -> None:
+    clarification = detect_skill_only_clarification("帮我找会 Python 的")
+
+    assert clarification is not None
+    assert len(clarification.options) == 3
+
+
 def test_java_does_not_match_javascript() -> None:
     assert detect_skill_only_clarification("JavaScript") is not None
     assert detect_skill_only_clarification("Java") is not None

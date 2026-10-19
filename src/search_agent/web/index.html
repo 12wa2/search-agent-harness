@@ -38,7 +38,7 @@
     </button>
   </nav>
   <div class="statuses" aria-label="运行状态">
-    <button class="chip chip-live mode-toggle" id="mode-chip" type="button" aria-pressed="false" disabled title="正在读取运行模式">
+    <button class="chip chip-live mode-toggle" id="mode-chip" type="button" aria-pressed="false" aria-label="运行模式读取中" disabled>
       <i aria-hidden="true"></i>
       <span id="mode-label">连接中…</span>
       <span class="mode-switch-glyph" aria-hidden="true">⇄</span>
@@ -328,6 +328,34 @@
   <span>SSE live events · budget-governed loop</span>
 </footer>
 </div>
+
+<dialog class="mode-confirm" id="online-mode-dialog" aria-labelledby="online-mode-title" aria-describedby="online-mode-copy">
+  <form method="dialog" class="mode-confirm-card">
+    <div class="mode-confirm-head">
+      <span class="mode-confirm-icon" aria-hidden="true">⇄</span>
+      <div>
+        <span class="mode-confirm-kicker">运行模式</span>
+        <h2 id="online-mode-title">切换到完整在线</h2>
+      </div>
+    </div>
+    <p class="mode-confirm-copy" id="online-mode-copy">下一次搜索会调用真实模型和 Elasticsearch。</p>
+    <div class="mode-confirm-facts">
+      <div class="mode-confirm-fact">
+        <span class="mode-confirm-fact-label">费用</span>
+        <span>可能产生第三方 API 费用</span>
+      </div>
+      <div class="mode-confirm-fact">
+        <span class="mode-confirm-fact-label">数据</span>
+        <span>查询和候选人字段会发送到模型服务</span>
+      </div>
+    </div>
+    <p class="mode-confirm-note">只影响后续搜索，不会重跑当前任务。</p>
+    <div class="mode-confirm-actions">
+      <button class="mode-confirm-cancel" type="submit" value="cancel" autofocus>取消</button>
+      <button class="mode-confirm-submit" type="submit" value="confirm">确认切换</button>
+    </div>
+  </form>
+</dialog>
 
 <noscript><div class="err-card">这个控制台需要启用 JavaScript。</div></noscript>
 <script src="/app.js"></script>

@@ -108,6 +108,7 @@ const composerMode = $("composer-mode");
 const composerNote = $("composer-note");
 const modeChip = $("mode-chip");
 const modeLabel = $("mode-label");
+const onlineModeDialog = $("online-mode-dialog");
 
 function defaultComposerNote() {
   return state.runtimeMode === "offline" || !state.runtimeMode
@@ -133,7 +134,8 @@ function renderRuntimeMode({ healthy = true } = {}) {
   if (!mode) {
     modeChip.dataset.mode = "";
     modeChip.setAttribute("aria-pressed", "false");
-    modeChip.title = healthy ? "正在读取运行模式" : "无法读取运行模式";
+    modeChip.removeAttribute("title");
+    modeChip.setAttribute("aria-label", healthy ? "运行模式读取中" : "运行模式状态未知");
     if (modeLabel) modeLabel.textContent = healthy ? "读取中…" : "状态未知";
     composerMode.textContent = healthy ? "读取中…" : "状态未知";
     syncModeToggleState();
@@ -148,14 +150,14 @@ function renderRuntimeMode({ healthy = true } = {}) {
   if (modeLabel) modeLabel.textContent = label;
   composerMode.textContent = label;
 
-  let title = `运行模式：${label}。点击切换到${targetLabel}；LLM、检索工具与候选人库会一起切换。`;
+  let ariaLabel = `当前${label}，点击切换到${targetLabel}`;
   if (state.running) {
-    title = `运行模式：${label}。Agent 运行中，完成或停止后可切换。`;
+    ariaLabel = `当前${label}，Agent 运行中，完成或停止后可切换`;
   } else if (offline && !state.onlineConfigured) {
-    title = "运行模式：快速演示。完整在线尚未配置；点击查看配置提示。";
+    ariaLabel = "当前快速演示，完整在线尚未配置，点击查看说明";
   }
-  modeChip.title = title;
-  modeChip.setAttribute("aria-label", title);
+  modeChip.removeAttribute("title");
+  modeChip.setAttribute("aria-label", ariaLabel);
   syncModeToggleState();
 }
 
@@ -181,10 +183,37 @@ function setRuntimeNotice(text, { error = false } = {}) {
   setComposerNote(text, { error });
 }
 
+function confirmOnlineMode() {
+  if (!onlineModeDialog) return Promise.resolve(true);
+  if (typeof onlineModeDialog.showModal !== "function") {
+    return Promise.resolve(
+      window.confirm(
+        "完整在线会调用真实模型并连接 Elasticsearch，可能产生 API 费用。切换只影响后续搜索，是否继续？",
+      ),
+    );
+  }
+  return new Promise((resolve) => {
+    const handleClose = () => {
+      onlineModeDialog.removeEventListener("close", handleClose);
+      resolve(onlineModeDialog.returnValue === "confirm");
+    };
+    onlineModeDialog.returnValue = "cancel";
+    onlineModeDialog.addEventListener("close", handleClose);
+    onlineModeDialog.showModal();
+  });
+}
+
 async function toggleRuntimeMode() {
   if (!state.runtimeMode || state.running || state.modeSwitching) return;
   const target = state.runtimeMode === "offline" ? "online" : "offline";
   const targetLabel = target === "online" ? "完整在线" : "快速演示";
+  if (target === "online") {
+    const confirmed = await confirmOnlineMode();
+    if (!confirmed || state.running || state.modeSwitching) {
+      if (!confirmed) setRuntimeNotice("已保留快速演示模式，未发起在线请求。");
+      return;
+    }
+  }
   state.modeSwitching = true;
   renderRuntimeMode();
   try {

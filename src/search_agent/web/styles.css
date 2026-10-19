@@ -4597,3 +4597,188 @@ body[data-view="agent"] #version-chip {
     gap: 9px;
   }
 }
+
+.mode-confirm {
+  position: fixed;
+  inset: 82px max(clamp(16px, 2.2vw, var(--shell-gutter)), calc((100vw - var(--shell-max)) / 2 + var(--shell-gutter))) auto auto;
+  width: min(calc(100vw - 32px), 390px);
+  max-width: 390px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.mode-confirm::backdrop {
+  background: rgba(18, 38, 34, 0.12);
+}
+
+.mode-confirm-card {
+  max-height: min(78dvh, 540px);
+  padding: 18px;
+  overflow: auto;
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 18px 48px rgba(18, 38, 34, 0.18);
+}
+
+.mode-confirm-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.mode-confirm-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border: 1px solid var(--accent-line);
+  border-radius: 10px;
+  background: var(--accent-wash);
+  color: var(--accent-strong);
+  font: 700 16px/1 var(--mono);
+}
+
+.mode-confirm-kicker {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--accent);
+  font: 700 9px/1.2 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.mode-confirm h2 {
+  margin: 0;
+  font: 700 18px/1.2 var(--serif);
+  letter-spacing: -0.02em;
+}
+
+.mode-confirm-copy {
+  margin: 13px 0 12px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.mode-confirm-facts {
+  display: grid;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--rule-soft);
+  border-radius: 10px;
+  background: var(--surface-tint);
+}
+
+.mode-confirm-fact {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  padding: 9px 11px;
+  border-top: 1px solid var(--rule-soft);
+  background: var(--surface);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.mode-confirm-fact:first-child {
+  border-top: 0;
+}
+
+.mode-confirm-fact-label {
+  color: var(--accent-strong);
+  font: 700 9.5px/1.7 var(--mono);
+  letter-spacing: 0.06em;
+}
+
+.mode-confirm-fact span:last-child {
+  color: var(--muted);
+}
+
+.mode-confirm-note {
+  margin: 10px 0 0;
+  color: var(--quiet);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.mode-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.mode-confirm-actions button {
+  min-height: 36px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out,
+    transform 150ms ease-out;
+}
+
+.mode-confirm-actions button:active {
+  transform: translateY(1px);
+}
+
+.mode-confirm-cancel {
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.mode-confirm-cancel:hover {
+  border-color: var(--quiet);
+  background: var(--surface-tint);
+}
+
+.mode-confirm-submit {
+  border: 1px solid var(--accent-strong);
+  background: var(--accent);
+  color: var(--surface);
+}
+
+.mode-confirm-submit:hover {
+  background: var(--accent-strong);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .mode-confirm[open] .mode-confirm-card {
+    animation: mode-confirm-in 160ms ease-out both;
+  }
+}
+
+@keyframes mode-confirm-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 640px) {
+  .mode-confirm {
+    inset: auto 12px 12px;
+    width: auto;
+    max-width: none;
+  }
+
+  .mode-confirm-actions {
+    flex-direction: column-reverse;
+  }
+
+  .mode-confirm-actions button {
+    width: 100%;
+  }
+}

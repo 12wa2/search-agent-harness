@@ -300,6 +300,7 @@ def test_root_serves_the_web_console(client: TestClient) -> None:
     assert "app.js" in resp.text
     assert 'id="agent-view"' in resp.text
     assert 'id="mode-chip"' in resp.text
+    assert 'id="online-mode-dialog"' in resp.text
     assert "mode-toggle" in resp.text
     assert "你好，我可以帮你寻找合适的候选人。" in resp.text
     assert "执行观测" in resp.text
@@ -337,6 +338,8 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "conversationId" in script.text
     assert "/sessions/" in script.text
     assert "agent-task-message" in script.text
+    assert "confirmOnlineMode" in script.text
+    assert "onlineModeDialog.showModal" in script.text
     assert "tool-call" in script.text
     assert "agent-delivery" in script.text
     assert "chat-progress-item" in script.text
@@ -350,7 +353,9 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "onlineConfigured" in script.text
     assert "快速演示" in script.text
     assert "完整在线" in script.text
-    assert "LLM、检索工具与候选人库会一起切换" in script.text
+    assert 'modeChip.removeAttribute("title")' in script.text
+    assert 'modeChip.setAttribute("aria-label"' in script.text
+    assert "LLM、检索工具与候选人库会一起切换" not in script.text
 
     index = client.get("/")
     assert "快速演示" in index.text
@@ -366,6 +371,7 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert ".chat-progress-track" in styles.text
     assert ".chat-delivery-overview" in styles.text
     assert ".clarification-options" in styles.text
+    assert ".mode-confirm-actions" in styles.text
 
 
 def test_search_response_exposes_delivery_target_and_end_reason(client: TestClient) -> None:

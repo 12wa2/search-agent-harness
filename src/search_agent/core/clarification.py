@@ -87,10 +87,10 @@ def detect_skill_only_clarification(
 ) -> Clarification | None:
     """Return clarification options only for an underspecified skill-only query.
 
-    Role, seniority, location, education, and search action words are treated as
-    enough context to let the normal Agent pipeline decide what to do. This
-    keeps ambiguous follow-up searches out of the clarification path while still
-    catching the common "find Python" case.
+    Role, seniority, location, education, and explicit recruitment signals are
+    treated as enough context to let the normal Agent pipeline decide what to
+    do. Generic search verbs such as "find" or "search" do not imply a role, so
+    a skill-only brief still asks for the missing direction.
     """
     if has_history:
         return None

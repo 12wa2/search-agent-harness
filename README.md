@@ -8,7 +8,7 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-402-brightgreen)
+![Tests](https://img.shields.io/badge/tests-427-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![version](https://img.shields.io/badge/version-v0.1.0-blue)
@@ -388,7 +388,8 @@ Web 顶栏的「快速演示 / 完整在线」是可点击的预设按钮：快�
 启动时，脚本会读取仓库根目录 `.env`；检测到 `PRIMARY_LLM_API_KEY` / `FALLBACK_LLM_API_KEY` 后
 自动启动或复用本地网关，Web API 仍以快速演示启动。完整在线未配置时按钮会给出明确提示，不会静默
 降级。切换是进程内运行时状态，服务重启后回到启动参数决定的初始模式；搜索执行期间按钮和后端都会
-拒绝切换，避免同一次 trace 混用两个预设。多 worker 部署需要另做共享控制。
+拒绝切换，避免同一次 trace 混用两个预设。从快速演示切入完整在线前，前端会提示真实模型费用与
+数据处理边界；切回快速演示不增加确认步骤。多 worker 部署需要另做共享控制。
 
 ### 多轮会话与结果分页
 
@@ -671,7 +672,7 @@ $env:SEARCH_AGENT_MODEL = "search-agent-primary"
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 373 个离线测试通过（另有 24 个可选 ES 集成测试）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
+- [x] 427 个测试（其中 24 个为可选 ES 集成测试，ES 不可达时跳过）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] Web 体验：零构建双模式单页——默认对话式 Agent（需求解析 / 自然语言进度 / 内联候选人 / 可展开执行详情），

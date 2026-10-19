@@ -104,6 +104,14 @@ function Wait-ForHealth {
     return $false
 }
 
+function Open-WebConsole {
+    try {
+        Start-Process "http://127.0.0.1:8000"
+    } catch {
+        Write-Warning "Could not open the Web console automatically: $($_.Exception.Message)"
+    }
+}
+
 $gatewayConfig = Join-Path $root "gateway.local.json"
 if (-not (Test-Path -LiteralPath $gatewayConfig)) {
     $gatewayConfig = Join-Path $root "examples\gateway.docker.json"
@@ -149,6 +157,7 @@ if (Test-SearchAgentHealth -Uri "http://127.0.0.1:8000/healthz") {
         Write-Warning "API already healthy but runs an older build without dual-preset switching. Stop it and rerun this script."
     } else {
         Write-Host "API already healthy: http://127.0.0.1:8000 (mode=$($health.mode), backend=$($health.backend), onlineConfigured=$($health.onlineConfigured))"
+        Open-WebConsole
     }
     exit 0
 }
@@ -185,3 +194,4 @@ if (-not (Wait-ForHealth -Uri "http://127.0.0.1:8000/healthz")) {
 }
 Write-Host "API started (PID $($api.Id)): http://127.0.0.1:8000"
 Write-Host "Open http://127.0.0.1:8000 for the Web console."
+Open-WebConsole
