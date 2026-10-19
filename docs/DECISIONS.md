@@ -172,11 +172,11 @@ dev 依赖里带上它们以在 CI 跑接口测试；核心安装仍然只有 py
 
 **背景**：README 的「一条命令跑起来」如果止步于 `pip install`，使用者仍要自己装 ES、配地址、灌数据；「能被部署」是 harness 从库变成系统的一道坎，也是最容易在面试里被追问的部分。
 
-**选择**：`Dockerfile` 两阶段——build 阶段 `pip wheel ".[api,es]"` 产出全部 wheel，runtime 阶段只装 wheel（镜像里没有编译工具链）、非 root 运行、内置 `HEALTHCHECK`；compose 增加 `api` 服务，`depends_on` 带 `condition: service_healthy`，启动即 `--recreate-index` 重灌演示语料；后端选择收敛到 `tools/factory.py`，CLI `--backend` 与容器入口共用一条路径。
+**选择**：`Dockerfile` 两阶段——build 阶段 `pip wheel ".[api,es]"` 产出全部 wheel，runtime 阶段只装 wheel（镜像里没有编译工具链）、非 root 运行、内置 `HEALTHCHECK`；compose 增加 `api` 服务，等待 Elasticsearch 与 gateway 健康后启动，先执行 `hybrid-v2 index --recreate` 重灌 16 人演示索引，再以 `--offline` 启动快速演示预置；配置主模型 key 后，compose 把在线预置接到内部 gateway。后端选择收敛到 `tools/factory.py`，CLI `--backend` 与容器入口共用一条路径。
 
-**取舍**：镜像默认「脚本化 LLM + 真 ES 后端」，零 API key 也能复现；切真实 LLM 只需注入 `SEARCH_AGENT_API_KEY`（`serve` 检测不到 key 时自动回落 offline）。`--recreate-index` 对单实例演示是自愈，多副本部署应改成一次性 init job——这点写进了 README 的说明。
+**取舍**：镜像默认「脚本化 LLM + 16 人内存库」的快速演示，零 API key 也能复现完整八阶段链路；配置上游 key 后可在页面切到「真实 LLM + Hybrid V2 + ES」。`--recreate` 对单实例演示是自愈，多副本部署应改成一次性 init job——这点写进了 README 的说明。
 
-**影响**：`docker compose up -d --build` 之后 `/healthz` 报 `ElasticsearchSearchTool`，`POST /search` 的前三名与本地内存后端逐位一致，说明「换引擎不改结果」在容器里同样成立；后续加向量后端只需在 factory 里多一个分支。
+**影响**：`docker compose up -d --build` 之后 `/healthz` 的初始 `backend` 是 `InMemorySearchTool`，`onlineBackend` 是 `HybridV2SearchService`；配置 key 并通过 `/runtime/mode` 切换后，检索走容器内 Elasticsearch。后续加向量后端只需在 factory 里多一个分支。
 
 ## D18. 向量通道：dense_vector + kNN，与 BM25 做 RRF 融合
 

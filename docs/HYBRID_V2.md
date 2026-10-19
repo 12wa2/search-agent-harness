@@ -135,12 +135,30 @@ See `.env.example` for the complete list. The most useful knobs are:
 | `SEARCH_AGENT_ES_USERNAME` / `SEARCH_AGENT_ES_PASSWORD` | unset | basic auth |
 | `SEARCH_AGENT_ES_API_KEY` | unset | API-key auth |
 | `SEARCH_AGENT_ES_VERIFY_CERTS` | `true` | TLS verification |
+| `SEARCH_AGENT_ES_REQUEST_TIMEOUT` | `30` | Elasticsearch request timeout in seconds |
 | `SEARCH_AGENT_HYBRID_V2_TENANT_FIELD` | `company_id` | tenant filter field |
 | `SEARCH_AGENT_HYBRID_V2_VECTOR_MODE` | `flat` | vector mapping shape |
+| `SEARCH_AGENT_HYBRID_V2_BM25_ENABLED` | `true` | enable the BM25 recall branch |
+| `SEARCH_AGENT_HYBRID_V2_KNN_K` | `100` | kNN neighbours requested per semantic query |
+| `SEARCH_AGENT_HYBRID_V2_KNN_NUM_CANDIDATES` | `500` | kNN candidate window |
+| `SEARCH_AGENT_HYBRID_V2_CHEAP_POOL_SIZE` | `100` | candidates retained before expensive reranking |
+| `SEARCH_AGENT_HYBRID_V2_MATCH_RATE_BASELINE` | `40` | minimum displayed match rate before score scaling |
+| `SEARCH_AGENT_EMBEDDING_PROVIDER` | `hash` | `hash` for local determinism or `openai` |
+| `SEARCH_AGENT_EMBEDDING_MODEL` | `text-embedding-3-small` | embedding model name |
+| `SEARCH_AGENT_EMBEDDING_DIMS` | `256` | must match the indexed vectors |
+| `SEARCH_AGENT_EMBEDDING_BATCH_SIZE` | `16` | query/index embedding batch size |
 | `SEARCH_AGENT_HYBRID_V2_RERANK_PROVIDER` | `local` | local or OpenAI-compatible rerank |
 | `SEARCH_AGENT_HYBRID_V2_RERANK_SCAN_CAP` | `100` | maximum pool passed to rerank |
 | `SEARCH_AGENT_HYBRID_V2_RERANK_TARGET_N` | `20` | minimum scan target before delivery |
+| `SEARCH_AGENT_HYBRID_V2_RERANK_SHARD_SIZE` | `20` | candidates per rerank request |
+| `SEARCH_AGENT_HYBRID_V2_RERANK_MIN_CONFIDENCE` | `0.5` | confidence threshold used for quality accounting |
+| `SEARCH_AGENT_HYBRID_V2_RERANK_TIMEOUT_SEC` | `30` | per-shard rerank timeout |
+| `SEARCH_AGENT_HYBRID_V2_RERANK_WORKERS` | `4` | bounded parallel rerank workers |
 | `SEARCH_AGENT_HYBRID_V2_TAG_DICT` | unset | local JSON name-to-id tag map |
+
+The defaults in this table match `hybrid_v2/config.py`; `.env.example` lists the
+same runtime knobs alongside the agent-level LLM, budget, Redis, and container
+settings.
 
 ## Scope and limitations
 

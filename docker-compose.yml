@@ -23,10 +23,20 @@ services:
     depends_on:
       elasticsearch:
         condition: service_healthy
+      gateway:
+        condition: service_healthy
     environment:
-      - SEARCH_AGENT_ES_URL=http://elasticsearch:9200
-      - SEARCH_AGENT_ES_INDEX=search-agent-demo
-      # - SEARCH_AGENT_API_KEY=sk-...    # uncomment for a real LLM instead of the demo
+      SEARCH_AGENT_BACKEND: hybrid_v2
+      SEARCH_AGENT_ES_URL: http://elasticsearch:9200
+      SEARCH_AGENT_ES_INDEX: search-agent-demo
+      SEARCH_AGENT_HYBRID_V2_ES_URL: http://elasticsearch:9200
+      SEARCH_AGENT_HYBRID_V2_ES_INDEX: search-agent-demo
+      # The Dockerfile starts in quick-demo mode. When a primary key is present,
+      # the API is also wired to the bundled gateway for the in-page online switch.
+      SEARCH_AGENT_BASE_URL: http://gateway:4000/v1
+      SEARCH_AGENT_API_KEY: "${PRIMARY_LLM_API_KEY:+${SEARCH_AGENT_GATEWAY_API_KEY:-local-gateway-key}}"
+      SEARCH_AGENT_MODEL: search-agent-primary
+      SEARCH_AGENT_TIME_BUDGET_SEC: "180"
     ports:
       - "8000:8000"
     restart: unless-stopped

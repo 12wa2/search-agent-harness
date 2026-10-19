@@ -428,15 +428,17 @@ curl -s "http://127.0.0.1:8000/sessions/<queryToken>?offset=5&limit=5"
 
 ```bash
 docker compose up -d --build            # 首次要构建镜像，之后可去掉 --build
-curl -s http://127.0.0.1:8000/healthz   # → backend=ElasticsearchSearchTool, mode=offline
+curl -s http://127.0.0.1:8000/healthz   # → mode=offline, backend=InMemorySearchTool；onlineConfigured 表示在线预置是否可用
 curl -s -X POST http://127.0.0.1:8000/search -H "Content-Type: application/json" -d '{"query": "找有 3 年以上经验的后端工程师", "topK": 5}'
 docker compose down                     # 停止（加 -v 一并清掉 ES 数据卷）
 ```
 
 镜像为多阶段构建（build 阶段产出 wheel，runtime 阶段只装 wheel、以非 root 运行、内置
-`HEALTHCHECK`）；compose 里 `api` 服务等 ES 健康检查通过后才启动，启动时把 16 条演示语料
-灌进 ES（`--recreate-index`，可用 `command:` 覆盖）。想切真实 LLM，取消 compose 里
-`SEARCH_AGENT_API_KEY` 的注释即可——容器会自动从 offline 模式换成 OpenAI 兼容端点。
+`HEALTHCHECK`）；compose 里 `api` 服务等 ES 与 gateway 健康检查通过后才启动，先执行
+`hybrid-v2 index --recreate` 把 16 条演示语料写入 Hybrid V2 索引，再以快速演示预置启动。
+因此没有上游 key 时，完整 Agent 链路仍可零成本体验；在 `.env` 设置 `PRIMARY_LLM_API_KEY`
+（并建议设置 `FALLBACK_LLM_API_KEY`）后，compose 会同时把在线预置接到内部网关
+`http://gateway:4000/v1`，页面可直接切到真实模型 + Hybrid V2 + Elasticsearch。
 
 `gateway` 服务使用仓库内已跟踪的 `examples/gateway.docker.json`；本地
 `gateway.local.json` 继续用于命令行启动。上游 key 通过 `.env` 注入，不会进入仓库：
@@ -461,6 +463,7 @@ Copy-Item .env.example .env
 
 检测到上游 key 时，脚本会自动启动网关；4000 网关或 8000 API 已经健康时则直接复用。没有上游
 key 时会跳过网关，只启动纯离线演示。启动后需要在线模型时直接点页面按钮，不需要重新启动服务。
+健康检查通过后脚本会自动打开 `http://127.0.0.1:8000`；若浏览器未弹出，手动访问该地址即可。
 脚本会把日志写到 `logs/`。`.cmd` 包装器使用
 PowerShell 的 `-ExecutionPolicy Bypass`；如果直接运行 `.ps1`，请使用
 `powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1`。
@@ -639,6 +642,9 @@ pytest -q -m es
 | `SEARCH_AGENT_HYBRID_V2_RERANK_PROVIDER` | `local` | 本地确定性重排，或 `openai` 兼容重排 |
 | `SEARCH_AGENT_HYBRID_V2_TAG_DICT` | — | 可选的本地标签 name→id JSON 文件 |
 
+`.env.example` 提供完整模板；默认值与 `config.py`、`hybrid_v2/config.py` 和
+`llm/client.py` 中的实现保持一致。
+
 ## LLM 网关（可选）
 
 仓库新增了一个薄的 OpenAI-compatible 网关，用于统一模型别名、主备降级、Bearer
@@ -688,7 +694,8 @@ $env:SEARCH_AGENT_MODEL = "search-agent-primary"
       本地/可选 LLM 分片重排；使用用户自己的 ES 与环境变量，无内部依赖（`docs/HYBRID_V2.md`）。
 - [x] Hybrid V2 索引生命周期：内置 mapping、JSONL/JSON 批量导入、`doctor` 自检和真实 ES 端到端示例。
 - [x] 向量通道：`dense_vector` + kNN，与 BM25 做 RRF 混合召回（`examples/es_hybrid_recall.py`）。
-- [x] Docker 全栈：多阶段镜像 + compose（`api` 等待 ES 健康后启动，自动灌入演示语料）。
+- [x] Docker 全栈：多阶段镜像 + compose（`api` 等待 ES 与 gateway 健康后启动，自动灌入
+      Hybrid V2 演示索引，并支持页面切换到网关 + 真实模型）。
 - [x] Oracle 基准：种子化合成语料 + 生成器真值，去自证评测（`search-agent eval --generated / --oracle`）。
 - [x] 100 人真实模型 A/B 复核：Qwen + Hybrid V2 + ES、10 条复杂 query、逐 query trace / 成本 /
       bootstrap 区间与失败分析（`examples/bench100/`、`docs/real_llm_ab_results_100.md`）。

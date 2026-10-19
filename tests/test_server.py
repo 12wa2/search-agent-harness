@@ -351,6 +351,7 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "/runtime/mode" in script.text
     assert "toggleRuntimeMode" in script.text
     assert "onlineConfigured" in script.text
+    assert "完整在线尚未配置" in script.text
     assert "快速演示" in script.text
     assert "完整在线" in script.text
     assert 'modeChip.removeAttribute("title")' in script.text

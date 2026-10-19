@@ -207,6 +207,13 @@ async function toggleRuntimeMode() {
   if (!state.runtimeMode || state.running || state.modeSwitching) return;
   const target = state.runtimeMode === "offline" ? "online" : "offline";
   const targetLabel = target === "online" ? "完整在线" : "快速演示";
+  if (target === "online" && !state.onlineConfigured) {
+    setRuntimeNotice(
+      "完整在线尚未配置：请检查模型 Key 与 Elasticsearch 索引配置后重启服务。",
+      { error: true },
+    );
+    return;
+  }
   if (target === "online") {
     const confirmed = await confirmOnlineMode();
     if (!confirmed || state.running || state.modeSwitching) {

@@ -15,8 +15,9 @@ FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    SEARCH_AGENT_BACKEND=es \
+    SEARCH_AGENT_BACKEND=hybrid_v2 \
     SEARCH_AGENT_ES_INDEX=search-agent-demo \
+    SEARCH_AGENT_HYBRID_V2_ES_INDEX=search-agent-demo \
     SEARCH_AGENT_PORT=8000
 
 RUN apt-get update \
@@ -35,6 +36,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=6 \
   CMD curl -fsS "http://127.0.0.1:${SEARCH_AGENT_PORT}/healthz" || exit 1
 
-# The default stack talks to the compose Elasticsearch and re-seeds the demo
-# corpus on start; drop --recreate-index (or the flag) for a persistent index.
-CMD ["sh", "-c", "exec search-agent serve --host 0.0.0.0 --port $SEARCH_AGENT_PORT --backend $SEARCH_AGENT_BACKEND --es-index $SEARCH_AGENT_ES_INDEX --recreate-index"]
+# Seed the 16-candidate Hybrid V2 index, then start the Web API in its quick-demo
+# preset. The online preset and gateway are wired by compose; override this
+# command or drop --recreate for a persistent production index.
+CMD ["sh", "-c", "search-agent hybrid-v2 index --recreate && exec search-agent serve --host 0.0.0.0 --port $SEARCH_AGENT_PORT --backend $SEARCH_AGENT_BACKEND --offline"]

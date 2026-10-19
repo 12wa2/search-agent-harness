@@ -57,6 +57,7 @@
   “单次合成观测、不可与公司指标混用”的边界。实验入口新增 `--workers`，支持按 query 隔离并发。
 - **网关一键启动**（`docker-compose.yml`、`scripts/start-dev.ps1`）：Compose 新增
   `gateway` 服务，与 Elasticsearch、API 一起后台启动并配置 `restart: unless-stopped`；
+  配置上游主 key 后，API 的在线预置通过 `http://gateway:4000/v1` 调用该服务；
   Compose 使用 `examples/gateway.docker.json`，本地 CLI 继续使用 `gateway.local.json`。
   新增 Windows 本地脚本和 `.cmd` 包装器，可后台启动网关和 API，日志写入忽略的 `logs/`。
 
@@ -150,13 +151,19 @@
   `docker-compose.yml` 单节点 ES 8.15；`examples/es_end_to_end.py` 端到端演示；集成测试 `-m es` 门控，CI 新增 ES 作业。
 - **后端工厂与 CLI 选择**（`tools/factory.py`）：`search-agent search|serve --backend memory|sqlite|es`，ES 索引名可走 `SEARCH_AGENT_ES_INDEX`。
 - **Docker 全栈**：多阶段 `Dockerfile`（wheel 构建 → 非 root 运行 + `HEALTHCHECK`）+ compose `api` 服务
-  （等待 ES 健康后启动并自动灌入演示语料）：`docker compose up -d --build` 一条命令起「HTTP 服务 + ES」。
+  （等待 ES 与 gateway 健康后启动并灌入 Hybrid V2 演示索引）：`docker compose up -d --build`
+  一条命令起「HTTP 服务 + ES + LLM gateway」。
 - **向量通道与混合召回**（`tools/embedding.py`、`tools/elasticsearch.py`）：确定性哈希向量 + ES `dense_vector` kNN，
   与 BM25 按 RRF 融合（`search_semantic` / `hybrid_search`，示例 `examples/es_hybrid_recall.py`）；
   新增 5 个离线向量测试与 5 个 ES 集成用例。
 
 ### Fixed
 
+- **配置、容器与文档对齐**（`.env.example`、`docker-compose.yml`、`Dockerfile`、`web/`、`docs/`）：
+  补全 LLM 重试、预算、Redis 别名、embedding 批大小和 Hybrid V2 漏斗配置；Docker Compose
+  现在把 API 接到同栈 gateway，并用 Hybrid V2 索引承载在线预置，启动前重建 16 人演示索引。
+  修正 `/healthz` 初始 `backend` 应为 `InMemorySearchTool` 的文档口径，并同步启动脚本自动打开
+  浏览器、前端未配置提示与网关/架构说明。
 - **收敛搜索的最终交付与召回口径**（`stages/finalize.py`、`core/metrics.py`、`eval.py`）：
   收敛再搜不再只截取召回池前 `top-k` 后直接交付；完整收敛池会先进入 judge，再与路径池统一按 must
   能力覆盖、缺失能力、硬条件违规、简历证据与后端分数排序后截断。池召回指标同步纳入只出现在

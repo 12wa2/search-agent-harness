@@ -232,11 +232,13 @@ understand ──(need_clarify)──> 返回澄清问题
 `Dockerfile` 两阶段构建：build 阶段把 `.[api,es]` 解析成 wheel，runtime 阶段只安装 wheel，
 以 uid 10001 非 root 运行，内置 `HEALTHCHECK` 打 `/healthz`。
 
-compose 的 `api` 服务等待 `elasticsearch` 通过健康检查后才启动，随后执行
-`search-agent serve --host 0.0.0.0 --backend es --recreate-index`——先把 16 条演示语料灌进
-ES 索引，再对外提供 HTTP + SSE。后端统一由 `tools/factory.py` 构造，CLI 的
-`--backend memory|sqlite|es` 与容器入口走同一条代码路径；`/healthz` 回显当前后端与 LLM
-类型，便于确认容器实际接的是哪一个。
+compose 的 `api` 服务等待 `elasticsearch` 和 `gateway` 通过健康检查后才启动，随后先执行
+`search-agent hybrid-v2 index --recreate` 把 16 条演示语料灌进 Hybrid V2 索引，再以
+`search-agent serve --host 0.0.0.0 --backend hybrid_v2 --offline` 启动快速演示预置并对外提供
+HTTP + SSE。配置 `PRIMARY_LLM_API_KEY` 后，compose 会把在线预置接到内部网关；页面按钮可在
+同一个进程内切到真实模型 + Hybrid V2。后端统一由 `tools/factory.py` 构造，CLI 的
+`--backend memory|sqlite|es|hybrid_v2` 与容器入口走同一条代码路径；`/healthz` 的 `backend`
+表示当前生效工具（快速演示为 `InMemorySearchTool`），`onlineBackend` 表示可切换的在线工具。
 
 ## 13. 召回层：关键词 / 向量 / 混合（RRF）
 

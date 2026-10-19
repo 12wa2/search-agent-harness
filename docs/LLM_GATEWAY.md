@@ -48,7 +48,10 @@ PowerShell session.
 The gateway is a long-running HTTP service; it is not started automatically by
 an agent search command. The repository provides two convenience paths:
 
-Docker Compose starts Elasticsearch, the API and the gateway together:
+Docker Compose starts Elasticsearch, the API and the gateway together. The API
+seeds the Hybrid V2 demo index and starts in quick-demo mode; when
+`PRIMARY_LLM_API_KEY` is set, compose also points the API's online preset at
+`http://gateway:4000/v1` and supplies the gateway bearer token:
 
 ```bash
 docker compose up -d --build
@@ -73,7 +76,9 @@ still starts in the quick-demo preset by default. The in-page “完整在线”
 switches the complete preset for subsequent searches: online LLM, Hybrid V2 and
 the configured Elasticsearch candidate index. “快速演示” switches back to the
 scripted LLM and the 16-candidate in-memory corpus. Without an upstream key the
-gateway is skipped and the quick demo still runs.
+gateway is skipped and the quick demo still runs. After the health check passes,
+the helper opens `http://127.0.0.1:8000` in the default browser; if it does not,
+open that URL manually.
 
 The `.cmd` wrapper invokes PowerShell with `-ExecutionPolicy Bypass`; to run the
 `.ps1` directly, use `powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1`.
