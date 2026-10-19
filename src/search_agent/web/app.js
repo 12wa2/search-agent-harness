@@ -681,7 +681,9 @@ function configureChatRoute(run, detail = {}) {
   run.route = route;
   renderProgressTrack(run.progressTrack, stageKeysForRoute(route, detail.plannedStages));
   run.progressFootnote.textContent = routeFootnote(route);
-  run.progressMeta.textContent = `0 阶段 · ${routeLabel(route)}`;
+  const intent = detail.requestIntent || "SEARCH";
+  const stages = routeStageTotal(route, detail.plannedStages);
+  run.progressMeta.textContent = `${intent} · ${routeLabel(route)} · ${stages} 阶段`;
 }
 
 function addChatStage(stage, detail = {}) {

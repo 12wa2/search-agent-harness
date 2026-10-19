@@ -33,6 +33,7 @@ def test_healthz(client: TestClient) -> None:
     assert isinstance(body["onlineConfigured"], bool)
     assert body["llm"] == "ScriptedLlmClient"
     assert body["backend"] == "InMemorySearchTool"
+    assert isinstance(body["startedAt"], float)
 
 
 def test_runtime_mode_switch_uses_online_client_for_next_stream_search() -> None:
@@ -297,13 +298,15 @@ def test_root_serves_the_web_console(client: TestClient) -> None:
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
     assert "Search Agent" in resp.text
-    assert "app.js" in resp.text
+    assert "app.js?v=2" in resp.text
+    assert "styles.css?v=2" in resp.text
     assert 'id="agent-view"' in resp.text
     assert 'id="mode-chip"' in resp.text
     assert 'id="online-mode-dialog"' in resp.text
     assert "mode-toggle" in resp.text
     assert "你好，我可以帮你寻找合适的候选人。" in resp.text
     assert "执行观测" in resp.text
+    assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
 
 
 def test_post_search_stream_emits_stage_and_result_frames(client: TestClient) -> None:
@@ -333,6 +336,7 @@ def test_post_search_stream_emits_stage_and_result_frames(client: TestClient) ->
 def test_static_assets_are_served(client: TestClient) -> None:
     script = client.get("/app.js")
     assert script.status_code == 200
+    assert script.headers["cache-control"] == "no-cache, no-store, must-revalidate"
     assert "javascript" in script.headers["content-type"]
     assert "async function runSearch" in script.text
     assert "conversationId" in script.text
@@ -359,6 +363,7 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "plannedStages" in script.text
     assert "is-skipped" in script.text
     assert "updateRouteSummary" in script.text
+    assert "`${intent} · ${routeLabel(route)} · ${stages} 阶段`" in script.text
     assert 'modeChip.removeAttribute("title")' in script.text
     assert 'modeChip.setAttribute("aria-label"' in script.text
     assert "LLM、检索工具与候选人库会一起切换" not in script.text
@@ -373,6 +378,7 @@ def test_static_assets_are_served(client: TestClient) -> None:
 
     styles = client.get("/styles.css")
     assert styles.status_code == 200
+    assert styles.headers["cache-control"] == "no-cache, no-store, must-revalidate"
     assert "text/css" in styles.headers["content-type"]
     assert styles.text.strip()
     assert ".mode-toggle" in styles.text

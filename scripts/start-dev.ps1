@@ -93,6 +93,76 @@ function Test-SearchAgentHealth {
     }
 }
 
+function Get-ListeningProcessId {
+    param([int]$Port)
+    try {
+        $connection = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop |
+            Select-Object -First 1
+        if ($connection) {
+            return [int]$connection.OwningProcess
+        }
+    } catch {
+        # Fall back to netstat on systems where the TCP cmdlets need elevation.
+    }
+    $text = (netstat -ano) -join "`n"
+    $match = [regex]::Match($text, "(?m)^\s*TCP\s+\S+:$Port\s+\S+\s+LISTENING\s+(\d+)\s*$")
+    if ($match.Success) {
+        return [int]$match.Groups[1].Value
+    }
+    return $null
+}
+
+function Stop-ExistingApi {
+    $processId = Get-ListeningProcessId -Port 8000
+    if (-not $processId) {
+        return
+    }
+    Write-Host "Stopping stale API process (PID $processId)..."
+    Stop-Process -Id $processId -Force
+    for ($i = 0; $i -lt 20; $i++) {
+        Start-Sleep -Milliseconds 250
+        if (-not (Get-ListeningProcessId -Port 8000)) {
+            return
+        }
+    }
+    throw "Port 8000 is still occupied after stopping the stale API process."
+}
+
+function Get-NewestBackendWriteTime {
+    $sourceRoot = Join-Path $root "src\search_agent"
+    if (-not (Test-Path -LiteralPath $sourceRoot)) {
+        return $null
+    }
+    $newest = Get-ChildItem -LiteralPath $sourceRoot -Recurse -File -Filter "*.py" |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
+    if ($newest) {
+        return $newest.LastWriteTimeUtc
+    }
+    return $null
+}
+
+function Get-ApiRestartReason {
+    param($Health)
+    if ($null -eq $Health.startedAt) {
+        return "the running API does not report its process start time"
+    }
+    if ($null -eq $Health.onlineConfigured -or $null -eq $Health.offlineBackend) {
+        return "the running API predates runtime preset switching"
+    }
+    if ($StartOnline -and $Health.mode -ne "online") {
+        return "online mode was requested but the API is in $($Health.mode) mode"
+    }
+    $newestSource = Get-NewestBackendWriteTime
+    if ($newestSource) {
+        $startedAt = [DateTimeOffset]::FromUnixTimeSeconds([long]$Health.startedAt).UtcDateTime
+        if ($startedAt -lt $newestSource) {
+            return "backend source changed after the running API started"
+        }
+    }
+    return $null
+}
+
 function Wait-ForHealth {
     param([string]$Uri, [int]$Attempts = 30)
     for ($i = 0; $i -lt $Attempts; $i++) {
@@ -106,7 +176,7 @@ function Wait-ForHealth {
 
 function Open-WebConsole {
     try {
-        Start-Process "http://127.0.0.1:8000"
+        Start-Process "http://127.0.0.1:8000/?v=2"
     } catch {
         Write-Warning "Could not open the Web console automatically: $($_.Exception.Message)"
     }
@@ -153,13 +223,14 @@ if ($SkipApi) {
 
 if (Test-SearchAgentHealth -Uri "http://127.0.0.1:8000/healthz") {
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:8000/healthz" -TimeoutSec 2
-    if ($null -eq $health.onlineConfigured -or $null -eq $health.offlineBackend) {
-        Write-Warning "API already healthy but runs an older build without dual-preset switching. Stop it and rerun this script."
-    } else {
+    $restartReason = Get-ApiRestartReason -Health $health
+    if (-not $restartReason) {
         Write-Host "API already healthy: http://127.0.0.1:8000 (mode=$($health.mode), backend=$($health.backend), onlineConfigured=$($health.onlineConfigured))"
         Open-WebConsole
+        exit 0
     }
-    exit 0
+    Write-Host "API restart required: $restartReason."
+    Stop-ExistingApi
 }
 
 if ($gatewayHealthy) {

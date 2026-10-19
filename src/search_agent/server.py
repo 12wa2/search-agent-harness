@@ -31,6 +31,7 @@ import asyncio
 import json
 import queue
 import threading
+import time
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal
 
@@ -38,6 +39,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.responses import Response
+from starlette.types import Scope
 
 from search_agent import __version__
 from search_agent.contract.tool import SearchTool
@@ -54,6 +57,18 @@ from search_agent.tools.runtime import RuntimeSearchTool
 
 #: Console assets live inside the package so wheels and the Docker image both ship them.
 _WEB_DIR = Path(__file__).resolve().parent / "web"
+_PROCESS_STARTED_AT = time.time()
+
+
+class _NoCacheStaticFiles(StaticFiles):
+    """Keep local UI changes visible without relying on a manual hard refresh."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
 
 
 class RuntimeModeRequest(BaseModel):
@@ -275,6 +290,7 @@ def create_app(
             "offlineBackend": runtime_tool.offline_tool_name,
             "onlineBackend": runtime_tool.online_tool_name,
             "llm": runtime.active_client_name,
+            "startedAt": _PROCESS_STARTED_AT,
         }
 
     @app.get("/healthz")
@@ -371,7 +387,7 @@ def create_app(
 
     if _WEB_DIR.is_dir():
         # Mounted last so every API route above keeps precedence.
-        app.mount("/", StaticFiles(directory=str(_WEB_DIR), html=True), name="web")
+        app.mount("/", _NoCacheStaticFiles(directory=str(_WEB_DIR), html=True), name="web")
 
     return app
 

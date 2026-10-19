@@ -165,6 +165,11 @@
 
 ### Fixed
 
+- **启动脚本与浏览器缓存**（`scripts/start-dev.ps1`、`server.py`、`web/`）：再次运行启动脚本时，
+  如果仓库中的后端源码晚于当前 API 进程，脚本会自动停止旧进程并按请求模式重启，避免出现
+  “代码已更新但页面仍由旧服务响应”；`/healthz` 新增 `startedAt` 供启动器判断进程版本。
+  HTML/JS/CSS 改为 `no-cache, no-store, must-revalidate`，静态资源增加版本查询参数，确保执行观测
+  的路由卡片不会因浏览器缓存而缺失；对话视图的阶段摘要也会同步显示意图与搜索策略。
 - **配置、容器与文档对齐**（`.env.example`、`docker-compose.yml`、`Dockerfile`、`web/`、`docs/`）：
   补全 LLM 重试、预算、Redis 别名、embedding 批大小和 Hybrid V2 漏斗配置；Docker Compose
   现在把 API 接到同栈 gateway，并用 Hybrid V2 索引承载在线预置，启动前重建 16 人演示索引。
