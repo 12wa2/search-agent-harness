@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#f7faf8">
 <title>Search Agent Harness</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%2317232a'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='%23fbfaf6' stroke-width='1.4'/%3E%3Ccircle cx='16' cy='8' r='2' fill='%23a23a2c'/%3E%3Ccircle cx='16' cy='24' r='2' fill='%23a23a2c'/%3E%3Ccircle cx='8' cy='16' r='2' fill='%23a23a2c'/%3E%3Ccircle cx='24' cy='16' r='2' fill='%23a23a2c'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="/styles.css?v=3">
+<link rel="stylesheet" href="/styles.css?v=4">
 </head>
 <body>
 <a class="skip-link" href="#chat-query">跳到招聘需求</a>
@@ -49,24 +49,74 @@
 </header>
 
 <main class="agent-app" id="agent-view" aria-label="Agent 对话体验">
+  <aside class="agent-sidebar" aria-label="检索会话">
+    <button class="sidebar-new" id="sidebar-new" type="button">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"></path></svg>
+      <span>新建检索</span>
+    </button>
+
+    <section class="sidebar-section" aria-labelledby="sidebar-session-title">
+      <div class="sidebar-section-head">
+        <h2 id="sidebar-session-title">本次会话</h2>
+        <span id="agent-session-count">0 轮</span>
+      </div>
+      <ol class="agent-session-list" id="agent-session-list"></ol>
+      <p class="sidebar-empty" id="agent-session-empty">还没有检索记录。提交一条招聘需求后，这里会保留本次会话的轮次。</p>
+    </section>
+
+    <section class="sidebar-protocol" aria-labelledby="sidebar-protocol-title">
+      <span class="sidebar-protocol-label" id="sidebar-protocol-title">执行协议</span>
+      <ol>
+        <li><b>01</b><span><strong>读懂岗位</strong><small>能力、硬条件与排斥项</small></span></li>
+        <li><b>02</b><span><strong>规划路径</strong><small>互补召回，不重复原查询</small></span></li>
+        <li><b>03</b><span><strong>检查覆盖</strong><small>用事实缺口触发反思</small></span></li>
+        <li><b>04</b><span><strong>交付证据</strong><small>人、来源与记录一起到达</small></span></li>
+      </ol>
+    </section>
+
+    <div class="sidebar-foot">
+      <span class="sidebar-live" aria-hidden="true"></span>
+      <span>SSE 实时事件 · 预算约束循环</span>
+    </div>
+  </aside>
+
+  <div class="agent-main">
   <div class="chat-scroll" id="chat-scroll">
     <section class="agent-intro" id="agent-intro">
-      <div class="intro-mark" aria-hidden="true">
-        <svg viewBox="0 0 32 32">
-          <circle cx="16" cy="16" r="10"></circle>
-          <path d="M16 10.5v5.8l3.7 2.1"></path>
-          <path d="M25.5 8.5v4h-4"></path>
-        </svg>
+      <div class="intro-grid">
+        <div class="intro-main">
+          <div class="intro-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32">
+              <circle cx="16" cy="16" r="10"></circle>
+              <path d="M16 10.5v5.8l3.7 2.1"></path>
+              <path d="M25.5 8.5v4h-4"></path>
+            </svg>
+          </div>
+          <h2>今天要找什么样的人？</h2>
+          <p class="intro-copy">
+            写下目标岗位、必备能力、工作年限与排除条件。Search Agent 会先复述理解，再规划互补路径，并在覆盖不足时主动反思，而不是把一句话草率地变成一次查询。
+          </p>
+          <div class="intro-signals" aria-label="能力说明">
+            <span>8 阶段反思</span>
+            <span>证据优先</span>
+            <span>全程可审计</span>
+          </div>
+        </div>
+
+        <aside class="intro-protocol" aria-labelledby="intro-protocol-title">
+          <h3 id="intro-protocol-title">一条需求如何变成名单</h3>
+          <ol>
+            <li><span>01</span><div><strong>读懂岗位</strong><small>抽取能力、硬条件与可迁移经验</small></div></li>
+            <li><span>02</span><div><strong>规划路径</strong><small>按公司、行业和项目拆分互补检索</small></div></li>
+            <li><span>03</span><div><strong>检查覆盖</strong><small>定位缺口后改写策略，继续验证</small></div></li>
+            <li><span>04</span><div><strong>交付证据</strong><small>候选人、来源路径和运行记录一起交付</small></div></li>
+          </ol>
+        </aside>
       </div>
-      <p class="intro-kicker">Recruiting research agent</p>
-      <h2>你好，我可以帮你寻找合适的候选人。</h2>
-      <p class="intro-copy">
-        告诉我你要招聘什么岗位、需要哪些能力，以及工作年限、城市和硬性要求。我会先复述理解，再规划多条检索路径，并在覆盖不足时主动反思后续搜索。
-      </p>
 
       <section class="start-section" aria-labelledby="start-heading">
         <div class="start-heading">
-          <h3 id="start-heading">从这些复杂需求开始</h3>
+          <h3 id="start-heading">从一个复杂需求开始</h3>
           <span>点击填入，确认后发送</span>
         </div>
         <div class="start-grid" id="chat-examples">
@@ -139,9 +189,17 @@
     </form>
     <p class="composer-note" id="composer-note" aria-live="polite">快速演示：脚本化 LLM + 16 人内存库，无需 API Key · Enter 发送，Shift+Enter 换行</p>
   </section>
+  </div>
 </main>
 
 <div class="console-view" id="console-view" hidden>
+<header class="console-heading">
+  <div>
+    <h1>执行观测</h1>
+    <p>查看 Agent 实际走过的阶段、检索路径、运行账本与原始 Trace。</p>
+  </div>
+  <span class="console-live-note"><i aria-hidden="true"></i>SSE 实时观测</span>
+</header>
 <main class="layout" id="console-main">
   <aside class="panel query-panel" aria-label="招聘需求与会话">
     <div class="panel-head">
@@ -373,6 +431,6 @@
 </dialog>
 
 <noscript><div class="err-card">这个控制台需要启用 JavaScript。</div></noscript>
-<script src="/app.js?v=3"></script>
+<script src="/app.js?v=4"></script>
 </body>
 </html>

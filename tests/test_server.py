@@ -298,13 +298,13 @@ def test_root_serves_the_web_console(client: TestClient) -> None:
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
     assert "Search Agent" in resp.text
-    assert "app.js?v=3" in resp.text
-    assert "styles.css?v=3" in resp.text
+    assert "app.js?v=4" in resp.text
+    assert "styles.css?v=4" in resp.text
     assert 'id="agent-view"' in resp.text
     assert 'id="mode-chip"' in resp.text
     assert 'id="online-mode-dialog"' in resp.text
     assert "mode-toggle" in resp.text
-    assert "你好，我可以帮你寻找合适的候选人。" in resp.text
+    assert "今天要找什么样的人？" in resp.text
     assert "执行观测" in resp.text
     assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
 

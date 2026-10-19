@@ -107,6 +107,10 @@ const nextPageBtn = $("next-page");
 const conversationLabel = $("conversation-label");
 const conversationHistory = $("conversation-history");
 const newConversationBtn = $("new-conversation");
+const agentSessionList = $("agent-session-list");
+const agentSessionCount = $("agent-session-count");
+const agentSessionEmpty = $("agent-session-empty");
+const sidebarNewBtn = $("sidebar-new");
 
 function stageKeysForRoute(route, plannedStages) {
   if (Array.isArray(plannedStages) && plannedStages.length) {
@@ -461,7 +465,7 @@ function setViewMode(mode, { persist = true } = {}) {
       // View preference is optional.
     }
   }
-  if (next === "agent") scrollChatToEnd("auto");
+  if (next === "agent" && chatTranscript.childElementCount) scrollChatToEnd("auto");
 }
 
 function scrollChatToEnd(behavior = "smooth") {
@@ -1250,6 +1254,39 @@ function renderConversation() {
     conversationHistory.append(li);
   });
   conversationHistory.hidden = state.conversationHistory.length === 0;
+
+  if (agentSessionCount) {
+    agentSessionCount.textContent = `${state.conversationHistory.length} 轮`;
+  }
+  if (agentSessionList) {
+    agentSessionList.replaceChildren();
+    state.conversationHistory.forEach((turn, index) => {
+      const item = el("li");
+      const button = el("button", "agent-session-item");
+      button.type = "button";
+      button.title = turn.query || "";
+      button.append(
+        el("span", "agent-session-index", String(index + 1).padStart(2, "0")),
+        el("span", "agent-session-query", turn.query || ""),
+        el("small", "", `${turn.total ?? 0} 人`),
+      );
+      button.addEventListener("click", () => {
+        chatQueryInput.value = turn.query || "";
+        if (state.viewMode === "agent") {
+          chatQueryInput.focus();
+          scrollChatToEnd("smooth");
+        } else {
+          queryInput.value = turn.query || "";
+          queryInput.focus();
+        }
+      });
+      item.append(button);
+      agentSessionList.append(item);
+    });
+  }
+  if (agentSessionEmpty) {
+    agentSessionEmpty.hidden = state.conversationHistory.length > 0;
+  }
 }
 
 function rememberConversationTurn(query, total) {
@@ -2383,6 +2420,7 @@ function bindEvents() {
 
   newConversationBtn.addEventListener("click", startNewConversation);
   chatNewBtn.addEventListener("click", startNewConversation);
+  sidebarNewBtn?.addEventListener("click", startNewConversation);
 
   prevPageBtn.addEventListener("click", () => {
     loadSessionPage(Math.max(0, state.pageOffset - state.pageLimit));
