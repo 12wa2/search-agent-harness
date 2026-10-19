@@ -67,7 +67,7 @@ def _apply_action(
 def run_revise(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     reflections = state.get("reflections", [])
     if not reflections:
-        return {"phase": "finalize"}
+        return {"phase": "finalize", "finalize_reason": "reflection_empty"}
     reflection = reflections[-1]
     actions = reflection.path_actions
 
@@ -149,9 +149,17 @@ def run_revise(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
         "profile_converged": profile_converged,
     }
     if need_clarify:
-        updates.update({"need_clarify": True, "phase": "finalize"})
-    elif not executable or not any(p.status == "pending" for p in all_paths):
-        updates["phase"] = "finalize"
+        updates.update(
+            {
+                "need_clarify": True,
+                "phase": "finalize",
+                "finalize_reason": "clarification_requested",
+            }
+        )
+    elif not executable:
+        updates.update({"phase": "finalize", "finalize_reason": "no_path_actions"})
+    elif not any(p.status == "pending" for p in all_paths):
+        updates.update({"phase": "finalize", "finalize_reason": "paths_exhausted"})
     else:
         updates["phase"] = "execute"
     return updates

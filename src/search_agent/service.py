@@ -120,6 +120,7 @@ class SearchAgentService:
             update={
                 "conversationId": conv_id,
                 "conversationTurns": conversation_turns,
+                "topK": req.topK,
             }
         )
 
@@ -190,11 +191,18 @@ class SearchAgentService:
     def _handle_clarify(self, req: SearchRequest, state: dict[str, Any]) -> SearchResponse:
         job = state.get("job_profile")
         questions = job.clarify_questions if job else []
+        clarification: dict[str, Any] = {
+            "needClarification": True,
+            "questions": questions,
+        }
+        options = state.get("clarify_options") or []
+        if options:
+            clarification["options"] = options
         return SearchResponse(
             query=req.query,
             total=0,
             items=[],
-            clarification={"needClarification": True, "questions": questions},
+            clarification=clarification,
             debug=self._build_debug(state, req),
         )
 
@@ -249,6 +257,8 @@ class SearchAgentService:
         debug["agentMetrics"] = state.get("agent_metrics", {})
         if state.get("validation_issues"):
             debug["validationIssues"] = state["validation_issues"]
+        if state.get("finalize_reason"):
+            debug["finalizeReason"] = state["finalize_reason"]
         return debug
 
     def _save_conversation_turn(

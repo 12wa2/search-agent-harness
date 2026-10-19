@@ -341,6 +341,10 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "agent-delivery" in script.text
     assert "chat-progress-item" in script.text
     assert "renderChatResult" in script.text
+    assert "clarification-options" in script.text
+    assert "为什么继续搜索" in script.text
+    assert "排序分仅用于同一结果集内排序" in script.text
+    assert "delivery-overview" in script.text
     assert "/runtime/mode" in script.text
     assert "toggleRuntimeMode" in script.text
     assert "onlineConfigured" in script.text
@@ -351,12 +355,25 @@ def test_static_assets_are_served(client: TestClient) -> None:
     index = client.get("/")
     assert "快速演示" in index.text
     assert 'id="composer-mode"' in index.text
+    assert 'id="delivery-overview"' in index.text
+    assert 'id="candidate-method-note"' in index.text
 
     styles = client.get("/styles.css")
     assert styles.status_code == 200
     assert "text/css" in styles.headers["content-type"]
     assert styles.text.strip()
     assert ".mode-toggle" in styles.text
+    assert ".chat-progress-track" in styles.text
+    assert ".chat-delivery-overview" in styles.text
+    assert ".clarification-options" in styles.text
+
+
+def test_search_response_exposes_delivery_target_and_end_reason(client: TestClient) -> None:
+    resp = client.post("/search", json={"query": QUERY, "topK": 5, "details": True})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["topK"] == 5
+    assert body["debug"]["finalizeReason"]
 
 
 def test_web_assets_are_present_in_the_package() -> None:
@@ -481,3 +498,28 @@ def test_greeting_plus_recruitment_still_runs_the_agent(client: TestClient) -> N
     assert "event: reply" not in text
     assert '"stage": "understand"' in text
     assert "event: result" in text
+
+
+def test_stream_returns_clarification_options_for_skill_only_query(client: TestClient) -> None:
+    with client.stream(
+        "POST",
+        "/search/stream",
+        json={"query": "找会 Python 的", "topK": 6, "details": True},
+    ) as resp:
+        assert resp.status_code == 200
+        text = "".join(resp.iter_text())
+
+    assert "event: result" in text
+    stage_frames = [frame for frame in _frames(text) if _event_payload(frame)[0] == "stage"]
+    understand = next(
+        payload
+        for _, payload in (_event_payload(frame) for frame in stage_frames)
+        if payload["stage"] == "understand"
+    )
+    assert understand["detail"]["needsClarification"] is True
+    assert understand["detail"]["clarifyQuestions"]
+    _, payload = _event_payload(_frames(text)[-1])
+    assert payload["topK"] == 6
+    assert payload["total"] == 0
+    assert payload["clarification"]["needClarification"] is True
+    assert len(payload["clarification"]["options"]) == 3

@@ -76,6 +76,8 @@ def _stage_payload(event: str, state: dict[str, Any]) -> dict[str, Any]:
                 constraint.model_dump() for constraint in job.hard_constraints
             ],
             "historyTurns": len((state.get("conversation_history") or [])[-3:]),
+            "needsClarification": bool(job.needs_clarification),
+            "clarifyQuestions": list(job.clarify_questions),
         }
     if event == "plan":
         paths = state.get("paths") or []

@@ -24,6 +24,19 @@ const STAGE_META = {
 const PAGE_SIZE = 5;
 const CONVERSATION_KEY = "search-agent:conversation";
 const VIEW_KEY = "search-agent:view";
+const FINALIZE_REASON_COPY = Object.freeze({
+  target_reached: "达到目标人数，搜索提前收敛。",
+  max_iterations: "达到迭代轮数上限，交付当前最优结果。",
+  time_budget: "达到时间预算上限，交付当前最优结果。",
+  llm_budget: "达到模型调用预算上限，交付当前最优结果。",
+  token_budget: "达到 Token 预算上限，交付当前最优结果。",
+  no_progress: "本轮没有新增合格候选人，停止继续搜索。",
+  profile_converged: "候选人画像已收敛，进入最终验证并交付。",
+  difficulty_single_pass: "需求清晰且难度较低，本次使用单次检索完成。",
+  paths_exhausted: "反思后没有新的可执行路径，已收敛现有结果。",
+  no_path_actions: "反思没有产生可执行的策略动作，已收敛现有结果。",
+  reflection_empty: "没有可用的反思结果，已收敛现有结果。",
+});
 
 const state = {
   viewMode: "agent",
@@ -215,12 +228,65 @@ function chip(text, extra = "") {
   return el("span", `tag ${extra}`.trim(), text);
 }
 
+function deliveryOverview(payload) {
+  const target = Math.max(0, Number(payload.topK ?? state.activeRun?.topK ?? 0));
+  const delivered = Math.max(0, Number(payload.total || 0));
+  const gap = Math.max(0, target - delivered);
+  const reached = target > 0 && delivered >= target;
+  const reasonCode = payload.debug?.finalizeReason || "";
+  return {
+    target,
+    delivered,
+    gap,
+    reached,
+    reasonCode,
+    reason: FINALIZE_REASON_COPY[reasonCode] || "",
+  };
+}
+
+function fillClarificationQuery(option) {
+  const query = String(option?.query || "").trim();
+  if (!query) return;
+  queryInput.value = query;
+  chatQueryInput.value = query;
+  if (state.viewMode === "agent") {
+    setComposerNote("已填入所选方向，确认或继续补充后发送。");
+    chatQueryInput.focus();
+  } else {
+    runHint.classList.remove("error");
+    runHint.textContent = "已填入所选方向，点击“运行 Agent”开始搜索。";
+    queryInput.focus();
+  }
+  scrollChatToEnd("smooth");
+}
+
+function appendClarificationOptions(container, options = []) {
+  const usable = options.filter((option) => option?.query);
+  if (!usable.length) return;
+  container.append(el("p", "clarification-options-label", "选择一个更具体的方向"));
+  const grid = el("div", "clarification-options");
+  for (const option of usable) {
+    const button = el("button", "clarification-option");
+    button.type = "button";
+    button.title = option.query;
+    button.append(
+      el("strong", "", option.label || "选择这个方向"),
+      el("span", "", option.description || ""),
+      el("small", "", "填入需求 →"),
+    );
+    button.addEventListener("click", () => fillClarificationQuery(option));
+    grid.append(button);
+  }
+  container.append(grid);
+}
+
 const CHAT_STATUS_TONES = [
   "is-running",
   "is-complete",
   "is-degraded",
   "is-stopped",
   "is-failed",
+  "is-clarify",
 ];
 
 function setChatStatus(statusNode, label, tone) {
@@ -361,10 +427,11 @@ function formatCondition(condition = {}) {
 function renderChatCriteria(run, detail = {}) {
   const abilities = detail.mustAbilities || [];
   const constraints = detail.hardConstraintDetails || [];
+  const needsClarification = Boolean(detail.needsClarification);
   const chips = run.criteriaChips;
   chips.replaceChildren();
 
-  if (detail.jobTitle) chips.append(chip(detail.jobTitle, "criterion-title"));
+  if (detail.jobTitle && !needsClarification) chips.append(chip(detail.jobTitle, "criterion-title"));
   abilities.slice(0, 8).forEach((ability) => chips.append(chip(ability, "criterion-skill")));
   constraints.slice(0, 8).forEach((condition) => {
     const label = formatCondition(condition);
@@ -377,16 +444,23 @@ function renderChatCriteria(run, detail = {}) {
   if (!chips.childElementCount) chips.append(chip("从原始需求中提取检索条件", "criterion-condition"));
 
   const title = detail.jobTitle ? `「${detail.jobTitle}」` : "这个岗位";
-  run.criteriaCopy.textContent = `我会优先寻找${title}方向，并重点核对以下能力与硬性条件。`;
-  run.criteriaBadge.textContent = "已完成";
-  run.criteriaBadge.classList.add("is-ready");
-  run.criteriaCard.classList.add("is-ready");
+  if (needsClarification) {
+    run.criteriaCopy.textContent = "我先识别到这些技能与线索，但还缺少岗位方向。确认方向后再开始规划检索，避免把单一技能误当成完整招聘需求。";
+    run.criteriaBadge.textContent = "待确认";
+    run.criteriaBadge.classList.remove("is-ready");
+    run.criteriaCard.classList.remove("is-ready");
+  } else {
+    run.criteriaCopy.textContent = `我会优先寻找${title}方向，并重点核对以下能力与硬性条件。`;
+    run.criteriaBadge.textContent = "已完成";
+    run.criteriaBadge.classList.add("is-ready");
+    run.criteriaCard.classList.add("is-ready");
+  }
 }
 
 function chatStageCopy(stage, detail = {}) {
   const list = (values) => (values || []).filter(Boolean).join("、");
-  if (stage === "understand") return "正在读取岗位描述，提取必备能力、硬条件和可迁移经验。";
-  if (stage === "plan") return `正在规划 ${detail.paths || 0} 条互补的搜索路径，避免只依赖一个关键词。`;
+  if (stage === "understand") return "已读取岗位描述，提取必备能力、硬条件和可迁移经验。";
+  if (stage === "plan") return `已规划 ${detail.paths || 0} 条互补的搜索路径，避免只依赖一个关键词。`;
   if (stage === "execute") {
     return `已执行第 ${Math.max(1, state.executeCount)} 轮检索，召回 ${detail.recalled || 0} 人次，正在整理候选人证据。`;
   }
@@ -398,11 +472,11 @@ function chatStageCopy(stage, detail = {}) {
   }
   if (stage === "reflect") {
     return detail.gaps?.length
-      ? `定位到尚未覆盖的能力：${list(detail.gaps)}。下一轮会调整搜索策略。`
-      : "正在比较已命中候选人，定位仍需补齐的能力缺口。";
+      ? `已定位到尚未覆盖的能力：${list(detail.gaps)}。下一轮会调整搜索策略。`
+      : "已比较命中候选人，梳理仍需补齐的能力缺口。";
   }
   if (stage === "revise") return "已把缺口转换为新的搜索信号，并重新排列下一轮路径。";
-  if (stage === "finalize") return `正在收敛结果，本次计划交付 ${detail.total || 0} 位候选人。`;
+  if (stage === "finalize") return `已收敛结果，本次交付 ${detail.total || 0} 位候选人。`;
   if (stage.startsWith("degrade")) return `执行触发降级${detail.reason ? `：${detail.reason}` : ""}，已完成的结果会保留。`;
   return "Agent 已记录本阶段结果，并继续判断下一步。";
 }
@@ -429,8 +503,17 @@ function beginChatRun() {
   const progressTitle = el("strong", "", "Agent 正在执行");
   const progressMeta = el("span", "", "实时");
   progressHead.append(progressTitle, progressMeta);
+  const progressTrack = el("div", "chat-progress-track");
+  progressTrack.setAttribute("aria-hidden", "true");
+  for (const [stage, label] of STAGES) {
+    const segment = el("span", "chat-progress-segment");
+    segment.dataset.stage = stage;
+    segment.title = label;
+    progressTrack.append(segment);
+  }
   const progressList = el("ol", "chat-progress-list");
-  progress.append(progressHead, progressList);
+  const progressFootnote = el("p", "chat-progress-footnote", "完整阶段事件已折叠，可在下方执行详情查看。");
+  progress.append(progressHead, progressTrack, progressList, progressFootnote);
 
   const details = el("details", "chat-run-details");
   const detailsSummary = el("summary");
@@ -448,7 +531,10 @@ function beginChatRun() {
     progress,
     progressTitle,
     progressMeta,
+    progressTrack,
     progressList,
+    progressFootnote,
+    visitedStages: new Set(),
     details,
     detailsSummary,
     detailsBody,
@@ -463,27 +549,29 @@ function addChatStage(stage, detail = {}) {
   const run = beginChatRun();
   if (stage === "understand") renderChatCriteria(run, detail);
 
-  for (const item of run.progressList.querySelectorAll(".chat-progress-item.is-active")) {
-    item.classList.remove("is-active");
-    item.classList.add("is-done");
-  }
-  if (stage === "execute" && state.executeCount > 1) {
-    run.progressList.append(el("li", "chat-round", `第 ${state.executeCount} 轮检索`));
-  }
   const item = el("li", "chat-progress-item is-active");
   const marker = el("span", "chat-progress-marker");
   const copy = el("div", "chat-progress-copy");
+  const stageLabel = STAGE_LABEL[stage] || stage;
+  const roundSuffix = stage === "execute" && state.executeCount > 1
+    ? ` · 第 ${state.executeCount} 轮`
+    : "";
   copy.append(
-    el("strong", "", STAGE_LABEL[stage] || stage),
+    el("strong", "", `${stageLabel}${roundSuffix}`),
     el("span", "", chatStageCopy(stage, detail)),
   );
   item.append(marker, copy);
-  run.progressList.append(item);
+  run.progressList.replaceChildren(item);
   if (stage === "finalize") {
     item.classList.remove("is-active");
     item.classList.add("is-done");
   }
-  run.progressMeta.textContent = `${state.stageCount} 个阶段事件`;
+  run.visitedStages.add(stage);
+  for (const segment of run.progressTrack.children) {
+    segment.classList.toggle("is-hit", run.visitedStages.has(segment.dataset.stage));
+    segment.classList.toggle("is-current", segment.dataset.stage === stage);
+  }
+  run.progressMeta.textContent = `${run.visitedStages.size}/${STAGES.length} 阶段 · ${state.stageCount} 个事件`;
   run.progressTitle.textContent = stage === "finalize" ? "执行完成" : "Agent 正在执行";
   rebuildChatDetails(run);
   scrollChatToEnd();
@@ -610,36 +698,210 @@ function createChatPager() {
   return { pagerNode, prev, next, stateLabel };
 }
 
+function appendChatDeliveryOverview(container, payload) {
+  const overview = deliveryOverview(payload);
+  const section = el("section", "chat-delivery-overview");
+  section.classList.toggle("is-met", overview.reached);
+  section.classList.toggle("is-gap", !overview.reached && overview.gap > 0);
+
+  const head = el("div", "chat-delivery-head");
+  const title = el("div");
+  title.append(
+    el("strong", "", overview.reached ? "目标交付已达成" : "本次未达到目标人数"),
+    el("span", "", "目标按你设置的交付人数计算；缺口只表示数量未达标，不代表 Agent 执行失败。"),
+  );
+  head.append(title, el("span", "chat-delivery-state", overview.reached ? "已达成" : "有缺口"));
+
+  const facts = el("div", "chat-delivery-facts");
+  const addFact = (value, label) => {
+    const fact = el("span");
+    fact.append(el("b", "", value), el("small", "", label));
+    facts.append(fact);
+  };
+  addFact(overview.target, "目标人数");
+  addFact(overview.delivered, "实际交付");
+  addFact(overview.gap, "人数缺口");
+
+  section.append(head, facts);
+  if (overview.reason) {
+    const reason = el("p", "chat-delivery-reason");
+    reason.append(el("strong", "", "结束原因："), document.createTextNode(overview.reason));
+    section.append(reason);
+  }
+  container.append(section);
+}
+
+function reasoningStep(kicker, copy) {
+  const item = el("li");
+  item.append(el("span", "", kicker), el("p", "", copy));
+  return item;
+}
+
+function appendChatReasoning(container, payload) {
+  const events = state.runEvents || [];
+  const overview = deliveryOverview(payload);
+  let reflectIndex = -1;
+  events.forEach((event, index) => {
+    if (event.stage === "reflect") reflectIndex = index;
+  });
+
+  const section = el("section", "chat-reasoning");
+  const head = el("div", "chat-reasoning-head");
+  const title = el("div");
+  const steps = el("ol", "chat-reasoning-steps");
+
+  if (reflectIndex >= 0) {
+    const reflectEvent = events[reflectIndex];
+    const prior = events.slice(0, reflectIndex);
+    const executeEvent = [...prior].reverse().find((event) => event.stage === "execute");
+    const evaluateEvent = [...prior].reverse().find((event) => event.stage === "evaluate");
+    const reviseEvent = events
+      .slice(reflectIndex + 1)
+      .find((event) => event.stage === "revise");
+    const round = events
+      .slice(0, reflectIndex + 1)
+      .filter((event) => event.stage === "execute").length;
+    const continued = events
+      .slice(reflectIndex + 1)
+      .some((event) => event.stage === "execute");
+    const gaps = (reflectEvent.detail?.gaps || []).filter(Boolean);
+    const newSignals = Number(reflectEvent.detail?.newSoftSignals || 0);
+
+    title.append(
+      el("strong", "", continued ? "为什么继续搜索" : "为什么在这里结束"),
+      el("span", "", `第 ${Math.max(1, round)} 轮 · 来自真实 evaluate / reflect / revise 事件`),
+    );
+    if (executeEvent?.detail?.recalled !== undefined) {
+      steps.append(
+        reasoningStep("观察", `工具执行后，当时累计召回 ${Number(executeEvent.detail.recalled || 0)} 人次。`),
+      );
+    }
+    if (evaluateEvent?.detail?.next === "reflect") {
+      steps.append(reasoningStep("判断", "覆盖检查未满足交付条件，转入反思，而不是重复原查询。"));
+    }
+    if (gaps.length) {
+      steps.append(reasoningStep("缺口", `尚未覆盖的能力：${gaps.join("、")}。`));
+    } else if (newSignals > 0) {
+      steps.append(reasoningStep("反思", `反思阶段新增 ${newSignals} 个软信号，用于补充下一轮检索。`));
+    }
+    if (reviseEvent) {
+      const softSignals = reviseEvent.detail?.softSignals;
+      const ending = overview.reason || "本轮没有产生新的待执行路径，搜索就此结束。";
+      if (softSignals !== undefined) {
+        steps.append(
+          reasoningStep(
+            "修订",
+            `画像当前累计 ${Number(softSignals || 0)} 个软信号；${
+              continued
+                ? reviseEvent.detail?.converged
+                  ? "画像已收敛，进入下一轮验证。"
+                  : "继续验证新增方向。"
+                : ending
+            }`,
+          ),
+        );
+      } else if (continued) {
+        steps.append(reasoningStep("修订", "已根据缺口调整搜索路径，并进入下一轮验证。"));
+      } else {
+        steps.append(reasoningStep("修订", `本轮修订后未进入下一轮；${ending}`));
+      }
+    } else {
+      steps.append(
+        reasoningStep(
+          "修订",
+          continued
+            ? "已根据缺口调整搜索路径，并进入下一轮验证。"
+            : overview.reason || "本次反思后没有产生新的可执行路径，随后收敛现有结果。",
+        ),
+      );
+    }
+  } else {
+    title.append(
+      el("strong", "", "本轮如何结束"),
+      el("span", "", "来自真实覆盖检查与最终结束原因"),
+    );
+    const evaluateEvent = [...events].reverse().find((event) => event.stage === "evaluate");
+    if (overview.reasonCode === "difficulty_single_pass") {
+      steps.append(reasoningStep("路由", "需求被判定为低难度单次检索，覆盖检查后直接收敛。"));
+    } else if (evaluateEvent?.detail?.next === "finalize") {
+      steps.append(reasoningStep("判断", "覆盖检查已满足结束条件，未触发策略修订。"));
+    } else if (overview.reason) {
+      steps.append(reasoningStep("结束", overview.reason));
+    } else {
+      steps.append(reasoningStep("记录", "本次没有产生 reflect / revise 事件，未发生策略改写。"));
+    }
+  }
+
+  head.append(title);
+  section.append(head, steps);
+  container.append(section);
+}
+
 function renderChatResult(payload) {
   const run = beginChatRun();
   const cancelled = Boolean(payload.debug?.cancelled);
+  const clarification = Boolean(payload.clarification?.needClarification);
   const degradedReason =
     payload.debug?.degradedReason || payload.debug?.agentMetrics?.meta?.degradedReason || "";
   const degraded = Boolean(degradedReason);
-  const resultTone = cancelled ? "stopped" : degraded ? "degraded" : "complete";
-  const resultLabel = cancelled ? "已停止" : degraded ? "已降级" : "已完成";
+  const resultTone = cancelled
+    ? "stopped"
+    : clarification
+      ? "clarify"
+      : degraded
+        ? "degraded"
+        : "complete";
+  const resultLabel = cancelled
+    ? "已停止"
+    : clarification
+      ? "需补充"
+      : degraded
+        ? "已降级"
+        : "已完成";
   setChatStatus(run.status, resultLabel, resultTone);
-  run.progressTitle.textContent = cancelled ? "搜索已停止" : "执行完成";
-  run.progressMeta.textContent = `${Math.max(1, state.executeCount)} 轮 · ${state.stageCount} 个阶段事件`;
+  run.progressTitle.textContent = cancelled
+    ? "搜索已停止"
+    : clarification
+      ? "等待补充需求"
+      : "执行完成";
+  run.progressMeta.textContent = clarification
+    ? `${run.visitedStages.size}/${STAGES.length} 阶段 · 等待补充`
+    : `${Math.max(1, state.executeCount)} 轮 · ${state.stageCount} 个事件`;
+  run.progressFootnote.textContent = clarification
+    ? "只完成了岗位理解，未启动检索、候选人判断或策略修订。"
+    : "完整阶段、工具结果和 Trace 已折叠在下方执行详情。";
+  for (const item of run.progressList.querySelectorAll(".chat-progress-item")) {
+    item.classList.remove("is-active");
+    item.classList.add("is-done");
+  }
 
   const message = createChatMessage("agent", "chat-result-message agent-delivery");
   setChatStatus(message.status, resultLabel, resultTone);
   const head = el("div", "chat-result-head");
-  const marker = el("span", "chat-result-check", cancelled ? "■" : "✓");
+  const marker = el("span", "chat-result-check", cancelled ? "■" : clarification ? "!" : "✓");
+  marker.classList.toggle("is-clarify", clarification);
   const heading = el("div");
-  heading.append(
-    el("h3", "", cancelled ? "本次搜索已停止" : "本次搜索已完成"),
-    el("p", "", cancelled
-      ? "已保留停止前完成的工作，未继续发起新的检索或模型调用。"
+  const headingTitle = cancelled
+    ? "本次搜索已停止"
+    : clarification
+      ? "还需要补充岗位方向"
+      : "本次搜索已完成";
+  const headingCopy = cancelled
+    ? "已保留停止前完成的工作，未继续发起新的检索或模型调用。"
+    : clarification
+      ? "当前需求只说明了技能，还没有说明希望寻找哪类候选人。补充方向后我会继续执行，不重复消耗本轮工作。"
       : degraded
         ? "搜索已完成，但部分阶段触发了降级。以下结果保留，建议结合匹配证据复核。"
-        : "以下是根据当前需求筛选出的候选人。展开卡片可查看完整匹配证据与来源路径。"),
+        : "以下是根据当前需求筛选出的候选人。展开卡片可查看完整匹配证据与来源路径。";
+  heading.append(
+    el("h3", "", headingTitle),
+    el("p", "", headingCopy),
   );
   head.append(marker, heading);
   message.body.append(head);
 
   const metrics = payload.debug?.agentMetrics;
-  if (metrics) {
+  if (metrics && !clarification) {
     const stats = el("div", "chat-result-stats");
     const add = (value, label) => {
       const item = el("span");
@@ -657,18 +919,28 @@ function renderChatResult(payload) {
     message.body.append(note);
   }
 
-  if (payload.clarification?.needClarification) {
+  if (clarification) {
     const clarify = el("div", "chat-clarification");
     clarify.append(el("strong", "", "还需要补充一些信息"));
     const list = el("ul");
     for (const question of payload.clarification.questions || []) list.append(el("li", "", question));
     clarify.append(list);
+    appendClarificationOptions(clarify, payload.clarification.options || []);
     message.body.append(clarify);
   } else {
+    if (!cancelled) {
+      appendChatDeliveryOverview(message.body, payload);
+      appendChatReasoning(message.body, payload);
+    }
     const items = payload.items || [];
     const list = addChatCandidateCards(run, items, Number(payload.page?.offset || 0));
     run.resultList = list;
     message.body.append(list);
+    if (items.length) {
+      message.body.append(
+        el("p", "chat-score-note", "排序分仅用于同一结果集内排序，不代表概率或匹配率。"),
+      );
+    }
     const pagerParts = createChatPager();
     run.resultPager = pagerParts.pagerNode;
     run.resultPrevBtn = pagerParts.prev;
@@ -844,6 +1116,7 @@ function resetUI() {
   traceWrap.hidden = true;
   traceJson.textContent = "";
   resultsHint.textContent = "—";
+  hideConsoleDelivery();
   hidePager();
   state.queryToken = null;
   state.pageOffset = 0;
@@ -1067,6 +1340,7 @@ function appendDeliverySummary(payload) {
   const metrics = payload.debug?.agentMetrics || {};
   const rounds = metrics.rounds?.iterations ?? state.executeCount;
   const judged = metrics.recall?.judged;
+  const overview = deliveryOverview(payload);
   const li = el("li", "agent-delivery");
   const head = el("div", "delivery-head");
   head.append(
@@ -1075,16 +1349,23 @@ function appendDeliverySummary(payload) {
   );
   const copy = head.lastElementChild;
   copy.append(
-    el("strong", "", "候选人名单已交付"),
-    el("span", "", "匹配证据、硬条件与来源路径已经同步到候选人档案。"),
+    el("strong", "", overview.reached ? "候选人名单已交付" : "候选人名单已交付，目标人数有缺口"),
+    el(
+      "span",
+      "",
+      overview.reason || "匹配证据、硬条件与来源路径已经同步到候选人档案。",
+    ),
   );
   const stats = el("div", "delivery-stats");
-  const addStat = (value, label) => {
+  const addStat = (value, label, warning = false) => {
     const stat = el("span");
+    stat.classList.toggle("is-warning", warning);
     stat.append(el("b", "", value), el("small", "", label));
     stats.append(stat);
   };
-  addStat(Number(payload.total || 0), "交付");
+  addStat(overview.target, "目标");
+  addStat(overview.delivered, "交付");
+  addStat(overview.gap, "缺口", overview.gap > 0);
   addStat(rounds, "检索轮次");
   if (judged !== undefined) addStat(judged, "通过判定");
   li.append(head, stats);
@@ -1163,6 +1444,7 @@ function renderCandidate(item, rank) {
 
   const explanation = item.matchExplanation || {};
   const matchedAbilities = (explanation.matchedAbilities || []).filter(Boolean);
+  const missingAbilities = (explanation.missingAbilities || []).filter(Boolean);
   const hardMatches = (explanation.hardMatches || []).filter(Boolean);
   const pathRationale = (explanation.pathRationale || []).filter(Boolean);
 
@@ -1174,12 +1456,22 @@ function renderCandidate(item, rank) {
   if (hardMatches.length) {
     const passed = hardMatches.filter((hard) => hard.matched).length;
     const fact = el("span", "cand-evidence-fact", `硬条件 ${passed}/${hardMatches.length}`);
+    fact.classList.toggle("is-warning", passed < hardMatches.length);
     fact.title = hardMatches
       .map((hard) => {
         const values = Array.isArray(hard.values) ? hard.values.join("/") : hard.values;
         return `${hard.field || "?"}: ${values ?? "—"} ${hard.matched ? "满足" : "未满足"}`;
       })
       .join("\n");
+    facts.append(fact);
+  }
+  if (missingAbilities.length) {
+    const fact = el(
+      "span",
+      "cand-evidence-fact is-warning",
+      `未覆盖 ${missingAbilities.length} 项能力`,
+    );
+    fact.title = missingAbilities.join("\n");
     facts.append(fact);
   }
   if (pathRationale.length) {
@@ -1192,6 +1484,9 @@ function renderCandidate(item, rank) {
   const evidenceTags = el("div", "cand-evidence-tags");
   for (const ability of matchedAbilities.slice(0, 3)) {
     evidenceTags.append(chip(ability, "is-match"));
+  }
+  for (const ability of missingAbilities.slice(0, 3)) {
+    evidenceTags.append(chip(ability, "is-missing"));
   }
   if (matchedAbilities.length > 3) {
     evidenceTags.append(el("span", "cand-evidence-more", `+${matchedAbilities.length - 3}`));
@@ -1212,6 +1507,11 @@ function renderCandidate(item, rank) {
     for (const ability of matchedAbilities) row.append(chip(ability));
     explain.append(el("p", "", "命中能力"), row);
   }
+  if (missingAbilities.length) {
+    const row = el("div", "explain-tags");
+    for (const ability of missingAbilities) row.append(chip(ability, "is-missing"));
+    explain.append(el("p", "", "未覆盖能力"), row);
+  }
   if (pathRationale.length) {
     const ul = el("ul");
     for (const rationale of pathRationale) ul.append(el("li", "", rationale));
@@ -1221,7 +1521,13 @@ function renderCandidate(item, rank) {
     const ul = el("ul");
     for (const hard of hardMatches) {
       const values = Array.isArray(hard.values) ? hard.values.join("/") : hard.values;
-      ul.append(el("li", "", `${hard.field || "?"}: ${values ?? "—"} ${hard.matched ? "✓" : "✗"}`));
+      ul.append(
+        el(
+          "li",
+          hard.matched ? "" : "is-warning",
+          `${hard.field || "?"}: ${values ?? "—"} ${hard.matched ? "✓ 满足" : "! 未满足"}`,
+        ),
+      );
     }
     explain.append(el("p", "", "硬条件"), ul);
   }
@@ -1266,11 +1572,59 @@ function renderCandidateList(items, offset = 0) {
   items.forEach((item, index) => results.append(renderCandidate(item, offset + index + 1)));
 }
 
+function hideConsoleDelivery() {
+  const overview = $("delivery-overview");
+  if (overview) {
+    overview.hidden = true;
+    overview.replaceChildren();
+  }
+  const note = $("candidate-method-note");
+  if (note) note.hidden = true;
+}
+
+function renderConsoleDelivery(payload) {
+  const overviewNode = $("delivery-overview");
+  if (!overviewNode) return;
+  const overview = deliveryOverview(payload);
+  overviewNode.replaceChildren();
+  overviewNode.hidden = false;
+  overviewNode.classList.toggle("is-met", overview.reached);
+  overviewNode.classList.toggle("is-gap", !overview.reached);
+
+  const head = el("div", "delivery-overview-head");
+  const copy = el("div");
+  copy.append(
+    el("strong", "", overview.reached ? "目标交付已达成" : "目标人数尚未达成"),
+    el("span", "", "缺口只表示数量未达标，不代表 Agent 执行失败。"),
+  );
+  head.append(copy, el("span", "delivery-overview-state", overview.reached ? "已达成" : "有缺口"));
+
+  const facts = el("div", "delivery-overview-facts");
+  const addFact = (value, label) => {
+    const fact = el("span");
+    fact.append(el("b", "", value), el("small", "", label));
+    facts.append(fact);
+  };
+  addFact(overview.target, "目标");
+  addFact(overview.delivered, "交付");
+  addFact(overview.gap, "缺口");
+  overviewNode.append(head, facts);
+  if (overview.reason) {
+    const reason = el("p", "delivery-overview-reason");
+    reason.append(el("strong", "", "结束原因："), document.createTextNode(overview.reason));
+    overviewNode.append(reason);
+  }
+
+  const note = $("candidate-method-note");
+  if (note) note.hidden = !(payload.items || []).length;
+}
+
 function renderResults(payload) {
   const items = payload.items || [];
   const clarification = payload.clarification;
 
   if (clarification?.needClarification) {
+    hideConsoleDelivery();
     results.replaceChildren();
     hidePager();
     resultsEmpty.hidden = true;
@@ -1280,10 +1634,13 @@ function renderResults(payload) {
     const ul = el("ul");
     for (const question of clarification.questions || []) ul.append(el("li", "", question));
     card.append(ul);
+    appendClarificationOptions(card, clarification.options || []);
     results.append(card);
     return;
   }
 
+  if (payload.debug?.cancelled) hideConsoleDelivery();
+  else renderConsoleDelivery(payload);
   resultsEmpty.hidden = items.length > 0;
   const page = payload.page || null;
   const offset = Number(page?.offset || 0);
@@ -1380,7 +1737,12 @@ function renderTrace(payload) {
   const debug = payload.debug;
   if (!debug) return;
   traceJson.textContent = JSON.stringify(
-    { agentTrace: debug.agentTrace, agentMetrics: debug.agentMetrics, degradedReason: debug.degradedReason },
+    {
+      agentTrace: debug.agentTrace,
+      agentMetrics: debug.agentMetrics,
+      degradedReason: debug.degradedReason,
+      finalizeReason: debug.finalizeReason,
+    },
     null,
     2,
   );
@@ -1409,6 +1771,7 @@ function showError(message) {
   const card = el("li", "err-card", message);
   results.append(card);
   resultsEmpty.hidden = true;
+  hideConsoleDelivery();
 }
 
 const INTENT_LABEL = {
@@ -1419,6 +1782,7 @@ const INTENT_LABEL = {
 
 function renderAssistantReply(payload) {
   results.replaceChildren();
+  hideConsoleDelivery();
   resultsEmpty.hidden = false;
   setResultsEmptyCopy("本次未启动检索", "这条输入由意图路由直接回复，不会调用搜索工具或生成候选人名单。");
   metrics.hidden = true;
@@ -1488,6 +1852,7 @@ async function runSearch(query, topK) {
   let sawReply = false;
   let sawError = false;
   let sawCancelled = false;
+  let sawClarification = false;
 
   try {
     const resp = await fetch("/search/stream", {
@@ -1537,6 +1902,8 @@ async function runSearch(query, topK) {
         } else if (event === "result") {
           sawResult = true;
           sawCancelled = Boolean(payload.debug && payload.debug.cancelled);
+          const needsClarification = Boolean(payload.clarification?.needClarification);
+          sawClarification = needsClarification;
           if (payload.conversationId) {
             state.conversationId = payload.conversationId;
             state.conversationTurns = Number(payload.conversationTurns || state.conversationTurns || 1);
@@ -1549,24 +1916,40 @@ async function runSearch(query, topK) {
           renderMetrics(payload);
           renderTrace(payload);
           renderChatResult(payload);
-          if (!sawCancelled) appendDeliverySummary(payload);
-          if (!sawCancelled) completeRail();
-          if (!sawCancelled) snapTimelineToLatestCard();
-          if (!sawCancelled) {
+          if (!sawCancelled && !needsClarification) appendDeliverySummary(payload);
+          if (!sawCancelled && !needsClarification) completeRail();
+          if (!sawCancelled && !needsClarification) snapTimelineToLatestCard();
+          if (!sawCancelled && !needsClarification) {
             rememberConversationTurn(query, Number(payload.total || 0));
           }
           timelineHint.textContent = sawCancelled
             ? "已取消 · 未产出部分结果"
-            : `完成 · ${state.stageCount} 个阶段事件 · ${Math.max(1, state.executeCount)} 轮`;
+            : needsClarification
+              ? "等待补充 · 未启动检索"
+              : `完成 · ${state.stageCount} 个阶段事件 · ${Math.max(1, state.executeCount)} 轮`;
           setAgentProgress();
           setAgentState(
-            sawCancelled ? "stopped" : payload.debug?.degradedReason ? "degraded" : "completed",
-            sawCancelled ? "已请求停止" : payload.debug?.degradedReason ? "本轮完成（降级）" : "本轮完成",
+            sawCancelled
+              ? "stopped"
+              : needsClarification
+                ? "clarify"
+                : payload.debug?.degradedReason
+                  ? "degraded"
+                  : "completed",
+            sawCancelled
+              ? "已请求停止"
+              : needsClarification
+                ? "等待补充需求"
+                : payload.debug?.degradedReason
+                  ? "本轮完成（降级）"
+                  : "本轮完成",
             sawCancelled
               ? "当前阶段结束后会停止后续检索与模型调用。"
-              : payload.debug?.degradedReason
-                ? `已交付 ${Number(payload.total || 0)} 位候选人；执行过程中触发降级：${payload.debug.degradedReason}`
-                : `已交付 ${Number(payload.total || 0)} 位候选人，匹配证据与来源路径已同步。`,
+              : needsClarification
+                ? "当前输入缺少岗位方向；选择或补充一条更具体的招聘需求后继续。"
+                : payload.debug?.degradedReason
+                  ? `已交付 ${Number(payload.total || 0)} 位候选人；执行过程中触发降级：${payload.debug.degradedReason}`
+                  : `已交付 ${Number(payload.total || 0)} 位候选人，匹配证据与来源路径已同步。`,
           );
         } else if (event === "error") {
           sawError = true;
@@ -1581,6 +1964,8 @@ async function runSearch(query, topK) {
     }
     if (sawResult && sawCancelled) {
       runHint.textContent = "已取消。后端会在当前阶段结束后停止后续工作。";
+    } else if (sawClarification) {
+      runHint.textContent = "等待补充需求。选择推荐方向或补充岗位信息后再次运行。";
     } else if (sawReply) {
       runHint.textContent = "已回复。此请求不需要启动搜索 Agent。";
     } else if (sawResult) {

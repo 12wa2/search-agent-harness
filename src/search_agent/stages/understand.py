@@ -14,6 +14,7 @@ import re
 from datetime import datetime
 from typing import Any
 
+from search_agent.core.clarification import detect_skill_only_clarification
 from search_agent.core.difficulty import apply_difficulty_floor
 from search_agent.llm.prompts import (
     build_understand_payload,
@@ -178,6 +179,17 @@ def run_understand(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
         needs_clarification=bool(data.get("needs_clarification", False)),
         clarify_questions=data.get("clarify_questions", []) or [],
     )
+    clarification = detect_skill_only_clarification(
+        state["query"],
+        has_history=bool(state.get("conversation_history")),
+    )
+    if clarification is not None:
+        job = job.model_copy(
+            update={
+                "needs_clarification": True,
+                "clarify_questions": clarification.questions,
+            }
+        )
     talent = TalentProfile(
         source_hypotheses=_coerce_sources(tp.get("source_hypotheses")),
         must_keywords=must_keywords,
@@ -186,6 +198,8 @@ def run_understand(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     )
 
     updates: dict[str, Any] = {"job_profile": job, "talent_profile": talent}
+    if clarification is not None:
+        updates["clarify_options"] = [option.to_dict() for option in clarification.options]
     if job.needs_clarification:
         updates.update({"need_clarify": True, "phase": "done"})
     else:

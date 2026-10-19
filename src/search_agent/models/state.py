@@ -72,6 +72,7 @@ class SearchState(TypedDict, total=False):
     llm_calls: int
     new_qualified_last_round: int
     need_clarify: bool
+    clarify_options: list[dict[str, Any]]
     finalize: bool
     finalize_reason: str
     degraded_reason: str

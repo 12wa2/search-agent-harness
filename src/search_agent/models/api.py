@@ -96,6 +96,7 @@ class SearchResponse(BaseModel):
 
     query: str
     total: int
+    topK: int = 0
     items: list[CandidateItem]
     debug: dict | None = None
     clarification: dict | None = None

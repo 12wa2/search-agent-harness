@@ -8,7 +8,7 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-373-brightgreen)
+![Tests](https://img.shields.io/badge/tests-402-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![version](https://img.shields.io/badge/version-v0.1.0-blue)
@@ -65,6 +65,18 @@ Agent，避免把不常见但真实的招聘表达误判成聊天。路由是规
 
 SSE 的 `reply` 是终止帧，也是唯一一帧：不会出现 `stage`、`result`、`metrics` 或 `trace`。
 `POST /search` 仍保持纯搜索契约，假定调用方传入的就是招聘需求。
+
+### 模糊需求与结果解释
+
+首轮输入只有技能、没有岗位方向时（例如“找会 Python 的”），服务会先返回「后端开发 / 机器学习与 AI /
+数据工程」三个可点击方向，并在 `understand` 事件中标记 `needsClarification=true`；确认前不会启动
+`plan → execute`，也不展示空的候选人名单。已有会话历史时不会重复打断，后续追问仍交给正常 Agent
+链路处理。
+
+对话结果把执行过程压缩成“当前阶段 + 8 段进度 + 事件数”，完整阶段和 Trace 默认折叠；候选人卡同时
+展示命中能力、未覆盖能力、硬条件状态与来源路径。交付区明确列出目标人数、实际交付、人数缺口和
+`finalizeReason`，并用真实的 `evaluate → reflect → revise` 事件解释本轮为何继续搜索或在这里结束，
+不补写模型没有产生的推理。排序分只表示同一结果集内的相对顺序，不代表概率或匹配率。
 
 ## 这是什么
 

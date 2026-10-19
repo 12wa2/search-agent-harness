@@ -102,6 +102,7 @@ def test_service_returns_search_response_with_items():
     resp = svc.search(req)
 
     assert resp.query == "Python engineer"
+    assert resp.topK == 20
     assert resp.total == 5
     assert len(resp.items) == 5
     assert all(isinstance(item, CandidateItem) for item in resp.items)
@@ -283,6 +284,22 @@ def test_service_clarification_response():
     assert resp.clarification is not None
     assert resp.clarification["needClarification"] is True
     assert "How many years?" in resp.clarification["questions"]
+
+
+def test_service_skill_only_query_returns_clarification_options():
+    tool = _FakeTool([])
+    svc = SearchAgentService(tool=tool, llm_client=_llm(), runner=LoopRunner())
+
+    req = SearchRequest(query="找会 Python 的", companyId=39978, topK=8, details=True)
+    resp = svc.search(req)
+
+    assert resp.topK == 8
+    assert resp.total == 0
+    assert resp.clarification is not None
+    assert resp.clarification["needClarification"] is True
+    assert len(resp.clarification["options"]) == 3
+    assert resp.clarification["options"][0]["label"] == "后端开发"
+    assert "Python" in resp.clarification["options"][0]["query"]
 
 
 def test_service_fallback_baseline():

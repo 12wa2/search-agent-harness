@@ -7,6 +7,14 @@
 
 ### Added
 
+- **对话交付可解释性**（`core/clarification.py`、`understand` / `revise`、`web/`）：首轮只包含
+  技能、缺少岗位方向时，Agent 会先返回可点击的方向选项，而不是直接进入检索；有会话历史时不会
+  重复打断。对话视图把完整执行过程压缩为“当前阶段 + 8 段进度 + 事件数”，详细事件默认折叠。
+  候选人卡新增命中能力、未覆盖能力、硬条件警告、来源路径和排序分口径说明；交付区展示目标人数、
+  实际交付、人数缺口与 `finalizeReason`，并用真实 `evaluate → reflect → revise` 事件解释本轮为何
+  继续或结束。`SearchResponse` 新增 `topK`，`understand` 事件新增 `needsClarification` /
+  `clarifyQuestions`，`revise` 补齐 `reflection_empty` / `no_path_actions` / `paths_exhausted` /
+  `clarification_requested` 等结束原因；补充澄清边界、SSE 载荷与 revise 终止语义测试。
 - **Web 双预设运行时切换**（`llm/runtime.py`、`tools/runtime.py`、`server.py`、`web/`）：HTTP 服务
   现在同时持有两个完整预设——快速演示（脚本化 LLM + `InMemorySearchTool` + 16 人内存库）与完整在线
   （OpenAI-compatible LLM + Hybrid V2 + Elasticsearch 索引）。新增 `POST /runtime/mode`，Web 顶栏
