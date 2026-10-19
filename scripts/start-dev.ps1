@@ -176,7 +176,7 @@ function Wait-ForHealth {
 
 function Open-WebConsole {
     try {
-        Start-Process "http://127.0.0.1:8000/?v=2"
+        Start-Process "http://127.0.0.1:8000/?v=3"
     } catch {
         Write-Warning "Could not open the Web console automatically: $($_.Exception.Message)"
     }

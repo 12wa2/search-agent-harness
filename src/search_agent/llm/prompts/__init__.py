@@ -58,15 +58,35 @@ def plan_prompt() -> tuple[str, dict[str, Any]]:
     return sys, schema
 
 
-_JUDGE_RULES = '你的角色：能力级匹配判断。依据每个候选人的 hardMatches 事实 + 简历快照，判断其命中/缺失哪些岗位能力，不得编造经历。\n必须严格按以下 JSON 结构输出（不要输出 judgments 以外的顶层字段）：\n{\n  "judgments": [\n    {\n      "doc_id": "原样回填输入里该 candidate 的 docId",\n      "matched_abilities": ["命中的能力名"],\n      "missing_abilities": ["缺失的能力名"],\n      "summary": "一句话判断理由"\n    }\n  ]\n}\n规则：\n- 必须为输入中的每一个 candidate 都输出一条 judgment，数量与输入 candidates 一致。\n- doc_id 必须原样使用输入 candidates 里该候选人的 docId 值，禁止编造、改写，禁止用 name / candidateProfileId / 序号 代替。\n- matched_abilities / missing_abilities 的取值必须来自输入的 abilities 列表：命中的放 matched_abilities，未命中的放 missing_abilities。\n- 只依据 hardMatches 事实和简历快照（workExperiences/skills/educations/summary）判断，不得编造经历或技能。\n- summary 简短，说明该候选匹配或不匹配的关键原因。'
+_JUDGE_RULES = '你的角色：能力级匹配判断。依据每个候选人的 hardMatches 事实 + 紧凑候选人 profile，判断其命中/缺失哪些岗位能力，不得编造经历。\n必须严格按以下 JSON 结构输出（不要输出 judgments 以外的顶层字段）：\n{\n  "judgments": [\n    {\n      "doc_id": "原样回填输入里该 candidate 的 docId",\n      "matched_abilities": ["命中的能力名"]\n    }\n  ]\n}\n规则：\n- 必须为输入中的每一个 candidate 都输出一条 judgment，数量与输入 candidates 一致。\n- doc_id 必须原样使用输入 candidates 里该候选人的 docId 值，禁止编造、改写，禁止用 name / candidateProfileId / 序号 代替。\n- matched_abilities 的取值必须来自输入的 abilities 列表；只输出命中的能力，未命中能力由程序自动补全，禁止输出 missing_abilities。\n- 只依据 hardMatches 事实和候选人 profile（workYears/skills/recentRoles/education/summary）判断，不得编造经历或技能。\n- 不要输出 summary、理由或额外字段；只返回能力判定，以减少输出 tokens。'
 
 
 def judge_prompt() -> tuple[str, dict[str, Any]]:
     sys = _AGENT_BASE + _JUDGE_RULES
     schema = {
         "type": "object",
-        "properties": {"judgments": {"type": "array"}},
+        "properties": {
+            "judgments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "doc_id": {"type": "string"},
+                        "matched_abilities": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "required": [
+                        "doc_id",
+                        "matched_abilities",
+                    ],
+                    "additionalProperties": False,
+                },
+            }
+        },
         "required": ["judgments"],
+        "additionalProperties": False,
     }
     return sys, schema
 
@@ -148,17 +168,128 @@ def build_plan_payload(
     return payload
 
 
-def _trim_snapshot(item: Any) -> dict[str, Any]:
-    """Trim a CandidateItem to essential fields for judge LLM."""
-    return {
-        "docId": item.docId,
-        "name": item.name,
+_MAX_JUDGE_SKILLS = 12
+_MAX_JUDGE_ROLES = 2
+_MAX_JUDGE_SUMMARY_CHARS = 160
+
+
+def _compact_text(value: Any, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    if limit <= 3:
+        return text[:limit]
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _first_text(row: dict[str, Any], keys: tuple[str, ...], limit: int) -> str:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            return _compact_text(value, limit)
+    return ""
+
+
+def _compact_experience(row: Any) -> dict[str, str] | None:
+    if not isinstance(row, dict):
+        return None
+    company = _first_text(row, ("company_name", "companyName", "company"), 80)
+    title = _first_text(row, ("job_title", "jobTitle", "positionName", "position"), 80)
+    if not company and not title:
+        return None
+    start = _first_text(row, ("startDate", "start_date", "startTime", "start_time"), 20)
+    end = _first_text(row, ("endDate", "end_date", "endTime", "end_time"), 20)
+    compact: dict[str, str] = {}
+    if company:
+        compact["company"] = company
+    if title:
+        compact["title"] = title
+    if start or end:
+        compact["period"] = "~".join(part for part in (start, end) if part)
+    return compact
+
+
+def _experience_date(row: Any) -> str:
+    if not isinstance(row, dict):
+        return ""
+    for key in (
+        "endDate",
+        "end_date",
+        "endTime",
+        "end_time",
+        "startDate",
+        "start_date",
+        "startTime",
+        "start_time",
+    ):
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            return str(value)
+    return ""
+
+
+def _compact_education(row: Any) -> dict[str, str] | None:
+    if not isinstance(row, dict):
+        return None
+    degree = _first_text(row, ("degree", "degreeName"), 40)
+    major = _first_text(row, ("major", "majorName"), 60)
+    if not degree and not major:
+        return None
+    compact: dict[str, str] = {}
+    if degree:
+        compact["degree"] = degree
+    if major:
+        compact["major"] = major
+    return compact
+
+
+def _skill_names(rows: Any) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for row in rows or []:
+        if isinstance(row, dict):
+            name = row.get("name") or row.get("skillName")
+        else:
+            name = row
+        text = _compact_text(name, 60)
+        key = text.casefold()
+        if text and key not in seen:
+            seen.add(key)
+            names.append(text)
+        if len(names) >= _MAX_JUDGE_SKILLS:
+            break
+    return names
+
+
+def _judge_profile(item: Any) -> dict[str, Any]:
+    """Return only the resume evidence needed for ability-level judging."""
+    profile: dict[str, Any] = {
         "workYears": item.workYears,
-        "workExperiences": (item.workExperiences or [])[:3],
-        "skills": (item.skills or [])[:10],
-        "educations": (item.educations or [])[:2],
-        "summary": item.summary,
+        "skills": _skill_names(item.skills),
     }
+    work_rows = sorted(
+        (row for row in (item.workExperiences or []) if isinstance(row, dict)),
+        key=_experience_date,
+        reverse=True,
+    )[:_MAX_JUDGE_ROLES]
+    roles = [
+        role
+        for role in (_compact_experience(row) for row in work_rows)
+        if role is not None
+    ]
+    if roles:
+        profile["recentRoles"] = roles
+    education = [
+        row
+        for row in (_compact_education(row) for row in (item.educations or [])[:1])
+        if row is not None
+    ]
+    if education:
+        profile["education"] = education[0]
+    summary = _compact_text(item.summary, _MAX_JUDGE_SUMMARY_CHARS)
+    if summary:
+        profile["summary"] = summary
+    return profile
 
 
 def build_judge_payload(
@@ -166,7 +297,7 @@ def build_judge_payload(
     abilities: list[str],
     candidates: list[Any],
 ) -> dict[str, Any]:
-    """Trimmed judge input: hard_matches facts + trimmed snapshot."""
+    """Compact judge input: hard-match facts plus key resume evidence only."""
     return {
         "query": query,
         "abilities": abilities,
@@ -174,7 +305,7 @@ def build_judge_payload(
             {
                 "docId": c.doc_id,
                 "hardMatches": c.hard_matches,
-                "snapshot": _trim_snapshot(c.item),
+                "profile": _judge_profile(c.item),
             }
             for c in candidates
         ],

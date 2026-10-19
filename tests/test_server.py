@@ -298,8 +298,8 @@ def test_root_serves_the_web_console(client: TestClient) -> None:
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
     assert "Search Agent" in resp.text
-    assert "app.js?v=2" in resp.text
-    assert "styles.css?v=2" in resp.text
+    assert "app.js?v=3" in resp.text
+    assert "styles.css?v=3" in resp.text
     assert 'id="agent-view"' in resp.text
     assert 'id="mode-chip"' in resp.text
     assert 'id="online-mode-dialog"' in resp.text
@@ -364,6 +364,9 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "is-skipped" in script.text
     assert "updateRouteSummary" in script.text
     assert "`${intent} · ${routeLabel(route)} · ${stages} 阶段`" in script.text
+    assert "function formatSeconds(milliseconds)" in script.text
+    assert 'setMetric("m-elapsed", formatSeconds(' in script.text
+    assert 'add("耗时", formatSeconds(meta.elapsedMs))' in script.text
     assert 'modeChip.removeAttribute("title")' in script.text
     assert 'modeChip.setAttribute("aria-label"' in script.text
     assert "LLM、检索工具与候选人库会一起切换" not in script.text
@@ -509,7 +512,7 @@ def test_non_search_requests_return_one_reply_without_calling_llm_or_tool(
     assert "event: error" not in text
 
 
-def test_greeting_plus_recruitment_still_runs_the_agent(client: TestClient) -> None:
+def test_greeting_plus_recruitment_uses_direct_search(client: TestClient) -> None:
     with client.stream(
         "POST",
         "/search/stream",
@@ -519,11 +522,12 @@ def test_greeting_plus_recruitment_still_runs_the_agent(client: TestClient) -> N
         text = "".join(resp.iter_text())
 
     assert "event: reply" not in text
-    assert '"stage": "understand"' in text
+    assert '"stage": "direct_search"' in text
+    assert '"stage": "understand"' not in text
     assert "event: result" in text
 
 
-def test_stream_uses_lightweight_route_for_skill_only_search(client: TestClient) -> None:
+def test_stream_uses_direct_search_for_skill_only_search(client: TestClient) -> None:
     with client.stream(
         "POST",
         "/search/stream",
@@ -535,28 +539,52 @@ def test_stream_uses_lightweight_route_for_skill_only_search(client: TestClient)
     assert "event: result" in text
     stage_frames = [frame for frame in _frames(text) if _event_payload(frame)[0] == "stage"]
     stages = [_event_payload(frame)[1]["stage"] for frame in stage_frames]
-    assert stages == ["understand", "execute", "judge", "evaluate", "finalize"]
-    assert "plan" not in stages
+    assert stages == ["direct_search", "execute", "finalize"]
+    assert "understand" not in stages
+    assert "judge" not in stages
     assert "reflect" not in stages
     assert "revise" not in stages
-    understand = next(
+    direct = next(
         payload
         for _, payload in (_event_payload(frame) for frame in stage_frames)
-        if payload["stage"] == "understand"
+        if payload["stage"] == "direct_search"
     )
-    assert understand["detail"]["needsClarification"] is False
-    assert understand["detail"]["requestIntent"] == "SEARCH"
-    assert understand["detail"]["intentRule"] == "search"
-    assert understand["detail"]["difficultyRoute"] == "single_pass"
-    assert understand["detail"]["plannedStages"] == stages
+    assert direct["detail"]["requestIntent"] == "SEARCH"
+    assert direct["detail"]["intentRule"] == "search"
+    assert direct["detail"]["difficultyRoute"] == "direct_search"
+    assert direct["detail"]["plannedStages"] == stages
+    assert direct["detail"]["skills"] == ["Python"]
+    assert direct["detail"]["ir"]["meta"]["notes"] == ["direct_search:deterministic_parse"]
     _, payload = _event_payload(_frames(text)[-1])
     assert payload["topK"] == 6
     assert payload["total"] > 0
     assert payload.get("clarification") is None
     assert payload["debug"]["requestIntent"] == "SEARCH"
     assert payload["debug"]["intentRule"] == "search"
-    assert payload["debug"]["difficultyRoute"] == "single_pass"
+    assert payload["debug"]["difficultyRoute"] == "direct_search"
     assert payload["debug"]["executedStages"] == stages
+    assert payload["debug"]["agentMetrics"]["meta"]["llmCalls"] == 1
+    assert payload["debug"]["agentMetrics"]["meta"]["agentLlmCalls"] == 0
+    assert payload["debug"]["agentMetrics"]["meta"]["parserLlmCalls"] == 1
+
+
+def test_stream_direct_search_uses_v2_parser_without_agent_judge() -> None:
+    llm = ScriptedLlmClient()
+    tool = _MemorySearchSpy()
+    app = create_app(tool=tool, llm_client=llm)
+
+    with TestClient(app) as direct:
+        with direct.stream(
+            "POST",
+            "/search/stream",
+            json={"query": "帮我找会 Python 的", "topK": 5, "details": True},
+        ) as resp:
+            text = "".join(resp.iter_text())
+
+    assert "event: error" not in text
+    assert [schema for schema, _ in llm.calls] == ["hybrid_search_v2_ir"]
+    assert tool.search_calls == 1
+    assert tool.rerank_calls == 0
 
 
 def test_stream_keeps_lightweight_route_for_structured_clarification_option(
@@ -619,3 +647,23 @@ def test_stream_keeps_reflective_route_for_complex_query(client: TestClient) -> 
     assert payload["debug"]["requestIntent"] == "SEARCH"
     assert payload["debug"]["intentRule"] == "search"
     assert payload["debug"]["difficultyRoute"] == "standard"
+
+
+def test_complex_query_never_invokes_the_v2_parser() -> None:
+    llm = ScriptedLlmClient()
+    tool = _MemorySearchSpy()
+    app = create_app(tool=tool, llm_client=llm)
+
+    with TestClient(app) as complex_client:
+        with complex_client.stream(
+            "POST",
+            "/search/stream",
+            json={"query": "找能力可迁移的架构师", "topK": 5, "details": True},
+        ) as resp:
+            assert resp.status_code == 200
+            text = "".join(resp.iter_text())
+
+    assert "event: result" in text
+    schemas = [schema for schema, _ in llm.calls]
+    assert "agent_understand" in schemas
+    assert "hybrid_search_v2_ir" not in schemas

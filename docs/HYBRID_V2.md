@@ -4,12 +4,20 @@ Hybrid V2 is the production-style retrieval backend bundled with this
 repository. It is selected automatically when an Elasticsearch endpoint is
 configured, or explicitly with `--backend hybrid_v2`.
 
-The engine owns four steps:
+The engine owns five steps:
 
-1. normalize the agent's IR (work-history facts and position aliases);
-2. compile hard conditions to Elasticsearch filters;
-3. recall with BM25 plus multi-field kNN;
-4. rerank locally, or with bounded OpenAI-compatible shards.
+1. parse natural language into `CandidateSearchIR` through an injected
+   `LlmClient` (prompt, JSON schema, IR repair, and one bounded retry);
+2. normalize the IR (work-history facts and position aliases);
+3. compile hard conditions to Elasticsearch filters;
+4. recall with BM25 plus multi-field kNN;
+5. rerank locally, or with bounded OpenAI-compatible shards.
+
+The parser lives in `hybrid_v2/parser.py`. It is provider-agnostic: the agent
+supplies the active runtime client, so the full online mode uses the configured
+gateway while the fast demo uses a scripted client that returns the same IR
+contract. The normal agent path may instead obtain the IR from its `understand`
+stage; both paths converge on the same normalize/compile/recall/rerank engine.
 
 All credentials, field names, catalogs, and service endpoints are supplied by
 the operator through environment variables. The repository contains no

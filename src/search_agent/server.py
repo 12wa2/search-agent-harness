@@ -79,6 +79,17 @@ class RuntimeModeRequest(BaseModel):
 
 def _stage_payload(event: str, state: dict[str, Any]) -> dict[str, Any]:
     """JSON-safe summary of one stage event (mirrors the CLI event printer)."""
+    if event == "direct_search":
+        direct = state.get("direct_search") or {}
+        payload = dict(direct.get("plan") or {})
+        payload.update(
+            {
+                "difficultyRoute": state.get("difficulty_route"),
+                "plannedStages": list(state.get("planned_stages") or []),
+                "historyTurns": len((state.get("conversation_history") or [])[-3:]),
+            }
+        )
+        return payload
     if event == "understand":
         job = state.get("job_profile")
         if job is None:
@@ -101,6 +112,15 @@ def _stage_payload(event: str, state: dict[str, Any]) -> dict[str, Any]:
         paths = state.get("paths") or []
         return {"paths": len(paths), "rationales": [p.rationale for p in paths]}
     if event == "execute":
+        if state.get("difficulty_route") == "direct_search":
+            direct = state.get("direct_search") or {}
+            return {
+                "paths": 1,
+                "recalled": direct.get("recalled", 0),
+                "qualities": [f"direct:{direct.get('quality') or 'unknown'}"],
+                "timingsMs": direct.get("timingsMs") or {},
+                "direct": True,
+            }
         results = state.get("path_results") or []
         return {
             "paths": len(results),
@@ -177,7 +197,7 @@ async def _stream_search(
 
     def sink(event: str, state: dict[str, Any]) -> None:
         detail = _stage_payload(event, state)
-        if event == "understand":
+        if event in {"understand", "direct_search"}:
             detail["requestIntent"] = decision.intent.value
             detail["intentRule"] = decision.rule
         events.put(("stage", {"stage": event, "detail": detail}))

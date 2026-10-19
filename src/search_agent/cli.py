@@ -59,7 +59,23 @@ def make_event_printer(stream: TextIO | None = None) -> Callable[[str, dict[str,
     out = stream or sys.stdout
 
     def sink(event: str, state: dict[str, Any]) -> None:
-        if event == "understand":
+        direct_route = state.get("difficulty_route") == "direct_search"
+        if event == "direct_search":
+            direct = state.get("direct_search") or {}
+            plan = direct.get("plan") or {}
+            skills = "、".join(plan.get("skills") or []) or "—"
+            cities = "、".join(plan.get("cities") or []) or "—"
+            parser_label = (
+                "V2 parser"
+                if plan.get("irSource") == "hybrid_v2_parser"
+                else "本地规则回退"
+            )
+            print(
+                f"  [1/3 direct_search] {parser_label} 解析 IR  技能={skills}  城市={cities}  "
+                f"硬条件={plan.get('hardConstraints', 0)} 条",
+                file=out,
+            )
+        elif event == "understand":
             job = state.get("job_profile")
             if job is None:
                 return
@@ -74,6 +90,14 @@ def make_event_printer(stream: TextIO | None = None) -> Callable[[str, dict[str,
             detail = " | ".join(f"{p.id}: {_short(p.rationale, 18)}" for p in paths)
             print(f"  [2/8 plan] 生成 {len(paths)} 条搜索路径 → {detail}", file=out)
         elif event == "execute":
+            if direct_route:
+                direct = state.get("direct_search") or {}
+                print(
+                    f"  [2/3 execute] 直连 SearchTool，召回 {direct.get('recalled', 0)} 人次  "
+                    f"quality={direct.get('quality', 'empty')}",
+                    file=out,
+                )
+                return
             results = state.get("path_results") or []
             recalled = sum(pr.tool_result.total for pr in results)
             qualities = ", ".join(f"{pr.path_id}:{pr.quality}" for pr in results)
@@ -118,10 +142,17 @@ def make_event_printer(stream: TextIO | None = None) -> Callable[[str, dict[str,
                 if converged_search is not None
                 else "合并池重排"
             )
-            print(
-                f"  [8/8 finalize] 最终 {state.get('final_total')} 人（{search_note}）",
-                file=out,
-            )
+            if direct_route:
+                print(
+                    f"  [3/3 finalize] 直连交付 {state.get('final_total')} 人"
+                    f"（工具匹配 {converged_search or 0} 人次）",
+                    file=out,
+                )
+            else:
+                print(
+                    f"  [8/8 finalize] 最终 {state.get('final_total')} 人（{search_note}）",
+                    file=out,
+                )
         elif event.startswith("degrade"):
             print(f"  [!] {event} 降级：{state.get('degraded_reason')}", file=out)
 
@@ -158,6 +189,18 @@ def print_metrics(resp: SearchResponse, stream: TextIO | None = None) -> None:
     meta = metrics.get("meta") or {}
     rounds = metrics.get("rounds") or {}
     recall = metrics.get("recall") or {}
+    if debug.get("difficultyRoute") == "direct_search":
+        trace = debug.get("agentTrace") or {}
+        tool_calls = trace.get("toolCalls") or [{}]
+        print(
+            f"\n  运行指标: Agent LLM {meta.get('agentLlmCalls', 0)} 次 · V2 parser "
+            f"{meta.get('parserLlmCalls', meta.get('llmCalls', 0))} 次 · SearchTool "
+            f"{len(tool_calls)} 次 · 直连交付 {resp.total}/{resp.topK} · "
+            f"工具召回 {tool_calls[0].get('total', 0)} 人次 · "
+            f"降级={meta.get('degradedReason') or '无'}",
+            file=out,
+        )
+        return
     print(
         f"\n  运行指标: LLM 调用 {meta.get('llmCalls')} 次 · 迭代 {rounds.get('iterations')} 轮 · "
         f"召回完成度 {recall.get('rate')}（{recall.get('judged')}/{recall.get('target')}） · "

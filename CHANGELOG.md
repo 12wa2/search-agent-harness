@@ -7,6 +7,17 @@
 
 ### Added
 
+- **Hybrid V2 直连简单搜索**（`direct_search.py`、`hybrid_v2/parser.py`、`service.py`、`server.py`、
+  `web/`）：明确技能、岗位、年限或城市的低不确定查询先经过保守直连门槛，再由 Hybrid V2 parser
+  生成 `CandidateSearchIR`，最后只调用一次 `SearchTool` 完成 normalize、compile、BM25/kNN 召回
+  和重排。新增 `direct_search → execute → finalize` SSE 路由，`difficultyRoute=direct_search`，
+  不产生 `understand / plan / judge / reflect / revise`，Agent 编排 LLM 调用为 0；V2 parser LLM
+  通常为 1 次（语义重试最多 2 次），Token、耗时和重试次数分别写入 `parserLlmCalls` /
+  `promptTokens` / `completionTokens` / `llmRetries`。在线模式使用运行时网关，快速演示使用同一
+  IR 契约的脚本化 parser；parser 两次失败时显式回退到 `local_rules_fallback`，并记录
+  `degradedReason=hybrid_v2_parse_failed`。模糊、偏好重、会话承接和可迁移能力查询继续进入原
+  自适应 Agent。补充直连门槛、V2 parser、失败降级、单次工具调用与服务/SSE 回归测试，并更新
+  前端路由标签、CandidateSearchIR 展开详情、README 与架构说明。
 - **运行模式切换保护**（`web/`）：从快速演示切入完整在线前显示轻量确认框，说明真实模型调用、
   潜在 API 费用、数据发送边界及“只影响后续搜索”；切回快速演示不增加步骤。同步校正澄清规则
   注释、补充泛化搜索动词的回归测试，并统一 README 测试徽章与 Roadmap 的实际测试口径。
@@ -165,6 +176,18 @@
 
 ### Fixed
 
+- **Judge 输入与简单查询延迟**（`harness.py`、`llm/prompts/__init__.py`）：`single_pass` 路由把
+  召回/判定候选池上限收紧为 `max(20, top_k * 2)`，默认 `topK=20` 时从 60 人降至 40 人；
+  每位候选人只发送年限、技能名、最近两段岗位、学历摘要与截断后的概要，不再把完整工作经历
+  和整份简历塞进单次 judge 请求。judge 只返回命中能力，未命中能力由程序推导，且不再生成
+  未使用的逐候选人 summary。复杂查询的 `reduced` / `standard` 召回广度不变。本机
+  `qwen3.8-flash` 同一单趟查询实测：总耗时 `40.2 s → 24.2 s`，judge `32.4 s → 12.7 s`，
+  tokens `23,968 → 13,183`（单次观测，用于验证链路收益）。
+- **Redis 5 兼容性**（`session.py`、`conversation_memory.py`、`core/experience.py`）：
+  Redis 客户端显式使用 RESP2，兼容不支持 `HELLO 3` 的 Windows Redis 5，避免会话、对话记忆与
+  策略记忆在运行期报 `unknown command HELLO`。
+- **耗时单位统一**（`web/`）：运行账本、执行详情和阶段时间线统一把毫秒换算为秒并保留一位小数，
+  例如 `40195 ms` 显示为 `40.2 s`，避免技术观测视图混用单位。
 - **启动脚本与浏览器缓存**（`scripts/start-dev.ps1`、`server.py`、`web/`）：再次运行启动脚本时，
   如果仓库中的后端源码晚于当前 API 进程，脚本会自动停止旧进程并按请求模式重启，避免出现
   “代码已更新但页面仍由旧服务响应”；`/healthz` 新增 `startedAt` 供启动器判断进程版本。

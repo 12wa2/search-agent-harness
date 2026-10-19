@@ -8,11 +8,12 @@ No loop logic here -- that lives in the Harness.
 from __future__ import annotations
 
 import logging
+import time
 from threading import Event
 from typing import Any, Callable
 
 from search_agent.config import budget_from_env, recall_pool_size_from_env
-from search_agent.contract.tool import SearchTool, ToolCandidate
+from search_agent.contract.tool import SearchTool, SearchToolRequest, ToolCandidate
 from search_agent.conversation_memory import (
     ConversationMemory,
     ConversationStore,
@@ -20,7 +21,18 @@ from search_agent.conversation_memory import (
     new_conversation_id,
 )
 from search_agent.core.budget import BudgetState
+from search_agent.core.cancellation import (
+    SearchCancelled,
+    is_cancelled,
+    mark_cancelled,
+)
 from search_agent.core.experience import ExperienceStore, attribute_qualified, query_family
+from search_agent.direct_search import (
+    DIRECT_SEARCH_ROUTE,
+    DirectSearchPlan,
+    build_direct_search_plan,
+)
+from search_agent.hybrid_v2.parser import parse_query_to_ir
 from search_agent.llm.client import LlmClient, MeteredLlmClient, OpenAILlmClient
 from search_agent.models.api import CandidateItem, PageInfo, SearchRequest, SearchResponse
 from search_agent.models.artifacts import Budget
@@ -62,15 +74,6 @@ class SearchAgentService:
 
     def search(self, req: SearchRequest, *, cancel_event: Event | None = None) -> SearchResponse:
         budget = _budget_from_settings(req.topK)
-        bs = BudgetState(budget=budget)
-        deps = Deps(
-            llm=MeteredLlmClient(self._llm, bs, cancel_event=cancel_event),
-            tool=self._tool,
-            budget_state=bs,
-            event_sink=self._event_sink,
-            experience=self._experience,
-            cancel_event=cancel_event,
-        )
 
         perm_dict = req.permission.model_dump() if req.permission else None
         conversation_history: list[dict] = []
@@ -86,22 +89,42 @@ class SearchAgentService:
                 pass
         conversation_turns = len(conversation_history)
 
-        initial_state: dict[str, Any] = {
-            "query": req.query,
-            "company_id": req.companyId,
-            "hr_id": req.hrId,
-            "permission": perm_dict,
-            "routing": req.companyId,
-            "top_k": req.topK,
-            "recall_pool_size": req.recallPoolSize or recall_pool_size_from_env(req.topK),
-            "details": req.details,
-            "budget": budget,
-            "conversation_history": conversation_history,
-        }
+        direct_plan = build_direct_search_plan(req.query)
+        if direct_plan is not None:
+            state = self._run_direct_search(
+                req,
+                direct_plan,
+                budget=budget,
+                conversation_history=conversation_history,
+                cancel_event=cancel_event,
+            )
+        else:
+            bs = BudgetState(budget=budget)
+            deps = Deps(
+                llm=MeteredLlmClient(self._llm, bs, cancel_event=cancel_event),
+                tool=self._tool,
+                budget_state=bs,
+                event_sink=self._event_sink,
+                experience=self._experience,
+                cancel_event=cancel_event,
+            )
+            initial_state: dict[str, Any] = {
+                "query": req.query,
+                "company_id": req.companyId,
+                "hr_id": req.hrId,
+                "permission": perm_dict,
+                "routing": req.companyId,
+                "top_k": req.topK,
+                "recall_pool_size": req.recallPoolSize or recall_pool_size_from_env(req.topK),
+                "details": req.details,
+                "budget": budget,
+                "conversation_history": conversation_history,
+            }
+            state = self._runner.run(initial_state, deps)
 
-        state = self._runner.run(initial_state, deps)
         if not state.get("cancelled"):
-            self._record_experience(state)
+            if direct_plan is None:
+                self._record_experience(state)
             if conv_id:
                 try:
                     conversation_turns = self._save_conversation_turn(conv_id, req, state)
@@ -123,6 +146,238 @@ class SearchAgentService:
                 "topK": req.topK,
             }
         )
+
+    def _run_direct_search(
+        self,
+        req: SearchRequest,
+        plan: DirectSearchPlan,
+        *,
+        budget: Budget,
+        conversation_history: list[dict],
+        cancel_event: Event | None,
+    ) -> dict[str, Any]:
+        """Run the complete Hybrid V2 simple-search path.
+
+        The deterministic router decides that a query is an explicit search;
+        the V2 parser LLM then owns NL-to-IR. The result is executed by one
+        SearchTool call, without entering any agent orchestration stage.
+        """
+        started = time.perf_counter()
+        stages = ["direct_search", "execute", "finalize"]
+        budget_state = BudgetState(budget=budget)
+        state: dict[str, Any] = {
+            "query": req.query,
+            "company_id": req.companyId,
+            "hr_id": req.hrId,
+            "permission": req.permission.model_dump() if req.permission else None,
+            "routing": req.companyId,
+            "top_k": req.topK,
+            "recall_pool_size": req.recallPoolSize or req.topK,
+            "details": req.details,
+            "budget": budget,
+            "conversation_history": conversation_history,
+            "job_profile": plan.job_profile,
+            "talent_profile": plan.talent_profile,
+            "difficulty_route": DIRECT_SEARCH_ROUTE,
+            "planned_stages": stages,
+            "executed_stages": [],
+            "finalize_reason": "direct_search",
+            "phase": "done",
+            "cancelled": False,
+            "final_items": [],
+            "final_total": 0,
+        }
+
+        if is_cancelled(cancel_event):
+            mark_cancelled(state, stage="direct_search")
+            return state
+
+        parser_started = time.perf_counter()
+        try:
+            parsed = parse_query_to_ir(
+                req.query,
+                llm_client=MeteredLlmClient(
+                    self._llm,
+                    budget_state,
+                    cancel_event=cancel_event,
+                ),
+            )
+        except SearchCancelled:
+            mark_cancelled(state, stage="direct_search")
+            return state
+        parser_elapsed_ms = int((time.perf_counter() - parser_started) * 1000)
+        budget_state.record_llm(parsed.attempts)
+
+        if parsed.intent is not None:
+            effective_plan = plan.with_intent(
+                parsed.intent,
+                ir_source="hybrid_v2_parser",
+                parser_attempts=parsed.attempts,
+            )
+        else:
+            effective_plan = plan.with_intent(
+                plan.intent,
+                ir_source="local_rules_fallback",
+                parser_attempts=parsed.attempts,
+                parser_error=parsed.error,
+            )
+            state["degraded_reason"] = "hybrid_v2_parse_failed"
+
+        state["job_profile"] = effective_plan.job_profile
+        state["talent_profile"] = effective_plan.talent_profile
+        state["direct_search"] = {
+            "plan": effective_plan.event_payload(),
+            "parser": {
+                "source": effective_plan.ir_source,
+                "attempts": parsed.attempts,
+                "error": parsed.error,
+                "elapsedMs": parser_elapsed_ms,
+                "llmCalls": budget_state.llm_calls,
+                "promptTokens": budget_state.prompt_tokens,
+                "completionTokens": budget_state.completion_tokens,
+                "tokensEstimated": budget_state.tokens_estimated,
+                "llmRetries": budget_state.llm_retries,
+            },
+        }
+        self._emit_direct_stage("direct_search", state)
+
+        if is_cancelled(cancel_event):
+            mark_cancelled(state, stage="direct_search")
+            return state
+
+        tool_started = time.perf_counter()
+        result = self._tool.search_with_intent(
+            SearchToolRequest(
+                intent=effective_plan.intent,
+                query_text=req.query,
+                company_id=req.companyId,
+                hr_id=req.hrId,
+                permission=state["permission"],
+                top_k=req.topK,
+                recall_pool_size=req.recallPoolSize or req.topK,
+                routing=req.companyId,
+                details=req.details,
+                skip_rerank=False,
+            )
+        )
+        tool_elapsed_ms = int((time.perf_counter() - tool_started) * 1000)
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        final_items = list(result.items[: req.topK])
+        rerank_used = "rerank" in result.timings_ms
+        degraded_reason = ";".join(
+            reason
+            for reason in (state.get("degraded_reason"), result.degraded_reason)
+            if reason
+        ) or None
+        state.update(
+            {
+                "final_items": final_items,
+                "final_total": len(final_items),
+                "final_search_total": max(result.total, len(result.items)),
+                "degraded_reason": degraded_reason,
+                "rerank_used": rerank_used,
+            }
+        )
+        state["direct_search"].update(
+            {
+                "recalled": max(result.total, len(result.items)),
+                "returned": len(result.items),
+                "quality": result.quality,
+                "timingsMs": dict(result.timings_ms),
+                "parseElapsedMs": parser_elapsed_ms,
+                "toolElapsedMs": tool_elapsed_ms,
+                "elapsedMs": elapsed_ms,
+            }
+        )
+        self._emit_direct_stage("execute", state)
+
+        if is_cancelled(cancel_event):
+            mark_cancelled(state, stage="execute")
+            return state
+
+        self._emit_direct_stage("finalize", state)
+        self._attach_direct_observability(state, req=req)
+        return state
+
+    def _emit_direct_stage(self, stage: str, state: dict[str, Any]) -> None:
+        state["executed_stages"].append(stage)
+        if self._event_sink is None:
+            return
+        try:
+            self._event_sink(stage, state)
+        except Exception:  # noqa: BLE001 - observability must not fail a run
+            logger.debug("direct-search event sink failed for %s", stage, exc_info=True)
+
+    @staticmethod
+    def _attach_direct_observability(state: dict[str, Any], *, req: SearchRequest) -> None:
+        """Build a trace separating Agent LLM calls from V2 parser calls."""
+        direct = state.get("direct_search") or {}
+        parser = direct.get("parser") or {}
+        items = state.get("final_items") or []
+        elapsed_ms = int(direct.get("elapsedMs") or 0)
+        tool_elapsed_ms = int(direct.get("toolElapsedMs") or 0)
+        parser_calls = int(parser.get("llmCalls") or 0)
+        prompt_tokens = int(parser.get("promptTokens") or 0)
+        completion_tokens = int(parser.get("completionTokens") or 0)
+        budget = state.get("budget")
+        direct_trace = dict(direct.get("plan") or {})
+        direct_trace["parser"] = dict(parser)
+        state["agent_trace"] = {
+            "route": DIRECT_SEARCH_ROUTE,
+            "iterations": [],
+            "final": {
+                "mergedPoolSize": int(direct.get("returned") or 0),
+                "rerankedTopK": len(items),
+                "rerankUsed": bool(state.get("rerank_used")),
+            },
+            "budget": budget.model_dump() if budget else {},
+            "budgetUsed": {
+                "llmCalls": parser_calls,
+                "agentLlmCalls": 0,
+                "parserLlmCalls": parser_calls,
+                "elapsedMs": elapsed_ms,
+            },
+            "degradedReason": state.get("degraded_reason"),
+            "toolCalls": [
+                {
+                    "pathId": "direct_search",
+                    "elapsedMs": tool_elapsed_ms,
+                    "total": int(direct.get("recalled") or 0),
+                    "quality": direct.get("quality"),
+                }
+            ],
+            "directSearch": direct_trace,
+        }
+        state["agent_metrics"] = {
+            "recall": {
+                "rate": round(len(items) / max(req.topK, 1), 3),
+                "judged": 0,
+                "trulyMatched": 0,
+                "target": req.topK,
+                "qualityDistribution": (
+                    {str(direct.get("quality")): 1} if direct.get("quality") else {}
+                ),
+                "surfacedDocIds": [tc.doc_id for tc in items],
+            },
+            "rounds": {"iterations": 0, "newQualifiedPerRound": []},
+            "match": {"abilityCoverage": 0.0, "hardMatchHitRate": 0.0},
+            "reasoning": {"sourceConversion": {}},
+            "reflection": {"gain": []},
+            "meta": {
+                "llmCalls": parser_calls,
+                "agentLlmCalls": 0,
+                "parserLlmCalls": parser_calls,
+                "llmRetries": int(parser.get("llmRetries") or 0),
+                "promptTokens": prompt_tokens,
+                "completionTokens": completion_tokens,
+                "totalTokens": prompt_tokens + completion_tokens,
+                "tokensEstimated": bool(parser.get("tokensEstimated")),
+                "elapsedMs": elapsed_ms,
+                "degradedReason": state.get("degraded_reason"),
+                "rerankUsed": bool(state.get("rerank_used")),
+                "fallbackBaseline": False,
+            },
+        }
 
     # ── output adapters ─────────────────────────────────────────────────
 
@@ -262,6 +517,8 @@ class SearchAgentService:
         debug["difficultyRoute"] = state.get("difficulty_route")
         debug["plannedStages"] = list(state.get("planned_stages") or [])
         debug["executedStages"] = list(state.get("executed_stages") or [])
+        if state.get("direct_search"):
+            debug["directSearch"] = state["direct_search"]
         return debug
 
     def _save_conversation_turn(

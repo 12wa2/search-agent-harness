@@ -81,7 +81,7 @@ class AgentSessionStore:
 
                 url = os.environ.get("SEARCH_AGENT_REDIS_URL") or os.environ.get("REDIS_URL")
                 if url:
-                    self._redis = redis.Redis.from_url(url)
+                    self._redis = redis.Redis.from_url(url, protocol=2)
             except Exception as exc:  # pragma: no cover
                 logger.info("Redis unavailable, agent session falls back to memory: %s", exc)
 

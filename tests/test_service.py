@@ -45,8 +45,12 @@ class _FakeTool:
     def __init__(self, items, rerank_items=None):
         self._items = items
         self._rerank = rerank_items or items
+        self.search_calls = 0
+        self.last_request = None
 
     def search_with_intent(self, req: SearchToolRequest) -> SearchToolResult:
+        self.search_calls += 1
+        self.last_request = req
         return SearchToolResult(
             items=self._items, total=len(self._items), quality="rich", timings_ms={"total": 100}
         )
@@ -63,6 +67,7 @@ class _FakeTool:
 def _llm():
     return FakeLlmClient(
         responses={
+            "hybrid_search_v2_ir": _ir().model_dump(),
             "agent_understand": {
                 "title": "Python engineer",
                 "must_abilities": [{"name": "Python", "level": "must"}],
@@ -286,7 +291,7 @@ def test_service_clarification_response():
     assert "How many years?" in resp.clarification["questions"]
 
 
-def test_service_skill_only_search_uses_single_pass_route():
+def test_service_skill_only_search_uses_direct_search_route():
     llm = _llm()
     tool = _FakeTool([_candidate(f"d{i}") for i in range(5)])
     svc = SearchAgentService(tool=tool, llm_client=llm, runner=LoopRunner())
@@ -298,15 +303,63 @@ def test_service_skill_only_search_uses_single_pass_route():
     assert resp.total == 5
     assert resp.clarification is None
     assert resp.debug is not None
-    assert resp.debug["difficultyRoute"] == "single_pass"
+    assert resp.debug["difficultyRoute"] == "direct_search"
     assert resp.debug["executedStages"] == [
-        "understand",
+        "direct_search",
         "execute",
-        "judge",
-        "evaluate",
         "finalize",
     ]
-    assert all(name != "agent_plan" for name, _ in llm.calls)
+    assert resp.debug["agentMetrics"]["meta"]["llmCalls"] == 1
+    assert resp.debug["agentMetrics"]["meta"]["agentLlmCalls"] == 0
+    assert resp.debug["agentMetrics"]["meta"]["parserLlmCalls"] == 1
+    assert resp.debug["agentMetrics"]["meta"]["totalTokens"] > 0
+    assert resp.debug["directSearch"]["plan"]["skills"] == ["Python"]
+    assert resp.debug["directSearch"]["plan"]["irSource"] == "hybrid_v2_parser"
+    assert tool.search_calls == 1
+    assert tool.last_request is not None
+    assert tool.last_request.intent.where == _ir().where
+    assert tool.last_request.intent.semantic == _ir().semantic
+    assert [call[0] for call in llm.calls] == ["hybrid_search_v2_ir"]
+
+
+def test_service_direct_search_uses_v2_parser_not_agent_stages():
+    llm = FakeLlmClient(responses={"hybrid_search_v2_ir": _ir().model_dump()})
+    tool = _FakeTool([_candidate("python-1")])
+    svc = SearchAgentService(tool=tool, llm_client=llm, runner=LoopRunner())
+
+    resp = svc.search(
+        SearchRequest(query="帮我找会 Python 的", companyId=39978, topK=5, details=True)
+    )
+
+    assert resp.total == 1
+    assert resp.debug["difficultyRoute"] == "direct_search"
+    assert [call[0] for call in llm.calls] == ["hybrid_search_v2_ir"]
+    assert tool.search_calls == 1
+
+
+def test_service_direct_search_falls_back_when_v2_parser_fails():
+    class _BoomLlm:
+        def __init__(self):
+            self.calls = 0
+
+        def complete_json(self, **kwargs):
+            self.calls += 1
+            raise RuntimeError("parser unavailable")
+
+    llm = _BoomLlm()
+    tool = _FakeTool([_candidate("python-1")])
+    svc = SearchAgentService(tool=tool, llm_client=llm, runner=LoopRunner())
+
+    resp = svc.search(
+        SearchRequest(query="帮我找会 Python 的", companyId=39978, topK=5, details=True)
+    )
+
+    assert resp.total == 1
+    assert llm.calls == 2
+    assert resp.debug["directSearch"]["plan"]["irSource"] == "local_rules_fallback"
+    assert resp.debug["agentMetrics"]["meta"]["parserLlmCalls"] == 2
+    assert resp.debug["degradedReason"] == "hybrid_v2_parse_failed"
+    assert tool.search_calls == 1
 
 
 def test_service_fallback_baseline():

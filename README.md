@@ -2,13 +2,13 @@
 
 **把「一次检索」升级为「会反思、会自我修正、有预算纪律」的检索 Agent。**
 
-> 一个可嵌入的自适应检索 Agent Harness（明确查询走 5 阶段轻量检索，复杂查询走完整 8 阶段反思；以人才搜索为端到端示例场景）。
+> 一个可嵌入的自适应检索 Agent Harness（明确结构化查询走 Hybrid V2 parser + 3 阶段直连搜索，其余明确招聘需求走 5 阶段轻量 Agent，复杂查询走完整 8 阶段反思；以人才搜索为端到端示例场景）。
 > 纯 Python，唯一运行时依赖是 pydantic；自带离线演示，不需要任何 API Key。
 
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-442-brightgreen)
+![Tests](https://img.shields.io/badge/tests-466-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![version](https://img.shields.io/badge/version-v0.1.0-blue)
@@ -51,7 +51,7 @@ search-agent serve --offline
 | “你好” / “Hello” | `GREETING` | 返回能力介绍与示例需求 | 0 次 |
 | “你能做什么？” / “怎么使用？” | `HELP` | 返回能力边界与输入建议 | 0 次 |
 | 写诗 / 翻译 / 推荐书影音 / 天气 / 通用知识 | `OUT_OF_SCOPE` | 说明只处理招聘搜索，不伪造成 Agent 结果 | 0 次 |
-| 招聘需求，或无法确定 | `SEARCH` | 进入自适应检索链路：明确查询 5 阶段，复杂查询 8 阶段 | 正常预算 |
+| 招聘需求，或无法确定 | `SEARCH` | 先尝试 Hybrid V2 直连搜索；未命中时进入自适应 Agent：明确查询 5 阶段，复杂查询 8 阶段 | 直连 0 次 Agent LLM、≥1 次 V2 parser LLM；Agent 路由按预算执行 |
 
 设计上刻意保守：只有**明确**的问候、帮助问题和无关任务会在 Harness 之前被拦下；其余输入默认交给
 Agent，避免把不常见但真实的招聘表达误判成聊天。路由是规则匹配，不调用 LLM，也不读取或写入
@@ -63,7 +63,25 @@ Agent，避免把不常见但真实的招聘表达误判成聊天。路由是规
 行业词本身不是拒绝依据：只要有招聘或搜索动作，路由就默认交给 Agent；因此
 “招聘音乐制作人”“找电影剪辑师”这类不在常见岗位词表中的需求不会被行业词误伤。
 
-搜索进入 Agent 后还会做一次难度路由：存在明确搜索动作，且同时给出岗位和具体技能时，走
+确定为招聘搜索后，Service 会先做一次保守的直连判断：技能、岗位、年限、城市等字段足够明确，
+且没有“最好 / 优先 / 可迁移 / 重点考察”等开放式信号时，进入完整 Hybrid V2 简单搜索链路：
+
+```text
+query -> hybrid_v2.parser LLM -> CandidateSearchIR -> SearchTool
+      -> normalize / compile / BM25 + kNN / rerank -> topK
+```
+
+这条链路对应 `direct_search → execute → finalize` 三帧 SSE，不产生
+`understand / plan / judge / reflect`。例如“帮我找会 Python 的”和“寻找有 3 年经验的 Python
+工程师”。在线模式使用当前运行时网关解析；快速演示使用同一 IR 契约的脚本化 parser。
+
+指标必须分开看：直连链路的 **Agent LLM 调用为 0**，但 **V2 parser LLM 通常为 1 次**
+（parser 语义重试时最多 2 次）；Token、耗时和 `llmRetries` 会在
+`agentMetrics.meta.parserLlmCalls` / `promptTokens` / `completionTokens` 中单独记录。若启用
+Hybrid V2 的 LLM reranker，其成本仍属于工具侧，不等于 Agent 编排成本。parser 不可用时会显式降级为
+`irSource=local_rules_fallback`，并把 `hybrid_v2_parse_failed` 写入 trace，而不是伪装成完整解析。
+
+无法安全直连的招聘需求再进入 Agent，并做第二次难度路由：明确查询走
 `understand → execute → judge → evaluate → finalize` 的轻量链路；开放式偏好（如“最好/优先/加分”）、
 抽象能力或需要多路径探索的查询，才进入带 `plan / reflect / revise` 的反思链路。
 
@@ -477,7 +495,12 @@ PowerShell 的 `-ExecutionPolicy Bypass`；如果直接运行 `.ps1`，请使用
 
 ```mermaid
 flowchart TD
-    Q([自然语言查询]) --> U["1 · understand<br/>岗位画像 + 人才画像 + 难度评估"]
+    Q([自然语言查询]) --> G{"明确条件可直连？"}
+    G -->|是| DS["direct_search<br/>Hybrid V2 parser → CandidateSearchIR"]
+    DS --> DE["execute<br/>调用一次 SearchTool"]
+    DE --> DF["finalize<br/>直接收敛 topK"]
+    DF --> OUT
+    G -->|否| U["1 · understand<br/>岗位画像 + 人才画像 + 难度评估"]
     U -->|需澄清| CL["返回澄清问题"]
     U -->|难度路由| P["2 · plan<br/>多条不同召回意图的搜索路径"]
     P --> E["3 · execute<br/>线程池并行调用 SearchTool"]
@@ -505,6 +528,7 @@ search-agent-harness/
 ├── src/search_agent/
 │   ├── harness.py           # 外层循环：阶段调度、降级应用、trace 组装
 │   ├── service.py           # SearchRequest → SearchResponse 适配层
+│   ├── direct_search.py     # 保守直连门槛 + 本地回退 IR；Harness 前的三阶段直连链路
 │   ├── runner.py            # 可替换执行后端（默认 LoopRunner）
 │   ├── graph.py             # 可选：LangGraphRunner（同一批阶段 → StateGraph，行为等价）
 │   ├── server.py            # 可选：FastAPI HTTP 服务（SSE 阶段事件流）
@@ -516,7 +540,7 @@ search-agent-harness/
 │   ├── tools/sqlite_fts.py  # 零依赖 SQLite/FTS5 后端（SQL 编译 where 树）
 │   ├── tools/text.py        # 共享语义层：分词 / 匹配 / 打分（多后端同源）
 │   ├── tools/elasticsearch.py # 真实 ES 8 后端（DSL 编译 + docker compose）
-│   ├── hybrid_v2/          # 独立混合检索：IR 编译 + 硬过滤 + BM25/kNN + 重排
+│   ├── hybrid_v2/          # V2 NL2IR parser + IR 编译 + 硬过滤 + BM25/kNN + 重排
 │   ├── llm/                 # LLM 客户端（OpenAI 协议）+ 各阶段 prompt
 │   ├── gateway/             # 可选 OpenAI-compatible LLM 网关：别名 / 降级 / 用量
 │   ├── models/              # 意图 IR / 推理工件 / API 模型（pydantic v2）
@@ -709,6 +733,9 @@ $env:SEARCH_AGENT_MODEL = "search-agent-primary"
 - [x] 消融实验 + 评测门禁：`eval --ablate` 单开关对照表；`docs/eval_baseline.json` 作为 CI 基线，回归即红。
 - [x] 能力感知请求路由：问候 / 帮助 / 明确无关任务在 Harness 之前返回单帧 `reply`（零 LLM、零检索），
       模糊输入默认走搜索；前端展示能力卡片与可填入的推荐需求。
+- [x] Hybrid V2 直连简单搜索：明确技能 / 岗位 / 年限 / 城市先由 V2 parser 生成
+      `CandidateSearchIR`，再调用一次 `SearchTool`；SSE 为
+      `direct_search → execute → finalize`，不启动 Agent 阶段且 Agent LLM 调用为 0。
 - [ ] 真实 embedding 接入：跨越「项目语言 ↔ 能力词」表述差，修掉 Oracle 基准量出的天花板。
 - [ ] 演示 GIF：录制脚本 `docs/demo.tape` 已就绪——装 [vhs](https://github.com/charmbracelet/vhs) 后跑 `vhs docs/demo.tape`（约 40 秒：demo 时间线 + 消融表），产物 `docs/demo.gif`
 - [ ] 完整英文 README（现为 README 内折叠版）

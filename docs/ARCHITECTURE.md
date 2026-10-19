@@ -64,16 +64,42 @@
   （见 understand / plan / judge / reflect 的解析代码）；
 - execute 内部的并行只用线程池，状态变更全部留在主线程（`harness.py` 顶部注释）。
 
+### 直连搜索前置路由
+
+`SearchAgentService` 在构造 Harness 之前先调用 `direct_search.py` 做保守判断。只有查询同时满足
+“存在招聘搜索信号”和“技能 / 岗位 / 年限 / 城市等明确字段”，且不含
+“最好 / 优先 / 可迁移 / 重点考察 / 系统设计”等开放信号时，才会命中直连链路：
+
+```text
+自然语言 ──> Hybrid V2 parser LLM ──> CandidateSearchIR
+        ──> SearchTool.search_with_intent() ──> normalize / compile / recall / rerank ──> topK
+```
+
+这条链路不执行 `understand / plan / judge / reflect / revise`，也不调用 Agent 编排 LLM；
+但会调用 `hybrid_v2.parser.parse_query_to_ir()` 生成 IR，因此完整口径是
+**Agent LLM = 0，V2 parser LLM ≥ 1**。parser 使用运行时注入的 `LlmClient`：完整在线模式走网关，
+快速演示走脚本化客户端。SSE 只发送 `direct_search → execute → finalize` 三帧，
+`finalizeReason=direct_search`；工具内部继续完成 normalize、compile、BM25/kNN 召回和重排。
+
+parser 的调用次数、Token、重试与耗时写入 `directSearch.parser`，并映射到
+`agentMetrics.meta.agentLlmCalls` / `parserLlmCalls` / `promptTokens` / `completionTokens`。
+parser 失败时会重试一次；仍失败则显式回退到本地结构化 IR，标记
+`irSource=local_rules_fallback` 和 `degradedReason=hybrid_v2_parse_failed`，不会静默伪装成模型解析。
+如果工具启用了 LLM reranker，其成本属于工具侧，不并入 Agent 或 parser 计数。
+模糊、偏好重、上下文承接或可迁移能力查询返回 `None`，继续进入下方 Harness。
+
 ## 3. 状态机与流转
 
 主循环在 `harness.py::Harness.run`，`phase` 字段驱动，上限 60 步兜底：
 
 ```text
-understand ──(need_clarify)──> 返回澄清问题
-    │
-    ├──(简单查询路由)──> single_pass：跳过 plan/reflect/revise，直接执行单路径
-    │
-    v
+（Service 前置）
+  明确结构化查询 ──> direct_search ──> execute ──> finalize ──> done
+  其余招聘查询   ──> understand ──(need_clarify)──> 返回澄清问题
+                         │
+                         ├──(简单查询路由)──> single_pass：跳过 plan/reflect/revise，直接执行单路径
+                         │
+                         v
   plan ──> execute ──> judge ──> evaluate
                                    │
                      ┌─ 未达标且预算允许 ─> reflect ─> revise ─> execute（下一轮）
@@ -88,6 +114,8 @@ understand ──(need_clarify)──> 返回澄清问题
   `finalize_reason=difficulty_single_pass`）、`mid → reduced`（迭代 1、每轮 2 路径）、
   `high → standard`（完整反思循环）。难度衡量的是搜索策略的不确定性，而不是抽取到的
   硬条件数量：简单明确的查询不烧多轮预算，抽象、可迁移或容易漏召的查询才进入反思循环。
+  直连链路在 Harness 之前已经拦截“字段充分且无开放偏好”的查询；这里的 `single_pass`
+  用于仍需 Agent 理解、但不值得进入完整反思的招聘请求。
 - **预算守卫**：非 understand / finalize 阶段发现时间或 LLM 调用超预算，直接跳 finalize
   （`budget_exceeded`）。
 - **全路径失败检测**：execute 后若本轮没有任何新 PathResult，判定所有路径失败，

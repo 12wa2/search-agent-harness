@@ -160,11 +160,23 @@ def _judge_path(
             logger.debug("judge path=%s: unmatched doc_id=%r", path_id, doc_id)
             continue
         try:
+            matched_raw = [str(value) for value in (j.get("matched_abilities") or [])]
+            if matched_raw:
+                matched_set = set(matched_raw)
+                matched_abilities = [name for name in abilities if name in matched_set]
+            else:
+                missing_raw = {str(value) for value in (j.get("missing_abilities") or [])}
+                matched_abilities = (
+                    [name for name in abilities if name not in missing_raw]
+                    if missing_raw
+                    else []
+                )
+            missing_abilities = [name for name in abilities if name not in matched_abilities]
             judgment = CandidateJudgment(
                 doc_id=c.doc_id,
                 score=c.score,
-                matched_abilities=list(j.get("matched_abilities", []) or []),
-                missing_abilities=list(j.get("missing_abilities", []) or []),
+                matched_abilities=matched_abilities,
+                missing_abilities=missing_abilities,
                 hard_matches=c.hard_matches,
                 summary=str(j.get("summary", "") or ""),
                 source_path_ids=[path_id],

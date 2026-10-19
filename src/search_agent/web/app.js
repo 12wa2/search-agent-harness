@@ -10,18 +10,22 @@ const STAGES = [
 ];
 
 const STAGE_LABEL = Object.fromEntries(STAGES);
+STAGE_LABEL.direct_search = "解析需求";
 const STAGE_KEYS = STAGES.map(([key]) => key);
 const ROUTE_STAGES = Object.freeze({
+  direct_search: ["direct_search", "execute", "finalize"],
   single_pass: ["understand", "execute", "judge", "evaluate", "finalize"],
   reduced: STAGE_KEYS,
   standard: STAGE_KEYS,
 });
 const ROUTE_LABEL = Object.freeze({
+  direct_search: "直连搜索",
   single_pass: "轻量搜索",
   reduced: "缩减反思",
   standard: "完整反思",
 });
 const STAGE_META = {
+  direct_search: { kind: "PARSE", glyph: "⌁" },
   understand: { kind: "READ", glyph: "01" },
   plan: { kind: "PLAN", glyph: "02" },
   execute: { kind: "TOOL CALL", glyph: "↳" },
@@ -42,6 +46,7 @@ const FINALIZE_REASON_COPY = Object.freeze({
   token_budget: "达到 Token 预算上限，交付当前最优结果。",
   no_progress: "本轮没有新增合格候选人，停止继续搜索。",
   profile_converged: "候选人画像已收敛，进入最终验证并交付。",
+  direct_search: "明确条件已由 Hybrid V2 parser 解析为 IR，本次只调用一次 SearchTool，不启动 Agent 反思链路。",
   difficulty_single_pass: "需求清晰且难度较低，本次使用单次检索完成。",
   paths_exhausted: "反思后没有新的可执行路径，已收敛现有结果。",
   no_path_actions: "反思没有产生可执行的策略动作，已收敛现有结果。",
@@ -115,6 +120,7 @@ function routeLabel(route) {
 }
 
 function routeFootnote(route) {
+  if (route === "direct_search") return "直连搜索：Hybrid V2 parser LLM 将明确需求解析为 IR，再调用一次 SearchTool；不启动 understand / plan / judge / reflect，Agent LLM 调用为 0。";
   if (route === "single_pass") return "轻量搜索：跳过制定计划、反思与策略改写，只保留真实执行的检索阶段。";
   if (route === "reduced") return "缩减反思：按查询难度限制路径数与反思轮次，未执行的阶段会标记为跳过。";
   return "完整反思：允许规划多条路径，并根据覆盖检查决定是否继续反思。";
@@ -122,6 +128,7 @@ function routeFootnote(route) {
 
 function routeStageTotal(route, plannedStages) {
   if (Array.isArray(plannedStages) && plannedStages.length) return plannedStages.length;
+  if (route === "direct_search") return 3;
   return route === "single_pass" ? 5 : 8;
 }
 
@@ -573,6 +580,14 @@ function renderChatCriteria(run, detail = {}) {
 
 function chatStageCopy(stage, detail = {}) {
   const list = (values) => (values || []).filter(Boolean).join("、");
+  if (stage === "direct_search") {
+    const skills = list(detail.skills);
+    const city = list(detail.cities);
+    const signals = [skills ? `技能 ${skills}` : "", city ? `城市 ${city}` : ""]
+      .filter(Boolean)
+      .join("，");
+    return `Hybrid V2 parser 已解析明确条件${signals ? `（${signals}）` : ""}并生成 CandidateSearchIR；随后直接调用 SearchTool，不启动 Agent 八阶段。`;
+  }
   if (stage === "understand") return "已读取岗位描述，提取必备能力、硬条件和可迁移经验。";
   if (stage === "plan") return `已规划 ${detail.paths || 0} 条互补的搜索路径，避免只依赖一个关键词。`;
   if (stage === "execute") {
@@ -688,8 +703,12 @@ function configureChatRoute(run, detail = {}) {
 
 function addChatStage(stage, detail = {}) {
   const run = beginChatRun();
-  if (stage === "understand") {
+  if (stage === "understand" || stage === "direct_search") {
     configureChatRoute(run, detail);
+    if (stage === "direct_search") {
+      const note = run.criteriaCard.querySelector(".chat-criteria-note");
+      if (note) note.textContent = "来自本轮 direct_search 的 Hybrid V2 parser";
+    }
     renderChatCriteria(run, detail);
   }
   ensureProgressSegment(run, stage);
@@ -719,9 +738,11 @@ function addChatStage(stage, detail = {}) {
   run.progressMeta.textContent = `${run.visitedStages.size} 阶段 · ${routeLabel(run.route)} · ${state.stageCount} 个事件`;
   run.progressTitle.textContent = stage === "finalize"
     ? "执行完成"
-    : run.route === "single_pass"
-      ? "轻量搜索执行中"
-      : "Agent 正在执行";
+    : run.route === "direct_search"
+      ? "直连搜索执行中"
+      : run.route === "single_pass"
+        ? "轻量搜索执行中"
+        : "Agent 正在执行";
   rebuildChatDetails(run);
   scrollChatToEnd();
 }
@@ -732,6 +753,7 @@ function rebuildChatDetails(run) {
 
   if (state.lastResult?.debug?.agentMetrics) {
     const metrics = state.lastResult.debug.agentMetrics;
+    const directRoute = state.lastResult.debug.difficultyRoute === "direct_search";
     const meta = metrics.meta || {};
     const rounds = metrics.rounds || {};
     const recall = metrics.recall || {};
@@ -741,11 +763,12 @@ function rebuildChatDetails(run) {
       stat.append(el("b", "", value ?? "—"), el("small", "", label));
       stats.append(stat);
     };
-    add("LLM 调用", meta.llmCalls);
+    add(directRoute ? "Agent LLM" : "LLM 调用", directRoute ? meta.agentLlmCalls ?? 0 : meta.llmCalls);
+    if (directRoute) add("V2 parser", meta.parserLlmCalls ?? meta.llmCalls ?? 0);
     add("Tokens", `${meta.tokensEstimated ? "≈" : ""}${Number(meta.totalTokens || 0).toLocaleString()}`);
-    add("迭代轮次", rounds.iterations);
-    add("耗时", meta.elapsedMs ? `${meta.elapsedMs} ms` : "—");
-    add("通过判定", recall.judged ?? "—");
+    add(directRoute ? "工具调用" : "迭代轮次", directRoute ? 1 : rounds.iterations);
+    add("耗时", formatSeconds(meta.elapsedMs));
+    add(directRoute ? "SearchTool" : "通过判定", directRoute ? 1 : recall.judged ?? "—");
     body.append(stats);
   }
 
@@ -756,7 +779,7 @@ function rebuildChatDetails(run) {
     head.append(
       el("strong", "", STAGE_LABEL[event.stage] || event.stage),
       el("code", "", event.stage),
-      el("span", "", `+${event.at} ms`),
+      el("span", "", `+${formatSeconds(event.at)}`),
     );
     item.append(head, el("p", "", chatStageCopy(event.stage, event.detail)));
     const parts = stageDetail(event.stage, event.detail);
@@ -970,7 +993,17 @@ function appendChatReasoning(container, payload) {
       el("span", "", "来自真实覆盖检查与最终结束原因"),
     );
     const evaluateEvent = [...events].reverse().find((event) => event.stage === "evaluate");
-    if (overview.reasonCode === "difficulty_single_pass") {
+    if (payload.debug?.difficultyRoute === "direct_search") {
+      title.replaceChildren(
+        el("strong", "", "为什么没有进入 Agent 反思链路"),
+        el("span", "", "明确查询由 Hybrid V2 parser 解析后直接执行"),
+      );
+      steps.append(
+        reasoningStep("解析", "Hybrid V2 parser LLM 将自然语言解析为 CandidateSearchIR，并记录 parser 调用与 Token。"),
+        reasoningStep("执行", "SearchTool 只执行一次，完整运行 compile、BM25/kNN 召回与重排。"),
+        reasoningStep("结束", "没有调用 understand / plan / judge / reflect；Agent LLM 为 0，V2 parser LLM 单独计入。"),
+      );
+    } else if (overview.reasonCode === "difficulty_single_pass") {
       steps.append(reasoningStep("路由", "需求被判定为低难度单次检索，覆盖检查后直接收敛。"));
     } else if (evaluateEvent?.detail?.next === "finalize") {
       steps.append(reasoningStep("判断", "覆盖检查已满足结束条件，未触发策略修订。"));
@@ -1067,9 +1100,16 @@ function renderChatResult(payload) {
       item.append(el("b", "", value ?? "—"), el("small", "", label));
       stats.append(item);
     };
+    const directRoute = payload.debug?.difficultyRoute === "direct_search";
     add(Number(payload.total || 0), "交付候选人");
-    add(metrics.rounds?.iterations ?? Math.max(1, state.executeCount), "检索轮次");
-    add(metrics.recall?.judged ?? "—", "通过判定");
+    if (directRoute) {
+      add(1, "SearchTool 调用");
+      add(metrics.meta?.agentLlmCalls ?? 0, "Agent LLM");
+      add(metrics.meta?.parserLlmCalls ?? metrics.meta?.llmCalls ?? 0, "V2 parser LLM");
+    } else {
+      add(metrics.rounds?.iterations ?? Math.max(1, state.executeCount), "检索轮次");
+      add(metrics.recall?.judged ?? "—", "通过判定");
+    }
     message.body.append(stats);
   }
   if (degraded) {
@@ -1342,7 +1382,24 @@ function stageDetail(stage, detail = {}) {
   const parts = [];
   const list = (values) => (values || []).join(" · ");
 
-  if (stage === "understand") {
+  if (stage === "direct_search") {
+    if (detail.jobTitle) parts.push(kv("岗位", detail.jobTitle));
+    if (detail.skills?.length) parts.push(kv("技能", list(detail.skills)));
+    if (detail.cities?.length) parts.push(kv("城市", list(detail.cities)));
+    if (detail.years?.length) parts.push(kv("年限", detail.years.join("–")));
+    if (detail.irSource) {
+      parts.push(kv("IR 来源", detail.irSource === "hybrid_v2_parser" ? "Hybrid V2 parser" : "本地规则回退"));
+    }
+    if (detail.parserAttempts !== undefined) parts.push(kv("Parser 调用", detail.parserAttempts));
+    if (detail.ir) {
+      const raw = el("details", "raw");
+      raw.append(
+        el("summary", "", "CandidateSearchIR"),
+        el("pre", "", JSON.stringify(detail.ir, null, 2)),
+      );
+      parts.push(raw);
+    }
+  } else if (stage === "understand") {
     if (detail.jobTitle) parts.push(kv("岗位", detail.jobTitle));
     if (detail.mustAbilities?.length) parts.push(kv("必备能力", list(detail.mustAbilities)));
     if (detail.hardConstraints !== undefined) parts.push(kv("硬条件", detail.hardConstraints));
@@ -1413,6 +1470,11 @@ function toolCallCard(detail = {}) {
 
 function stageNarrative(stage, detail = {}) {
   const list = (values) => (values || []).filter(Boolean).join("、");
+  if (stage === "direct_search") {
+    const skills = detail.skills?.length ? `识别到技能：${list(detail.skills)}。` : "";
+    const cities = detail.cities?.length ? `城市条件：${list(detail.cities)}。` : "";
+    return `${skills}${cities}Hybrid V2 parser LLM 会先生成 CandidateSearchIR，再直接调用 SearchTool；不启动岗位理解、规划、判断和反思阶段。`;
+  }
   if (stage === "understand") {
     const abilities = detail.mustAbilities?.length
       ? `我锁定了 ${detail.mustAbilities.length} 项必备能力：${list(detail.mustAbilities)}。`
@@ -1459,6 +1521,7 @@ function stageNarrative(stage, detail = {}) {
 }
 
 function stageRunDetail(stage, detail = {}) {
+  if (stage === "direct_search") return "正在调用 Hybrid V2 parser LLM 生成 CandidateSearchIR。";
   if (stage === "understand") return "正在读取岗位要求，提取能力与硬条件。";
   if (stage === "plan") return `正在形成互补的检索路径${detail.paths ? `，当前 ${detail.paths} 条` : ""}。`;
   if (stage === "execute") return `SearchTool 正在召回候选人${detail.recalled ? `，已返回 ${detail.recalled} 人次` : ""}。`;
@@ -1502,6 +1565,7 @@ function snapTimelineToLatestCard() {
 
 function appendDeliverySummary(payload) {
   const metrics = payload.debug?.agentMetrics || {};
+  const directRoute = payload.debug?.difficultyRoute === "direct_search";
   const rounds = metrics.rounds?.iterations ?? state.executeCount;
   const judged = metrics.recall?.judged;
   const overview = deliveryOverview(payload);
@@ -1530,8 +1594,14 @@ function appendDeliverySummary(payload) {
   addStat(overview.target, "目标");
   addStat(overview.delivered, "交付");
   addStat(overview.gap, "缺口", overview.gap > 0);
-  addStat(rounds, "检索轮次");
-  if (judged !== undefined) addStat(judged, "通过判定");
+  if (directRoute) {
+    addStat(1, "SearchTool 调用");
+    addStat(metrics.meta?.agentLlmCalls ?? 0, "Agent LLM");
+    addStat(metrics.meta?.parserLlmCalls ?? metrics.meta?.llmCalls ?? 0, "V2 parser LLM");
+  } else {
+    addStat(rounds, "检索轮次");
+    if (judged !== undefined) addStat(judged, "通过判定");
+  }
   li.append(head, stats);
   timeline.append(li);
   timeline.scrollTop = timeline.scrollHeight;
@@ -1541,7 +1611,7 @@ function addEvent(stage, detail) {
   removeWaiting();
   state.stageCount += 1;
 
-  if (stage === "understand") {
+  if (stage === "understand" || stage === "direct_search") {
     buildRail(stageKeysForRoute(detail.difficultyRoute, detail.plannedStages));
     metrics.hidden = false;
     state.routeMeta = {
@@ -1573,7 +1643,7 @@ function addEvent(stage, detail) {
     el("span", "stage-name", STAGE_LABEL[stage] || stage),
     el("span", "stage-kind", meta.kind),
     el("code", "", stage),
-    el("span", "event-time", `+${Math.round(performance.now() - state.startedAt)} ms`),
+    el("span", "event-time", `+${formatSeconds(performance.now() - state.startedAt)}`),
   );
 
   const narration = el("p", "event-narration", stageNarrative(stage, detail));
@@ -1885,6 +1955,12 @@ function setMetric(id, value) {
   $(id).textContent = value ?? "—";
 }
 
+function formatSeconds(milliseconds) {
+  const value = Number(milliseconds);
+  if (!Number.isFinite(value) || value < 0) return "—";
+  return `${(value / 1000).toFixed(1)} s`;
+}
+
 function renderMetrics(payload) {
   const m = payload.debug?.agentMetrics;
   metrics.hidden = false;
@@ -1899,7 +1975,7 @@ function renderMetrics(payload) {
     setMetric("m-calls", "—");
     setMetric("m-tokens", "—");
     setMetric("m-iterations", Math.max(1, state.executeCount));
-    setMetric("m-elapsed", `${Math.round(performance.now() - state.startedAt)} ms`);
+    setMetric("m-elapsed", formatSeconds(performance.now() - state.startedAt));
     setMetric("m-judged", payload.total ?? "—");
     setMetric("m-degraded", "—");
     return;
@@ -1913,7 +1989,7 @@ function renderMetrics(payload) {
     `${meta.tokensEstimated ? "≈" : ""}${Number(meta.totalTokens || 0).toLocaleString()}`,
   );
   setMetric("m-iterations", rounds.iterations);
-  setMetric("m-elapsed", `${meta.elapsedMs ?? "—"} ms`);
+  setMetric("m-elapsed", formatSeconds(meta.elapsedMs));
   setMetric("m-judged", `${recall.judged ?? "—"} / ${recall.target ?? "—"}`);
   setMetric("m-degraded", meta.degradedReason || "无");
 }

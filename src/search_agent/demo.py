@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from search_agent.core.difficulty import difficulty_floor
+from search_agent.direct_search import build_direct_search_plan
 from search_agent.llm.client import LlmUsage, estimated_usage
 from search_agent.models.api import SearchRequest, SearchResponse
 
@@ -152,6 +153,11 @@ class ScriptedLlmClient:
         model: str | None = None,
     ) -> dict[str, Any]:
         self.calls.append((schema_name, user))
+        if schema_name == "hybrid_search_v2_ir":
+            result = self._hybrid_v2_ir(user)
+            self.last_usage = estimated_usage(system, user, result)
+            self.usage.add(self.last_usage)
+            return result
         payload = _json_payload(user)
         handler = {
             "agent_understand": self._understand,
@@ -163,6 +169,29 @@ class ScriptedLlmClient:
         self.last_usage = estimated_usage(system, user, result)
         self.usage.add(self.last_usage)
         return result
+
+    def _hybrid_v2_ir(self, query: str) -> dict[str, Any]:
+        """Deterministic stand-in for the real V2 NL-to-IR call."""
+        plan = build_direct_search_plan(query)
+        if plan is not None:
+            return plan.intent.model_dump()
+        text = str(query or "").strip() or "候选人"
+        return {
+            "where": {
+                "type": "leaf",
+                "condition": {
+                    "field": "skill",
+                    "operator": "any",
+                    "values": [text],
+                    "required": False,
+                    "weight": 1.0,
+                },
+            },
+            "semantic": [
+                {"text": text, "fields": ["work_vector"], "weight": 1.0}
+            ],
+            "meta": {"needClarification": False, "clarifyQuestions": [], "notes": []},
+        }
 
     # -- the four roles ------------------------------------------------------
 
@@ -333,15 +362,15 @@ class ScriptedLlmClient:
         abilities = [str(a) for a in payload.get("abilities") or []]
         judgments: list[dict[str, Any]] = []
         for candidate in payload.get("candidates") or []:
-            snapshot = candidate.get("snapshot") or {}
+            profile = candidate.get("profile") or candidate.get("snapshot") or {}
             blob = " ".join(
                 str(x)
                 for x in [
-                    snapshot.get("name"),
-                    snapshot.get("summary"),
-                    snapshot.get("skills"),
-                    snapshot.get("workExperiences"),
-                    snapshot.get("educations"),
+                    profile.get("workYears"),
+                    profile.get("summary"),
+                    profile.get("skills"),
+                    profile.get("recentRoles"),
+                    profile.get("education"),
                 ]
             ).lower()
             matched = [a for a in abilities if any(k in blob for k in _ability_keywords(a))]

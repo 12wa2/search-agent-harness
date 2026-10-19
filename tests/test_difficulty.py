@@ -233,6 +233,8 @@ def test_low_difficulty_skips_plan_and_reflection():
     # budget was adapted
     assert state["budget"].max_iterations == 0
     assert state["budget"].max_paths_per_iteration == 1
+    # keep the one-shot judge within two pages of the requested delivery
+    assert state["recall_pool_size"] == 40
 
 
 def test_mid_difficulty_reduces_budget():

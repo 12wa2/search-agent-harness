@@ -4,13 +4,21 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from search_agent.contract.tool import ToolCandidate
+from search_agent.core.budget import BudgetState
+from search_agent.llm.client import FakeLlmClient
+from search_agent.llm.prompts import build_judge_payload, judge_prompt
+from search_agent.models.api import CandidateItem
 from search_agent.models.artifacts import (
+    Budget,
     CandidateJudgment,
 )
+from search_agent.stages.base import Deps
 from search_agent.stages.judge import (
     _chinese_keywords,
     _ground_judgment,
     _grounding_keywords,
+    _judge_path,
 )
 
 # -- _chinese_keywords --------------------------------------------------
@@ -137,3 +145,88 @@ def test_ground_keeps_ascii_ability_with_evidence():
     item = _make_item(skills=[{"name": "Python"}])
     result = _ground_judgment(j, _make_candidate(item), {})
     assert "Python" in result.matched_abilities
+
+
+def test_build_judge_payload_sends_only_compact_resume_evidence():
+    item = CandidateItem(
+        docId="d1",
+        name="Synthetic Candidate",
+        workYears=8,
+        summary="Built a high-throughput platform. " * 40,
+        skills=[
+            {"name": f"Skill{i}", "level": "expert", "years": i, "description": "noise"}
+            for i in range(20)
+        ],
+        workExperiences=[
+            {
+                "company_name": f"Company{i}",
+                "job_title": f"Engineer{i}",
+                "startDate": "2020-01-01",
+                "endDate": f"20{14 + i}-01-01",
+                "description": "long resume description that judge does not need",
+            }
+            for i in range(4)
+        ],
+        educations=[
+            {
+                "school": "Example University",
+                "major": "Computer Science",
+                "degree": "Bachelor",
+                "description": "noise",
+            }
+        ],
+    )
+    candidate = ToolCandidate(doc_id="d1", score=0.9, item=item, hard_matches=[])
+
+    payload = build_judge_payload("Find Python engineers", ["Python"], [candidate])
+    profile = payload["candidates"][0]["profile"]
+
+    assert "snapshot" not in payload["candidates"][0]
+    assert profile["workYears"] == 8
+    assert len(profile["skills"]) == 12
+    assert all(isinstance(name, str) for name in profile["skills"])
+    assert len(profile["recentRoles"]) == 2
+    assert [role["company"] for role in profile["recentRoles"]] == ["Company3", "Company2"]
+    assert set(profile["recentRoles"][0]) == {"company", "title", "period"}
+    assert "description" not in profile["recentRoles"][0]
+    assert profile["education"] == {"degree": "Bachelor", "major": "Computer Science"}
+    assert len(profile["summary"]) <= 160
+
+
+def test_judge_schema_requests_only_compact_verdict_labels():
+    _, schema = judge_prompt()
+    item = schema["properties"]["judgments"]["items"]
+
+    assert item["required"] == ["doc_id", "matched_abilities"]
+    assert "summary" not in item["properties"]
+    assert "missing_abilities" not in item["properties"]
+    assert item["additionalProperties"] is False
+
+
+def test_judge_derives_missing_abilities_from_matched_labels():
+    item = CandidateItem(docId="d1", skills=[{"name": "Python"}])
+    candidate = ToolCandidate(doc_id="d1", score=0.9, item=item, hard_matches=[])
+    llm = FakeLlmClient(
+        responses={
+            "agent_judge": {
+                "judgments": [{"doc_id": "d1", "matched_abilities": ["Python"]}]
+            }
+        }
+    )
+    deps = Deps(
+        llm=llm,
+        tool=SimpleNamespace(),
+        budget_state=BudgetState(budget=Budget()),
+    )
+
+    judgments = _judge_path(
+        deps,
+        query="Python engineer",
+        abilities=["Python", "Docker"],
+        path_id="p1",
+        cands=[candidate],
+        ability_hints={"Python": ["Python"], "Docker": ["Docker"]},
+    )
+
+    assert judgments[0].matched_abilities == ["Python"]
+    assert judgments[0].missing_abilities == ["Docker"]

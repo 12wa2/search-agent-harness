@@ -120,6 +120,21 @@ def apply_difficulty_routing(state: dict[str, Any], deps: Deps) -> None:
         # A simple query may have no hard filter at all (for example
         # "帮我找会 Python 的"). Build a loose semantic path instead of
         # falling through to the planning LLM.
+        # Keep the one-shot path narrow enough for a single judge request.
+        # Complex routes retain their wider recall pool for exploration.
+        top_k = max(0, int(state.get("top_k") or 0))
+        pool_cap = max(20, top_k * 2)
+        current_pool = state.get("recall_pool_size")
+        if current_pool is None:
+            state["recall_pool_size"] = pool_cap
+        else:
+            try:
+                current_size = int(current_pool)
+            except (TypeError, ValueError):
+                current_size = pool_cap
+            state["recall_pool_size"] = (
+                current_size if 0 < current_size <= pool_cap else pool_cap
+            )
         path = single_path_from_hard_constraints(state, loose_fallback=True)
         if path is not None:
             state["paths"] = [path]

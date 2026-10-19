@@ -56,6 +56,24 @@ plan / revise 产出的新路径先查签名（`core/signature.py`）。
 
 **取舍**：预算模型本身成为需要维护的概念；换来成本可控与行为可预测。
 
+## D5.1 明确结构化查询在 Harness 之前直连 SearchTool
+
+**背景**：像“帮我找会 Python 的”这类查询字段明确，若仍走 Agent 的岗位理解、规划、judge 和
+反思阶段，会增加无意义的延迟和成本。但把所有搜索都改成规则解析，又会失去对模糊、偏好重和
+可迁移能力需求的推理能力。
+
+**选择**：在 Service 层增加保守的确定性直连路由。只有技能、岗位、年限、城市等字段足够明确，
+且不含“最好 / 优先 / 可迁移 / 重点考察 / 系统设计”等开放信号时，才进入 Hybrid V2 简单搜索：
+先由 `hybrid_v2.parser.parse_query_to_ir()` 通过运行时注入的 `LlmClient` 生成
+`CandidateSearchIR`，再调用一次 `SearchTool` 完成 normalize、compile、召回与重排。SSE 固定为
+`direct_search → execute → finalize`。Agent 编排 LLM 调用为 0，但 V2 parser LLM 通常为 1 次，
+最多重试 2 次；Token、耗时与重试单独记账。parser 不可用时显式回退到本地规则 IR，并记录
+`degradedReason=hybrid_v2_parse_failed`；无法安全直连时回落到原 Harness。
+
+**取舍**：需要维护一份窄规则和边界测试（例如“那北京的呢”必须留在 Agent 以承接会话）；
+换来明确查询的低延迟、零 Agent 编排 LLM 成本，以及复杂查询仍保留完整反思能力。代价是简单
+搜索仍保留一次 V2 parser 调用，这与生产 Hybrid V2 的 NL2IR 口径一致。
+
 ## D6. 降级矩阵：控制面永不抛异常
 
 **背景**：一次搜索涉及 5+ 次 LLM 调用与多条工具路径，任一点失败若直接冒泡，
