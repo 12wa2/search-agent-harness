@@ -264,11 +264,14 @@ class SearchAgentService:
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         final_items = list(result.items[: req.topK])
         rerank_used = "rerank" in result.timings_ms
-        degraded_reason = ";".join(
-            reason
-            for reason in (state.get("degraded_reason"), result.degraded_reason)
-            if reason
-        ) or None
+        degraded_reason = (
+            ";".join(
+                reason
+                for reason in (state.get("degraded_reason"), result.degraded_reason)
+                if reason
+            )
+            or None
+        )
         state.update(
             {
                 "final_items": final_items,

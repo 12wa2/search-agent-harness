@@ -208,9 +208,7 @@ def test_judge_derives_missing_abilities_from_matched_labels():
     candidate = ToolCandidate(doc_id="d1", score=0.9, item=item, hard_matches=[])
     llm = FakeLlmClient(
         responses={
-            "agent_judge": {
-                "judgments": [{"doc_id": "d1", "matched_abilities": ["Python"]}]
-            }
+            "agent_judge": {"judgments": [{"doc_id": "d1", "matched_abilities": ["Python"]}]}
         }
     )
     deps = Deps(

@@ -68,8 +68,7 @@ def test_direct_plan_compiles_city_filter() -> None:
     assert plan.cities == ("北京",)
     assert plan.skills == ("Java",)
     assert any(
-        c.field == "city" and c.values == ["北京"]
-        for c in plan.job_profile.hard_constraints
+        c.field == "city" and c.values == ["北京"] for c in plan.job_profile.hard_constraints
     )
 
 
@@ -97,15 +96,11 @@ def test_direct_plan_presentation_uses_parser_ir() -> None:
                 ),
                 WhereNode(
                     type="leaf",
-                    condition=StructuredConditionIR(
-                        field="city", operator="any", values=["上海"]
-                    ),
+                    condition=StructuredConditionIR(field="city", operator="any", values=["上海"]),
                 ),
             ],
         ),
-        semantic=[
-            SemanticConditionIR(text="服务端开发", fields=["work_vector"], weight=1.0)
-        ],
+        semantic=[SemanticConditionIR(text="服务端开发", fields=["work_vector"], weight=1.0)],
         meta=IRMeta(notes=["from_parser"]),
     )
 
@@ -148,4 +143,3 @@ def test_cli_direct_search_prints_three_stage_timeline() -> None:
     assert "[2/3 execute] 直连 SearchTool" in text
     assert "[3/3 finalize] 直连交付 2 人" in text
     assert "/8" not in text
-

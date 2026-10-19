@@ -187,9 +187,7 @@ class ScriptedLlmClient:
                     "weight": 1.0,
                 },
             },
-            "semantic": [
-                {"text": text, "fields": ["work_vector"], "weight": 1.0}
-            ],
+            "semantic": [{"text": text, "fields": ["work_vector"], "weight": 1.0}],
             "meta": {"needClarification": False, "clarifyQuestions": [], "notes": []},
         }
 

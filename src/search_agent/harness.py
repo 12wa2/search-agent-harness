@@ -132,9 +132,7 @@ def apply_difficulty_routing(state: dict[str, Any], deps: Deps) -> None:
                 current_size = int(current_pool)
             except (TypeError, ValueError):
                 current_size = pool_cap
-            state["recall_pool_size"] = (
-                current_size if 0 < current_size <= pool_cap else pool_cap
-            )
+            state["recall_pool_size"] = current_size if 0 < current_size <= pool_cap else pool_cap
         path = single_path_from_hard_constraints(state, loose_fallback=True)
         if path is not None:
             state["paths"] = [path]

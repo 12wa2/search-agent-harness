@@ -653,7 +653,9 @@ def _normalize_where_node(node: Any, *, query: str) -> dict[str, Any] | None:
         if not isinstance(children, list):
             return None
         normalized_children = [
-            c for c in (_normalize_where_node(item, query=query) for item in children) if c is not None
+            c
+            for c in (_normalize_where_node(item, query=query) for item in children)
+            if c is not None
         ]
         if not normalized_children:
             return None
@@ -683,7 +685,9 @@ def _has_field_leaf(node: dict[str, Any] | None, field: str) -> bool:
     if ntype in {"and", "or"}:
         children = node.get("children")
         if isinstance(children, list):
-            return any(_has_field_leaf(child, field) for child in children if isinstance(child, dict))
+            return any(
+                _has_field_leaf(child, field) for child in children if isinstance(child, dict)
+            )
         return False
     if ntype == "not":
         child = node.get("child")
@@ -723,7 +727,9 @@ def _infer_degree_condition_from_query(query: str) -> dict[str, Any] | None:
     }
 
 
-def _ensure_degree_condition(where: dict[str, Any], *, query: str, notes: list[str]) -> dict[str, Any]:
+def _ensure_degree_condition(
+    where: dict[str, Any], *, query: str, notes: list[str]
+) -> dict[str, Any]:
     if _has_field_leaf(where, "degree"):
         return where
     inferred = _infer_degree_condition_from_query(query)
@@ -764,7 +770,9 @@ def _repair_ir_payload(payload: Any, *, query: str) -> dict[str, Any] | None:
                 weight = float(item.get("weight", 1.0) or 1.0)
             except (TypeError, ValueError):
                 weight = 1.0
-            semantic.append({"text": text, "fields": safe_fields, "weight": max(0.1, min(5.0, weight))})
+            semantic.append(
+                {"text": text, "fields": safe_fields, "weight": max(0.1, min(5.0, weight))}
+            )
 
     meta_raw = payload.get("meta")
     meta = {
@@ -887,7 +895,9 @@ def parse_query_to_ir(
         except Exception as exc:
             last_error = str(exc)
             if attempt < attempts:
-                logger.warning("LLM hybrid v2 parse failed, retrying attempt=%s err=%s", attempt, exc)
+                logger.warning(
+                    "LLM hybrid v2 parse failed, retrying attempt=%s err=%s", attempt, exc
+                )
                 continue
             logger.exception("LLM hybrid v2 parse exception: %s", exc)
     return IrParseResult(intent=None, attempts=attempts, error=last_error)

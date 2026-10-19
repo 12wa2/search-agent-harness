@@ -272,11 +272,7 @@ def _judge_profile(item: Any) -> dict[str, Any]:
         key=_experience_date,
         reverse=True,
     )[:_MAX_JUDGE_ROLES]
-    roles = [
-        role
-        for role in (_compact_experience(row) for row in work_rows)
-        if role is not None
-    ]
+    roles = [role for role in (_compact_experience(row) for row in work_rows) if role is not None]
     if roles:
         profile["recentRoles"] = roles
     education = [

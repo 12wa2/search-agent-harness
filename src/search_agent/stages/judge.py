@@ -167,9 +167,7 @@ def _judge_path(
             else:
                 missing_raw = {str(value) for value in (j.get("missing_abilities") or [])}
                 matched_abilities = (
-                    [name for name in abilities if name not in missing_raw]
-                    if missing_raw
-                    else []
+                    [name for name in abilities if name not in missing_raw] if missing_raw else []
                 )
             missing_abilities = [name for name in abilities if name not in matched_abilities]
             judgment = CandidateJudgment(

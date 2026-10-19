@@ -66,9 +66,7 @@ def make_event_printer(stream: TextIO | None = None) -> Callable[[str, dict[str,
             skills = "、".join(plan.get("skills") or []) or "—"
             cities = "、".join(plan.get("cities") or []) or "—"
             parser_label = (
-                "V2 parser"
-                if plan.get("irSource") == "hybrid_v2_parser"
-                else "本地规则回退"
+                "V2 parser" if plan.get("irSource") == "hybrid_v2_parser" else "本地规则回退"
             )
             print(
                 f"  [1/3 direct_search] {parser_label} 解析 IR  技能={skills}  城市={cities}  "

@@ -1,4 +1,4 @@
-'''Direct-search routing and deterministic fallback for explicit queries.
+"""Direct-search routing and deterministic fallback for explicit queries.
 
 The router recognises a narrow set of recruiting queries with explicit
 structured signals. Those queries bypass the agent harness and use the Hybrid
@@ -8,7 +8,7 @@ fallback when the parser provider is unavailable.
 
 The gate is intentionally conservative: ambiguous, preference-heavy, or
 transferable-ability queries stay on the reflective agent route.
-'''
+"""
 
 from __future__ import annotations
 
@@ -87,14 +87,49 @@ _SKILL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
 )
 
 _CITY_NAMES = (
-    "北京", "上海", "深圳", "广州", "杭州", "成都", "南京", "武汉",
-    "西安", "苏州", "天津", "重庆", "长沙", "郑州", "青岛", "厦门",
-    "合肥", "福州", "济南", "大连", "沈阳", "宁波", "无锡", "东莞",
-    "佛山", "珠海", "香港", "新加坡",
+    "北京",
+    "上海",
+    "深圳",
+    "广州",
+    "杭州",
+    "成都",
+    "南京",
+    "武汉",
+    "西安",
+    "苏州",
+    "天津",
+    "重庆",
+    "长沙",
+    "郑州",
+    "青岛",
+    "厦门",
+    "合肥",
+    "福州",
+    "济南",
+    "大连",
+    "沈阳",
+    "宁波",
+    "无锡",
+    "东莞",
+    "佛山",
+    "珠海",
+    "香港",
+    "新加坡",
 )
 
-_CN_DIGITS = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
-              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+_CN_DIGITS = {
+    "零": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
 _YEAR_RANGE_RE = re.compile(
     r"(?P<low>\d+(?:\.\d+)?|[一二两三四五六七八九十]+)\s*"
     r"[-~～至到]\s*(?P<high>\d+(?:\.\d+)?|[一二两三四五六七八九十]+)\s*年"
@@ -105,9 +140,10 @@ _YEAR_MIN_RE = re.compile(
     re.IGNORECASE,
 )
 
+
 @dataclass(frozen=True)
 class DirectSearchPlan:
-    '''Everything needed to execute one deterministic search.'''
+    """Everything needed to execute one deterministic search."""
 
     query: str
     title: str
@@ -141,8 +177,7 @@ class DirectSearchPlan:
         city_values = _values_for_fields(intent.where, "city", "intention_city", "live_city")
         cities = tuple(city_values) if city_values else self.cities
         abilities = [
-            JobAbility(name=skill, level="must", evidence_hints=[skill])
-            for skill in skills
+            JobAbility(name=skill, level="must", evidence_hints=[skill]) for skill in skills
         ]
         if not abilities:
             abilities = list(self.job_profile.must_abilities)
@@ -299,7 +334,7 @@ def _extract_cities(text: str) -> tuple[str, ...]:
 
 
 def should_use_direct_search(query: str) -> bool:
-    '''Return True only for explicit, structured, low-uncertainty searches.'''
+    """Return True only for explicit, structured, low-uncertainty searches."""
     text = _normalize(query)
     if not text or len(text) > 160:
         return False
@@ -318,8 +353,9 @@ def should_use_direct_search(query: str) -> bool:
     # it can use conversation history.
     return has_action or bool(role and (skills or years or cities))
 
+
 def build_direct_search_plan(query: str) -> DirectSearchPlan | None:
-    '''Parse a supported query into IR; return None when the agent should run.'''
+    """Parse a supported query into IR; return None when the agent should run."""
     normalized = _normalize(query)
     if not should_use_direct_search(normalized):
         return None
@@ -331,9 +367,7 @@ def build_direct_search_plan(query: str) -> DirectSearchPlan | None:
 
     conditions: list[StructuredConditionIR] = []
     for skill in skills:
-        conditions.append(
-            StructuredConditionIR(field="skill", operator="any", values=[skill])
-        )
+        conditions.append(StructuredConditionIR(field="skill", operator="any", values=[skill]))
     if years is not None:
         low, high = years
         if low == high:
@@ -342,18 +376,12 @@ def build_direct_search_plan(query: str) -> DirectSearchPlan | None:
             )
         else:
             conditions.append(
-                StructuredConditionIR(
-                    field="work_years", operator="range", values=[low, high]
-                )
+                StructuredConditionIR(field="work_years", operator="range", values=[low, high])
             )
     if cities:
-        conditions.append(
-            StructuredConditionIR(field="city", operator="any", values=list(cities))
-        )
+        conditions.append(StructuredConditionIR(field="city", operator="any", values=list(cities)))
     if not conditions:
-        conditions.append(
-            StructuredConditionIR(field="work_years", operator="gte", values=[0])
-        )
+        conditions.append(StructuredConditionIR(field="work_years", operator="gte", values=[0]))
 
     leaves = [WhereNode(type="leaf", condition=condition) for condition in conditions]
     where = leaves[0] if len(leaves) == 1 else WhereNode(type="and", children=leaves)
@@ -377,9 +405,7 @@ def build_direct_search_plan(query: str) -> DirectSearchPlan | None:
     title = role or (f"{skills[0]} 工程师" if skills else "候选人")
     if title == "工程师" and skills:
         title = f"{skills[0]} 工程师"
-    abilities = [
-        JobAbility(name=skill, level="must", evidence_hints=[skill]) for skill in skills
-    ]
+    abilities = [JobAbility(name=skill, level="must", evidence_hints=[skill]) for skill in skills]
     if not abilities and role:
         abilities = [JobAbility(name=role, level="must", evidence_hints=[role])]
 
