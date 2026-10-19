@@ -214,6 +214,12 @@ parser 失败时会重试一次；仍失败则显式回退到本地结构化 IR�
 收尾：不足 `top_k` 时用已判断池补齐；若所有结果都已判断，按「命中 must 能力数、再按分」
 做精度排序；最后 `_validate_output` 做输出校验（硬条件违规、负分、空结果异常等，记录 `validationIssues`）。
 
+因此最终交付的 `score` 不是统一概率：直连搜索来自 Hybrid V2 的单次检索/重排结果；复杂链路优先按
+`_selection_key` 排序——must 能力覆盖（降序）、缺失 must 能力数（升序）、必需硬条件违规数（升序）、
+简历证据覆盖、证据缺口、是否已判断，以及命中能力总数；后端/重排分数仅在这些主信号之后作为次级
+tie-breaker。`rerank_pool` 失败时则回退到 per-path 分数。排序分只在同一结果集内有意义，不应跨链路、
+跨请求或当作概率/匹配率解释。
+
 ## 9. SearchTool 契约
 
 `contract/tool.py`（runtime_checkable Protocol），后端只需实现两个方法：
