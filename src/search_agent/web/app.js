@@ -215,6 +215,21 @@ function chip(text, extra = "") {
   return el("span", `tag ${extra}`.trim(), text);
 }
 
+const CHAT_STATUS_TONES = [
+  "is-running",
+  "is-complete",
+  "is-degraded",
+  "is-stopped",
+  "is-failed",
+];
+
+function setChatStatus(statusNode, label, tone) {
+  if (!statusNode) return;
+  statusNode.textContent = label;
+  statusNode.classList.remove(...CHAT_STATUS_TONES);
+  if (tone) statusNode.classList.add(`is-${tone}`);
+}
+
 function setAgentState(stateName, title, detail) {
   if (!agentRunbar) return;
   agentRunbar.dataset.state = stateName;
@@ -276,7 +291,7 @@ function createChatMessage(role, extraClass = "") {
     avatar.setAttribute("aria-hidden", "true");
     const body = el("div", "chat-message-body");
     const label = el("div", "chat-message-label");
-    const status = el("span", "chat-message-status", "执行中");
+    const status = el("span", "chat-message-status is-running", "执行中");
     label.append(el("strong", "", "Search Agent"), status);
     body.append(label);
     article.append(avatar, body);
@@ -598,14 +613,17 @@ function createChatPager() {
 function renderChatResult(payload) {
   const run = beginChatRun();
   const cancelled = Boolean(payload.debug?.cancelled);
-  run.status.textContent = cancelled ? "已停止" : "已完成";
-  run.status.classList.add(cancelled ? "is-stopped" : "is-complete");
+  const degradedReason =
+    payload.debug?.degradedReason || payload.debug?.agentMetrics?.meta?.degradedReason || "";
+  const degraded = Boolean(degradedReason);
+  const resultTone = cancelled ? "stopped" : degraded ? "degraded" : "complete";
+  const resultLabel = cancelled ? "已停止" : degraded ? "已降级" : "已完成";
+  setChatStatus(run.status, resultLabel, resultTone);
   run.progressTitle.textContent = cancelled ? "搜索已停止" : "执行完成";
   run.progressMeta.textContent = `${Math.max(1, state.executeCount)} 轮 · ${state.stageCount} 个阶段事件`;
 
   const message = createChatMessage("agent", "chat-result-message agent-delivery");
-  message.status.textContent = cancelled ? "已停止" : "已完成";
-  message.status.classList.add(cancelled ? "is-stopped" : "is-complete");
+  setChatStatus(message.status, resultLabel, resultTone);
   const head = el("div", "chat-result-head");
   const marker = el("span", "chat-result-check", cancelled ? "■" : "✓");
   const heading = el("div");
@@ -613,7 +631,9 @@ function renderChatResult(payload) {
     el("h3", "", cancelled ? "本次搜索已停止" : "本次搜索已完成"),
     el("p", "", cancelled
       ? "已保留停止前完成的工作，未继续发起新的检索或模型调用。"
-      : "以下是根据当前需求筛选出的候选人。展开卡片可查看匹配证据与来源路径。"),
+      : degraded
+        ? "搜索已完成，但部分阶段触发了降级。以下结果保留，建议结合匹配证据复核。"
+        : "以下是根据当前需求筛选出的候选人。展开卡片可查看完整匹配证据与来源路径。"),
   );
   head.append(marker, heading);
   message.body.append(head);
@@ -630,6 +650,11 @@ function renderChatResult(payload) {
     add(metrics.rounds?.iterations ?? Math.max(1, state.executeCount), "检索轮次");
     add(metrics.recall?.judged ?? "—", "通过判定");
     message.body.append(stats);
+  }
+  if (degraded) {
+    const note = el("p", "chat-degrade-note");
+    note.append(el("strong", "", "降级原因："), document.createTextNode(degradedReason));
+    message.body.append(note);
   }
 
   if (payload.clarification?.needClarification) {
@@ -662,8 +687,7 @@ function renderChatReply(payload) {
   const pending = state.activeRun?.pending;
   pending?.remove();
   const message = createChatMessage("agent", "chat-reply-message");
-  message.status.textContent = INTENT_LABEL[payload.intent] || "已回复";
-  message.status.classList.add("is-complete");
+  setChatStatus(message.status, INTENT_LABEL[payload.intent] || "已回复", "complete");
   message.body.append(el("p", "chat-reply-text", payload.message || ""));
   message.body.append(el("p", "chat-route-note", "意图路由直接回复 · 未启动 Harness · 未调用搜索工具或 LLM"));
   const suggestions = payload.suggestions || [];
@@ -686,10 +710,9 @@ function renderChatReply(payload) {
 function renderChatError(message) {
   state.activeRun?.pending?.remove();
   const run = state.activeRun?.chatRun;
-  if (run) run.status.textContent = "中断";
+  if (run) setChatStatus(run.status, "失败", "failed");
   const chatMessage = createChatMessage("agent", "chat-error-message");
-  chatMessage.status.textContent = "执行中断";
-  chatMessage.status.classList.add("is-stopped");
+  setChatStatus(chatMessage.status, "执行失败", "failed");
   chatMessage.body.append(
     el("h3", "", "这次执行没有完成"),
     el("p", "", message),
@@ -1131,11 +1154,52 @@ function renderCandidate(item, rank) {
     .join(" · ");
   const who = el("div", "cand-id");
   who.append(el("h3", "", item.name || item.docId), el("p", "", meta));
-  top.append(el("span", "rank", rank), who, el("span", "score", Number(item.score || 0).toFixed(2)));
+  const scoreText = Number(item.score || 0).toFixed(2);
+  const score = el("div", "score-block");
+  score.title = "排序分用于同一结果集内排序，不表示绝对通过率。";
+  score.setAttribute("aria-label", `排序分 ${scoreText}，用于同一结果集内排序，不表示绝对通过率`);
+  score.append(el("span", "score-label", "排序分"), el("span", "score", scoreText));
+  top.append(el("span", "rank", rank), who, score);
 
-  const tags = el("div", "tag-row");
   const explanation = item.matchExplanation || {};
-  for (const ability of explanation.matchedAbilities || []) tags.append(chip(ability));
+  const matchedAbilities = (explanation.matchedAbilities || []).filter(Boolean);
+  const hardMatches = (explanation.hardMatches || []).filter(Boolean);
+  const pathRationale = (explanation.pathRationale || []).filter(Boolean);
+
+  const evidence = el("div", "cand-evidence");
+  const facts = el("div", "cand-evidence-facts");
+  if (matchedAbilities.length) {
+    facts.append(el("span", "cand-evidence-fact", `命中 ${matchedAbilities.length} 项能力`));
+  }
+  if (hardMatches.length) {
+    const passed = hardMatches.filter((hard) => hard.matched).length;
+    const fact = el("span", "cand-evidence-fact", `硬条件 ${passed}/${hardMatches.length}`);
+    fact.title = hardMatches
+      .map((hard) => {
+        const values = Array.isArray(hard.values) ? hard.values.join("/") : hard.values;
+        return `${hard.field || "?"}: ${values ?? "—"} ${hard.matched ? "满足" : "未满足"}`;
+      })
+      .join("\n");
+    facts.append(fact);
+  }
+  if (pathRationale.length) {
+    const fact = el("span", "cand-evidence-fact", `${pathRationale.length} 条来源路径`);
+    fact.title = pathRationale.join("\n");
+    facts.append(fact);
+  }
+  if (facts.childElementCount) evidence.append(facts);
+
+  const evidenceTags = el("div", "cand-evidence-tags");
+  for (const ability of matchedAbilities.slice(0, 3)) {
+    evidenceTags.append(chip(ability, "is-match"));
+  }
+  if (matchedAbilities.length > 3) {
+    evidenceTags.append(el("span", "cand-evidence-more", `+${matchedAbilities.length - 3}`));
+  }
+  if (evidenceTags.childElementCount) evidence.append(evidenceTags);
+
+  const tags = el("div", "tag-row cand-skills");
+  tags.setAttribute("aria-label", "简历技能");
   for (const skill of renderSkills(item)) tags.append(skill);
 
   const details = el("details");
@@ -1143,16 +1207,19 @@ function renderCandidate(item, rank) {
   const explain = el("div", "explain");
 
   if (item.summary) explain.append(el("p", "", item.summary));
-  if (explanation.pathRationale?.length) {
+  if (matchedAbilities.length) {
+    const row = el("div", "explain-tags");
+    for (const ability of matchedAbilities) row.append(chip(ability));
+    explain.append(el("p", "", "命中能力"), row);
+  }
+  if (pathRationale.length) {
     const ul = el("ul");
-    for (const rationale of explanation.pathRationale) {
-      if (rationale) ul.append(el("li", "", rationale));
-    }
+    for (const rationale of pathRationale) ul.append(el("li", "", rationale));
     if (ul.childElementCount) explain.append(el("p", "", "来源路径"), ul);
   }
-  if (explanation.hardMatches?.length) {
+  if (hardMatches.length) {
     const ul = el("ul");
-    for (const hard of explanation.hardMatches) {
+    for (const hard of hardMatches) {
       const values = Array.isArray(hard.values) ? hard.values.join("/") : hard.values;
       ul.append(el("li", "", `${hard.field || "?"}: ${values ?? "—"} ${hard.matched ? "✓" : "✗"}`));
     }
@@ -1163,7 +1230,10 @@ function renderCandidate(item, rank) {
   explain.append(raw);
 
   details.append(summary, explain);
-  li.append(top, tags, details);
+  li.append(top);
+  if (evidence.childElementCount) li.append(evidence);
+  if (tags.childElementCount) li.append(tags);
+  li.append(details);
   return li;
 }
 
@@ -1335,7 +1405,7 @@ function parseFrame(frame) {
 function showError(message) {
   runHint.classList.add("error");
   runHint.textContent = message;
-  setAgentState("error", "执行中断", message);
+  setAgentState("error", "执行失败", message);
   const card = el("li", "err-card", message);
   results.append(card);
   resultsEmpty.hidden = true;
@@ -1490,11 +1560,13 @@ async function runSearch(query, topK) {
             : `完成 · ${state.stageCount} 个阶段事件 · ${Math.max(1, state.executeCount)} 轮`;
           setAgentProgress();
           setAgentState(
-            sawCancelled ? "stopped" : "completed",
-            sawCancelled ? "已请求停止" : "本轮完成",
+            sawCancelled ? "stopped" : payload.debug?.degradedReason ? "degraded" : "completed",
+            sawCancelled ? "已请求停止" : payload.debug?.degradedReason ? "本轮完成（降级）" : "本轮完成",
             sawCancelled
               ? "当前阶段结束后会停止后续检索与模型调用。"
-              : `已交付 ${Number(payload.total || 0)} 位候选人，匹配证据与来源路径已同步。`,
+              : payload.debug?.degradedReason
+                ? `已交付 ${Number(payload.total || 0)} 位候选人；执行过程中触发降级：${payload.debug.degradedReason}`
+                : `已交付 ${Number(payload.total || 0)} 位候选人，匹配证据与来源路径已同步。`,
           );
         } else if (event === "error") {
           sawError = true;
@@ -1518,7 +1590,9 @@ async function runSearch(query, topK) {
     if (err.name === "AbortError") {
       runHint.textContent = "已请求停止：当前阶段结束后不会再发起新的检索或模型调用。";
       setAgentState("stopped", "正在停止", "当前阶段结束后不会再发起新的检索或模型调用。");
-      if (state.activeRun?.chatRun) state.activeRun.chatRun.status.textContent = "停止中";
+      if (state.activeRun?.chatRun) {
+        setChatStatus(state.activeRun.chatRun.status, "停止中", "stopped");
+      }
     } else {
       showError(`请求失败：${err.message}`);
       renderChatError(`请求失败：${err.message}`);
