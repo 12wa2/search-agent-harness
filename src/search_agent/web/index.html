@@ -26,7 +26,7 @@
     </svg>
     <div class="brand-text">
       <h1>Search Agent <em>Harness</em></h1>
-      <p>八阶段反思检索 · 每一次搜索都能被审计</p>
+      <p>自适应检索 · 每一次搜索都能被审计</p>
     </div>
   </div>
   <nav class="view-switch" aria-label="界面模式">
@@ -200,6 +200,21 @@
         <h3>运行账本</h3>
         <span>本次执行</span>
       </div>
+      <div class="route-summary" id="route-summary" aria-live="polite">
+        <div class="route-summary-head">
+          <span>本次路由</span>
+          <code id="route-rule">等待判定</code>
+        </div>
+        <div class="route-summary-path">
+          <strong id="route-intent">—</strong>
+          <span aria-hidden="true">→</span>
+          <strong id="route-strategy">—</strong>
+        </div>
+        <div class="route-summary-meta">
+          <span id="route-stage-count">阶段待判定</span>
+          <span id="route-stage-detail">等待 Agent 事件</span>
+        </div>
+      </div>
       <div class="metric-list">
         <div class="metric"><span id="m-calls">—</span><small>LLM 调用</small></div>
         <div class="metric"><span id="m-tokens">—</span><small>tokens</small></div>
@@ -242,7 +257,7 @@
       </div>
     </div>
 
-    <div class="stage-rail" id="stage-rail" aria-label="八阶段进度"></div>
+    <div class="stage-rail" id="stage-rail" aria-label="Agent 阶段进度"></div>
 
     <div class="timeline-viewport">
       <div class="empty agent-ready" id="timeline-empty">

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from search_agent.contract.tool import (
     SearchToolResult,
     ToolCandidate,
@@ -12,6 +14,9 @@ from search_agent.core.difficulty import (
     apply_difficulty_floor,
     difficulty_floor,
     difficulty_route,
+    is_explicit_simple_query,
+    resolve_difficulty,
+    route_stages,
 )
 from search_agent.harness import Harness
 from search_agent.llm.client import FakeLlmClient
@@ -100,6 +105,59 @@ def test_difficulty_route_mapping():
     assert difficulty_route("low") == "single_pass"
     assert difficulty_route("mid") == "reduced"
     assert difficulty_route("high") == "standard"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "帮我找会 python 的",
+        "寻找有 3 年经验的 Python 工程师",
+        "招聘 Java 后端工程师，北京",
+    ],
+)
+def test_explicit_action_queries_are_simple(query: str):
+    assert is_explicit_simple_query(query) is True
+    assert resolve_difficulty(query, "mid") == "low"
+    assert resolve_difficulty(query, "high") == "low"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "寻找 Python 后端工程师，重点考察服务端 API、微服务和系统设计经验",
+        "寻找 Python 机器学习 / AI 工程师，重点考察模型训练、推理服务或算法落地经验",
+        "寻找 Python 数据工程师，重点考察 ETL、数据平台和批流处理经验",
+    ],
+)
+def test_structured_clarification_options_remain_simple(query: str):
+    assert is_explicit_simple_query(query) is True
+    assert resolve_difficulty(query, "mid") == "low"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "找能力可迁移的架构师",
+        "找高并发后端工程师",
+        "找 Python 后端工程师，最好来自大厂",
+        "Python 后端工程师",
+    ],
+)
+def test_complex_or_non_action_queries_keep_model_or_floor(query: str):
+    assert is_explicit_simple_query(query) is False
+    assert resolve_difficulty(query, "high") == "high"
+
+
+def test_single_pass_route_has_five_real_stages():
+    assert route_stages("single_pass") == (
+        "understand",
+        "execute",
+        "judge",
+        "evaluate",
+        "finalize",
+    )
+    assert "plan" not in route_stages("single_pass")
+    assert "reflect" not in route_stages("single_pass")
 
 
 def test_difficulty_floor_promotes_abstract_queries():
@@ -244,8 +302,8 @@ def test_high_difficulty_standard():
     assert state["budget"].max_paths_per_iteration == 4
 
 
-def test_low_difficulty_no_hard_constraints_falls_to_plan():
-    """low but no hard_constraints → can't build fallback path → falls to plan."""
+def test_low_difficulty_no_hard_constraints_uses_loose_single_path():
+    """low with no hard constraints still has a semantic one-shot path."""
     tool = _FakeTool()
     resp = _understand_resp("low")
     resp["hard_constraints"] = []
@@ -273,8 +331,54 @@ def test_low_difficulty_no_hard_constraints_falls_to_plan():
     h = Harness(_deps(llm, tool))
     state = h.run(_state())
 
-    # still the single_pass route (skip_reflection), but plan was called
+    # The loose path anchors on profile semantics and work_years >= 0, so plan
+    # is not needed for an explicitly simple query.
     assert state["difficulty_route"] == "single_pass"
     assert state.get("skip_reflection") is True
     plan_calls = [c for c in llm.calls if c[0] == "agent_plan"]
-    assert len(plan_calls) == 1
+    assert plan_calls == []
+    assert state["executed_stages"] == [
+        "understand",
+        "execute",
+        "judge",
+        "evaluate",
+        "finalize",
+    ]
+
+
+def test_explicit_simple_query_ignores_llm_clarification_request():
+    tool = _FakeTool()
+    resp = _understand_resp("mid")
+    resp["needs_clarification"] = True
+    resp["clarify_questions"] = ["Which role?"]
+    llm = FakeLlmClient(
+        responses={
+            "agent_understand": resp,
+            "agent_judge": {
+                "judgments": [
+                    {
+                        "doc_id": f"d{i}",
+                        "matched_abilities": ["Python"],
+                        "missing_abilities": [],
+                        "summary": "ok",
+                    }
+                    for i in range(5)
+                ]
+            },
+        }
+    )
+    state = _state()
+    state["query"] = "帮我找会 Python 的"
+
+    state = Harness(_deps(llm, tool)).run(state)
+
+    assert state.get("need_clarify") is not True
+    assert state["job_profile"].needs_clarification is False
+    assert state["difficulty_route"] == "single_pass"
+    assert state["executed_stages"] == [
+        "understand",
+        "execute",
+        "judge",
+        "evaluate",
+        "finalize",
+    ]

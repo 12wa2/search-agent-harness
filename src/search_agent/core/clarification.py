@@ -2,9 +2,10 @@
 
 The LLM can extract constraints from a concrete job brief, but it reasonably
 treats a phrase such as "find someone who knows Python" as a valid search. This
-module adds a narrow, predictable guard for the one missing decision that is
-the role itself. It does not replace the LLM parser, and it disables itself once
-a conversation has history so follow-up refinements are never interrupted.
+module adds a narrow, predictable guard for one missing decision: a bare skill
+that is not accompanied by an explicit search action. A request such as
+"帮我找会 Python 的" is already actionable for the search tool and must not be
+interrupted; turn-level follow-ups are never interrupted either.
 """
 
 from __future__ import annotations
@@ -71,6 +72,12 @@ _CONDITION_SIGNAL = re.compile(
     re.IGNORECASE,
 )
 
+_SEARCH_ACTION = re.compile(
+    r"找|寻找|搜|搜索|查|查询|招|招聘|推荐|筛选|匹配|看看|看一下|"
+    r"find|search|look\s*for|hire|recruit",
+    re.IGNORECASE,
+)
+
 
 def _matched_skills(query: str) -> list[str]:
     skills: list[str] = []
@@ -89,8 +96,9 @@ def detect_skill_only_clarification(
 
     Role, seniority, location, education, and explicit recruitment signals are
     treated as enough context to let the normal Agent pipeline decide what to
-    do. Generic search verbs such as "find" or "search" do not imply a role, so
-    a skill-only brief still asks for the missing direction.
+    do. An explicit search action also makes a skill-only brief actionable:
+    the SearchTool can retrieve on skill alone, so asking for a role first
+    would add latency without changing the query.
     """
     if has_history:
         return None
@@ -99,7 +107,12 @@ def detect_skill_only_clarification(
         return None
 
     skills = _matched_skills(text)
-    if not skills or _ROLE_SIGNAL.search(text) or _CONDITION_SIGNAL.search(text):
+    if (
+        not skills
+        or _ROLE_SIGNAL.search(text)
+        or _CONDITION_SIGNAL.search(text)
+        or _SEARCH_ACTION.search(text)
+    ):
         return None
 
     skill = " / ".join(skills[:2])

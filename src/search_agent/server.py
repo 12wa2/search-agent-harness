@@ -78,6 +78,9 @@ def _stage_payload(event: str, state: dict[str, Any]) -> dict[str, Any]:
             "historyTurns": len((state.get("conversation_history") or [])[-3:]),
             "needsClarification": bool(job.needs_clarification),
             "clarifyQuestions": list(job.clarify_questions),
+            "difficulty": job.subjective_difficulty,
+            "difficultyRoute": state.get("difficulty_route"),
+            "plannedStages": list(state.get("planned_stages") or []),
         }
     if event == "plan":
         paths = state.get("paths") or []
@@ -145,6 +148,7 @@ async def _stream_search(
     cancel_event: threading.Event | None = None,
     conversation_store: ConversationStore | None = None,
     session_store: AgentSessionStore | None = None,
+    request_decision: RouteDecision | None = None,
 ) -> AsyncIterator[str]:
     """Run one search in a worker thread; yield SSE frames as stages fire.
 
@@ -153,10 +157,15 @@ async def _stream_search(
     provider request is allowed to return instead of being force-killed.
     """
     cancel_event = cancel_event or threading.Event()
+    decision = request_decision or RouteDecision(intent=Intent.SEARCH, rule="search")
     events: queue.Queue = queue.Queue()
 
     def sink(event: str, state: dict[str, Any]) -> None:
-        events.put(("stage", {"stage": event, "detail": _stage_payload(event, state)}))
+        detail = _stage_payload(event, state)
+        if event == "understand":
+            detail["requestIntent"] = decision.intent.value
+            detail["intentRule"] = decision.rule
+        events.put(("stage", {"stage": event, "detail": detail}))
 
     def worker() -> None:
         try:
@@ -168,7 +177,11 @@ async def _stream_search(
                 session_store=session_store,
             )
             resp = service.search(req, cancel_event=cancel_event)
-            events.put(("result", resp.model_dump(by_alias=True)))
+            payload = resp.model_dump(by_alias=True)
+            if payload.get("debug") is not None:
+                payload["debug"]["requestIntent"] = decision.intent.value
+                payload["debug"]["intentRule"] = decision.rule
+            events.put(("result", payload))
         except Exception as exc:  # surfaced as an SSE error frame, not a crash
             events.put(("error", {"message": str(exc)}))
         finally:
@@ -302,6 +315,7 @@ def create_app(
                     req,
                     conversation_store=resolved_conversations,
                     session_store=resolved_sessions,
+                    request_decision=decision,
                 ),
                 runtime,
             )

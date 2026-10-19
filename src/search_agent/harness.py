@@ -22,6 +22,7 @@ from search_agent.core.degrade import degrade
 from search_agent.core.difficulty import (
     adaptive_budget,
     difficulty_route,
+    route_stages,
 )
 from search_agent.core.metrics import (
     collect_metrics,
@@ -77,6 +78,8 @@ def init_state_defaults(initial: dict[str, Any]) -> dict[str, Any]:
     state.setdefault("paths", [])
     state.setdefault("path_results", [])
     state.setdefault("reflections", [])
+    state.setdefault("executed_stages", [])
+    state.setdefault("planned_stages", [])
     state.setdefault("llm_calls", 0)
     state.setdefault("finalize", False)
     state.setdefault("need_clarify", False)
@@ -106,6 +109,7 @@ def apply_difficulty_routing(state: dict[str, Any], deps: Deps) -> None:
         return
     route = difficulty_route(job.subjective_difficulty)
     state["difficulty_route"] = route
+    state["planned_stages"] = list(route_stages(route))
 
     new_budget = adaptive_budget(deps.budget_state.budget, route)
     deps.budget_state.budget = new_budget
@@ -113,12 +117,14 @@ def apply_difficulty_routing(state: dict[str, Any], deps: Deps) -> None:
 
     if route == "single_pass":
         state["skip_reflection"] = True
-        path = single_path_from_hard_constraints(state)
+        # A simple query may have no hard filter at all (for example
+        # "帮我找会 Python 的"). Build a loose semantic path instead of
+        # falling through to the planning LLM.
+        path = single_path_from_hard_constraints(state, loose_fallback=True)
         if path is not None:
             state["paths"] = [path]
             state["tried_signatures"] = state.get("tried_signatures", set()) | {path.signature}
             state["phase"] = "execute"
-        # if no hard_constraints to build a path, fall through to plan
 
 
 def handle_stage_failure(state: dict[str, Any], phase: str, deps: Deps) -> None:
@@ -241,6 +247,11 @@ class Harness:
             try:
                 updates = _STAGES[phase](state, self.deps)
                 state.update(updates)
+                if phase == "understand" and not state.get("need_clarify"):
+                    # Route before emitting so the UI receives the planned
+                    # stage sequence together with the first event.
+                    apply_difficulty_routing(state, self.deps)
+                state.setdefault("executed_stages", []).append(phase)
                 emit_event(self.deps, phase, state)
             except SearchCancelled as exc:
                 mark_cancelled(state, stage=exc.stage)
@@ -254,10 +265,6 @@ class Harness:
             if is_cancelled(self.deps.cancel_event):
                 mark_cancelled(state, stage=phase)
                 break
-
-            # post-understand: difficulty routing
-            if phase == "understand" and not state.get("need_clarify"):
-                apply_difficulty_routing(state, self.deps)
 
             # post-execute: detect all-paths-failed
             if phase == "execute" and had_pending:
@@ -275,7 +282,7 @@ class Harness:
                     len(state.get("accumulated", {}))
                 )
                 # difficulty routing: skip reflection for single_pass
-                if state.get("skip_reflection") and state.get("phase") == "reflect":
+                if state.get("skip_reflection"):
                     state["phase"] = "finalize"
                     state["finalize"] = True
                     state["finalize_reason"] = "difficulty_single_pass"

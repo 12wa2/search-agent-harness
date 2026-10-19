@@ -259,6 +259,9 @@ class SearchAgentService:
             debug["validationIssues"] = state["validation_issues"]
         if state.get("finalize_reason"):
             debug["finalizeReason"] = state["finalize_reason"]
+        debug["difficultyRoute"] = state.get("difficulty_route")
+        debug["plannedStages"] = list(state.get("planned_stages") or [])
+        debug["executedStages"] = list(state.get("executed_stages") or [])
         return debug
 
     def _save_conversation_turn(

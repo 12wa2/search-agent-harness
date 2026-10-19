@@ -10,9 +10,15 @@
 - **运行模式切换保护**（`web/`）：从快速演示切入完整在线前显示轻量确认框，说明真实模型调用、
   潜在 API 费用、数据发送边界及“只影响后续搜索”；切回快速演示不增加步骤。同步校正澄清规则
   注释、补充泛化搜索动词的回归测试，并统一 README 测试徽章与 Roadmap 的实际测试口径。
+- **按难度自适应路由**（`core/difficulty.py`、`harness.py`、`understand`、`web/`）：明确搜索动作 +
+  岗位/具体技能走 5 阶段 `single_pass`，不调用 `plan` / `reflect` / `revise`；补充“微服务/
+  机器学习/数据平台”等具体信息不会自动升级，只有开放式偏好、抽象能力或需要多路径探索时才进入
+  反思链路。SSE 暴露 `requestIntent` / `intentRule` / `difficultyRoute` / `plannedStages` /
+  `executedStages`，执行观测新增“本次路由”卡片，展示 `SEARCH → 轻量/缩减/完整反思` 与实际阶段数。
 - **对话交付可解释性**（`core/clarification.py`、`understand` / `revise`、`web/`）：首轮只包含
-  技能、缺少岗位方向时，Agent 会先返回可点击的方向选项，而不是直接进入检索；有会话历史时不会
-  重复打断。对话视图把完整执行过程压缩为“当前阶段 + 8 段进度 + 事件数”，详细事件默认折叠。
+  裸技能且没有搜索动作时，Agent 会先返回可点击的方向选项，而不是直接进入检索；已可执行的
+  “找会 Python 的”会直接检索。有会话历史时不会重复打断。对话视图把完整执行过程压缩为“当前阶段 +
+  实际阶段数 + 事件数”，详细事件默认折叠。
   候选人卡新增命中能力、未覆盖能力、硬条件警告、来源路径和排序分口径说明；交付区展示目标人数、
   实际交付、人数缺口与 `finalizeReason`，并用真实 `evaluate → reflect → revise` 事件解释本轮为何
   继续或结束。`SearchResponse` 新增 `topK`，`understand` 事件新增 `needsClarification` /

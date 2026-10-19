@@ -286,20 +286,27 @@ def test_service_clarification_response():
     assert "How many years?" in resp.clarification["questions"]
 
 
-def test_service_skill_only_query_returns_clarification_options():
-    tool = _FakeTool([])
-    svc = SearchAgentService(tool=tool, llm_client=_llm(), runner=LoopRunner())
+def test_service_skill_only_search_uses_single_pass_route():
+    llm = _llm()
+    tool = _FakeTool([_candidate(f"d{i}") for i in range(5)])
+    svc = SearchAgentService(tool=tool, llm_client=llm, runner=LoopRunner())
 
-    req = SearchRequest(query="找会 Python 的", companyId=39978, topK=8, details=True)
+    req = SearchRequest(query="帮我找会 Python 的", companyId=39978, topK=8, details=True)
     resp = svc.search(req)
 
     assert resp.topK == 8
-    assert resp.total == 0
-    assert resp.clarification is not None
-    assert resp.clarification["needClarification"] is True
-    assert len(resp.clarification["options"]) == 3
-    assert resp.clarification["options"][0]["label"] == "后端开发"
-    assert "Python" in resp.clarification["options"][0]["query"]
+    assert resp.total == 5
+    assert resp.clarification is None
+    assert resp.debug is not None
+    assert resp.debug["difficultyRoute"] == "single_pass"
+    assert resp.debug["executedStages"] == [
+        "understand",
+        "execute",
+        "judge",
+        "evaluate",
+        "finalize",
+    ]
+    assert all(name != "agent_plan" for name, _ in llm.calls)
 
 
 def test_service_fallback_baseline():

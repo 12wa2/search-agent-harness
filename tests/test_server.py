@@ -354,6 +354,11 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "完整在线尚未配置" in script.text
     assert "快速演示" in script.text
     assert "完整在线" in script.text
+    assert "轻量搜索" in script.text
+    assert "difficultyRoute" in script.text
+    assert "plannedStages" in script.text
+    assert "is-skipped" in script.text
+    assert "updateRouteSummary" in script.text
     assert 'modeChip.removeAttribute("title")' in script.text
     assert 'modeChip.setAttribute("aria-label"' in script.text
     assert "LLM、检索工具与候选人库会一起切换" not in script.text
@@ -363,6 +368,8 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert 'id="composer-mode"' in index.text
     assert 'id="delivery-overview"' in index.text
     assert 'id="candidate-method-note"' in index.text
+    assert 'id="route-summary"' in index.text
+    assert 'id="route-intent"' in index.text
 
     styles = client.get("/styles.css")
     assert styles.status_code == 200
@@ -373,6 +380,9 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert ".chat-delivery-overview" in styles.text
     assert ".clarification-options" in styles.text
     assert ".mode-confirm-actions" in styles.text
+    assert ".rail-item.is-skipped" in styles.text
+    assert ".chat-progress-segment.is-skipped" in styles.text
+    assert ".route-summary" in styles.text
 
 
 def test_search_response_exposes_delivery_target_and_end_reason(client: TestClient) -> None:
@@ -507,26 +517,99 @@ def test_greeting_plus_recruitment_still_runs_the_agent(client: TestClient) -> N
     assert "event: result" in text
 
 
-def test_stream_returns_clarification_options_for_skill_only_query(client: TestClient) -> None:
+def test_stream_uses_lightweight_route_for_skill_only_search(client: TestClient) -> None:
     with client.stream(
         "POST",
         "/search/stream",
-        json={"query": "找会 Python 的", "topK": 6, "details": True},
+        json={"query": "帮我找会 Python 的", "topK": 6, "details": True},
     ) as resp:
         assert resp.status_code == 200
         text = "".join(resp.iter_text())
 
     assert "event: result" in text
     stage_frames = [frame for frame in _frames(text) if _event_payload(frame)[0] == "stage"]
+    stages = [_event_payload(frame)[1]["stage"] for frame in stage_frames]
+    assert stages == ["understand", "execute", "judge", "evaluate", "finalize"]
+    assert "plan" not in stages
+    assert "reflect" not in stages
+    assert "revise" not in stages
     understand = next(
         payload
         for _, payload in (_event_payload(frame) for frame in stage_frames)
         if payload["stage"] == "understand"
     )
-    assert understand["detail"]["needsClarification"] is True
-    assert understand["detail"]["clarifyQuestions"]
+    assert understand["detail"]["needsClarification"] is False
+    assert understand["detail"]["requestIntent"] == "SEARCH"
+    assert understand["detail"]["intentRule"] == "search"
+    assert understand["detail"]["difficultyRoute"] == "single_pass"
+    assert understand["detail"]["plannedStages"] == stages
     _, payload = _event_payload(_frames(text)[-1])
     assert payload["topK"] == 6
-    assert payload["total"] == 0
-    assert payload["clarification"]["needClarification"] is True
-    assert len(payload["clarification"]["options"]) == 3
+    assert payload["total"] > 0
+    assert payload.get("clarification") is None
+    assert payload["debug"]["requestIntent"] == "SEARCH"
+    assert payload["debug"]["intentRule"] == "search"
+    assert payload["debug"]["difficultyRoute"] == "single_pass"
+    assert payload["debug"]["executedStages"] == stages
+
+
+def test_stream_keeps_lightweight_route_for_structured_clarification_option(
+    client: TestClient,
+) -> None:
+    with client.stream(
+        "POST",
+        "/search/stream",
+        json={
+            "query": "寻找 Python 后端工程师，重点考察服务端 API、微服务和系统设计经验",
+            "topK": 5,
+            "details": True,
+        },
+    ) as resp:
+        assert resp.status_code == 200
+        text = "".join(resp.iter_text())
+
+    stage_frames = [frame for frame in _frames(text) if _event_payload(frame)[0] == "stage"]
+    stages = [_event_payload(frame)[1]["stage"] for frame in stage_frames]
+    assert stages == ["understand", "execute", "judge", "evaluate", "finalize"]
+    assert "plan" not in stages
+    assert "reflect" not in stages
+    assert "revise" not in stages
+    _, payload = _event_payload(_frames(text)[-1])
+    assert payload["debug"]["difficultyRoute"] == "single_pass"
+    assert payload["debug"]["executedStages"] == stages
+
+
+def test_stream_keeps_reflective_route_for_complex_query(client: TestClient) -> None:
+    with client.stream(
+        "POST",
+        "/search/stream",
+        json={"query": "找能力可迁移的架构师", "topK": 5, "details": True},
+    ) as resp:
+        assert resp.status_code == 200
+        text = "".join(resp.iter_text())
+
+    stage_frames = [frame for frame in _frames(text) if _event_payload(frame)[0] == "stage"]
+    stages = [_event_payload(frame)[1]["stage"] for frame in stage_frames]
+    assert stages == [
+        "understand",
+        "plan",
+        "execute",
+        "judge",
+        "evaluate",
+        "reflect",
+        "revise",
+        "finalize",
+    ]
+    understand = next(
+        payload
+        for _, payload in (_event_payload(frame) for frame in stage_frames)
+        if payload["stage"] == "understand"
+    )
+    assert understand["detail"]["requestIntent"] == "SEARCH"
+    assert understand["detail"]["intentRule"] == "search"
+    assert understand["detail"]["difficultyRoute"] == "standard"
+    assert understand["detail"]["plannedStages"] == stages
+    _, payload = _event_payload(_frames(text)[-1])
+    assert payload["debug"]["requestIntent"] == "SEARCH"
+    assert payload["debug"]["intentRule"] == "search"
+    assert payload["debug"]["difficultyRoute"] == "standard"

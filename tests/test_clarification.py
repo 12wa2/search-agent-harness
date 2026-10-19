@@ -10,19 +10,29 @@ from search_agent.core.clarification import detect_skill_only_clarification
 @pytest.mark.parametrize(
     "query",
     [
-        "找会 python 的",
-        "Find someone who knows Python",
         "懂 Java",
         "熟悉 Spark",
     ],
 )
-def test_skill_only_queries_ask_for_a_role(query: str) -> None:
+def test_bare_skill_queries_ask_for_a_role(query: str) -> None:
     clarification = detect_skill_only_clarification(query)
 
     assert clarification is not None
     assert clarification.questions
     assert len(clarification.options) == 3
     assert all(option.query for option in clarification.options)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "找会 python 的",
+        "Find someone who knows Python",
+        "帮我找会 Python 的",
+    ],
+)
+def test_explicit_search_action_makes_skill_query_actionable(query: str) -> None:
+    assert detect_skill_only_clarification(query) is None
 
 
 @pytest.mark.parametrize(
@@ -43,11 +53,10 @@ def test_follow_up_turn_does_not_reinterrupt_the_conversation() -> None:
     assert detect_skill_only_clarification("找会 Python 的", has_history=True) is None
 
 
-def test_generic_search_verb_does_not_imply_a_role() -> None:
+def test_generic_search_verb_does_not_block_a_skill_search() -> None:
     clarification = detect_skill_only_clarification("帮我找会 Python 的")
 
-    assert clarification is not None
-    assert len(clarification.options) == 3
+    assert clarification is None
 
 
 def test_java_does_not_match_javascript() -> None:

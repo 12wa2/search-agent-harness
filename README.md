@@ -2,13 +2,13 @@
 
 **把「一次检索」升级为「会反思、会自我修正、有预算纪律」的检索 Agent。**
 
-> 一个可嵌入的八阶段检索 Agent Harness（以人才搜索为端到端示例场景）。
+> 一个可嵌入的自适应检索 Agent Harness（明确查询走 5 阶段轻量检索，复杂查询走完整 8 阶段反思；以人才搜索为端到端示例场景）。
 > 纯 Python，唯一运行时依赖是 pydantic；自带离线演示，不需要任何 API Key。
 
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-427-brightgreen)
+![Tests](https://img.shields.io/badge/tests-442-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![version](https://img.shields.io/badge/version-v0.1.0-blue)
@@ -18,7 +18,7 @@
 > 内置 Web 体验（零构建，FastAPI 直接托管）：`search-agent serve --offline` → <http://127.0.0.1:8000>。
 > 默认是 **Agent 体验**：像和招聘助手对话一样提交复杂需求，实时看到条件解析、搜索路径、
 > 能力覆盖检查、反思改写和内联候选人卡片；技术细节收进可展开的执行详情。
-> 右上角可切到 **执行观测**，保留原三栏控制台，专门查看八阶段状态、路径、指标和原始 Trace。
+> 右上角可切到 **执行观测**，保留原三栏控制台，专门查看实际执行阶段（5 或 8 段）、路径、指标和原始 Trace。
 > 两种模式共享同一条 SSE 运行，切换视图不会重新搜索；会话续接、停止语义和结果分页均保留。
 
 <details>
@@ -44,14 +44,14 @@ search-agent serve --offline
 
 ### 有边界的请求路由
 
-两种 Web 视图和两个 `/search/stream` 入口会先经过确定性的 `IntentRouter`，再决定是否启动八阶段 Agent：
+两种 Web 视图和两个 `/search/stream` 入口会先经过确定性的 `IntentRouter`，再决定是否启动 Agent：
 
 | 输入类型 | 路由 | 行为 | LLM / 检索 |
 |---|---|---|---|
 | “你好” / “Hello” | `GREETING` | 返回能力介绍与示例需求 | 0 次 |
 | “你能做什么？” / “怎么使用？” | `HELP` | 返回能力边界与输入建议 | 0 次 |
 | 写诗 / 翻译 / 推荐书影音 / 天气 / 通用知识 | `OUT_OF_SCOPE` | 说明只处理招聘搜索，不伪造成 Agent 结果 | 0 次 |
-| 招聘需求，或无法确定 | `SEARCH` | 进入 `understand → … → finalize` | 正常预算 |
+| 招聘需求，或无法确定 | `SEARCH` | 进入自适应检索链路：明确查询 5 阶段，复杂查询 8 阶段 | 正常预算 |
 
 设计上刻意保守：只有**明确**的问候、帮助问题和无关任务会在 Harness 之前被拦下；其余输入默认交给
 Agent，避免把不常见但真实的招聘表达误判成聊天。路由是规则匹配，不调用 LLM，也不读取或写入
@@ -63,17 +63,22 @@ Agent，避免把不常见但真实的招聘表达误判成聊天。路由是规
 行业词本身不是拒绝依据：只要有招聘或搜索动作，路由就默认交给 Agent；因此
 “招聘音乐制作人”“找电影剪辑师”这类不在常见岗位词表中的需求不会被行业词误伤。
 
+搜索进入 Agent 后还会做一次难度路由：存在明确搜索动作，且同时给出岗位和具体技能时，走
+`understand → execute → judge → evaluate → finalize` 的轻量链路；开放式偏好（如“最好/优先/加分”）、
+抽象能力或需要多路径探索的查询，才进入带 `plan / reflect / revise` 的反思链路。
+
 SSE 的 `reply` 是终止帧，也是唯一一帧：不会出现 `stage`、`result`、`metrics` 或 `trace`。
 `POST /search` 仍保持纯搜索契约，假定调用方传入的就是招聘需求。
 
 ### 模糊需求与结果解释
 
-首轮输入只有技能、没有岗位方向时（例如“找会 Python 的”），服务会先返回「后端开发 / 机器学习与 AI /
-数据工程」三个可点击方向，并在 `understand` 事件中标记 `needsClarification=true`；确认前不会启动
-`plan → execute`，也不展示空的候选人名单。已有会话历史时不会重复打断，后续追问仍交给正常 Agent
-链路处理。
+首轮输入只有裸技能、且没有搜索动作时（例如“懂 Java”或“熟悉 Spark”），服务会先返回「后端开发 /
+机器学习与 AI / 数据工程」三个可点击方向，并在 `understand` 事件中标记
+`needsClarification=true`；确认前不会启动 `plan → execute`，也不展示空的候选人名单。像“找会 Python
+的”这种已经可执行的请求会直接进入轻量检索，不再先追问岗位方向。已有会话历史时不会重复打断，
+后续追问仍交给正常 Agent 链路处理。
 
-对话结果把执行过程压缩成“当前阶段 + 8 段进度 + 事件数”，完整阶段和 Trace 默认折叠；候选人卡同时
+对话结果把执行过程压缩成“当前阶段 + 实际执行阶段数 + 事件数”，完整阶段和 Trace 默认折叠；候选人卡同时
 展示命中能力、未覆盖能力、硬条件状态与来源路径。交付区明确列出目标人数、实际交付、人数缺口和
 `finalizeReason`，并用真实的 `evaluate → reflect → revise` 事件解释本轮为何继续搜索或在这里结束，
 不补写模型没有产生的推理。排序分只表示同一结果集内的相对顺序，不代表概率或匹配率。
@@ -370,9 +375,9 @@ SSE 事件协议：
 
 | `event` | 何时出现 | 载荷 | 是否终止 |
 |---|---|---|---|
-| `stage` | 搜索请求每完成一个阶段 | `stage` + `detail` | 否 |
+| `stage` | 搜索请求每完成一个阶段 | `stage` + `detail`；`understand` 额外含 `requestIntent` / `intentRule` | 否 |
 | `reply` | 问候 / 帮助 / 明确无关任务 | `type` / `intent` / `message` / `suggestions` / `searchStarted=false` | 是，且为唯一一帧 |
-| `result` | 搜索完成（含协作取消终态） | 完整 `SearchResponse` | 是 |
+| `result` | 搜索完成（含协作取消终态） | 完整 `SearchResponse`；`debug` 含请求意图、检索策略与实际阶段 | 是 |
 | `error` | Harness 抛出未预期异常 | `message` | 是 |
 
 ```bash
@@ -678,7 +683,7 @@ $env:SEARCH_AGENT_MODEL = "search-agent-primary"
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 427 个测试（其中 24 个为可选 ES 集成测试，ES 不可达时跳过）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
+- [x] 442 个测试（其中 24 个为可选 ES 集成测试，ES 不可达时跳过）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] Web 体验：零构建双模式单页——默认对话式 Agent（需求解析 / 自然语言进度 / 内联候选人 / 可展开执行详情），

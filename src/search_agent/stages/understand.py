@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Any
 
 from search_agent.core.clarification import detect_skill_only_clarification
-from search_agent.core.difficulty import apply_difficulty_floor
+from search_agent.core.difficulty import is_explicit_simple_query, resolve_difficulty
 from search_agent.llm.prompts import (
     build_understand_payload,
     understand_prompt,
@@ -145,7 +145,8 @@ def run_understand(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     # tolerate alias keys the model emits when strict mode is not enforced
     diff_raw = data.get("subjective_difficulty") or data.get("difficulty_level") or "mid"
     difficulty = _DIFF_ALIASES.get(str(diff_raw).strip().lower(), "mid")
-    difficulty = apply_difficulty_floor(state["query"], difficulty)
+    difficulty = resolve_difficulty(state["query"], difficulty)
+    simple_lookup = is_explicit_simple_query(state["query"])
     tp = data.get("talent_profile") or data.get("initial_talent_profile") or {}
 
     hard_constraints = _coerce_hard_constraints(data.get("hard_constraints"))
@@ -176,8 +177,8 @@ def run_understand(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
         hard_constraints=hard_constraints,
         subjective_difficulty=difficulty,
         difficulty_reason=data.get("difficulty_reason", "") or "",
-        needs_clarification=bool(data.get("needs_clarification", False)),
-        clarify_questions=data.get("clarify_questions", []) or [],
+        needs_clarification=bool(data.get("needs_clarification", False)) and not simple_lookup,
+        clarify_questions=((data.get("clarify_questions", []) or []) if not simple_lookup else []),
     )
     clarification = detect_skill_only_clarification(
         state["query"],

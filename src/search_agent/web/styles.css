@@ -683,6 +683,57 @@ input[type="number"]:focus {
   font-size: 10.5px;
 }
 
+.route-summary {
+  margin-top: 10px;
+  padding: 12px 13px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--surface-tint);
+}
+
+.route-summary-head,
+.route-summary-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.route-summary-head > span {
+  color: var(--muted);
+  font: 650 10.5px/1.3 var(--sans);
+}
+
+.route-summary-head code {
+  color: var(--quiet);
+  font: 10px/1.3 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.route-summary-path {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-top: 8px;
+  color: var(--quiet);
+}
+
+.route-summary-path strong:first-child {
+  color: var(--ink);
+  font: 650 13px/1.3 var(--mono);
+}
+
+.route-summary-path strong:last-child {
+  color: var(--accent);
+  font: 650 13px/1.3 var(--sans);
+}
+
+.route-summary-meta {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
 .metric-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1064,7 +1115,7 @@ pre {
 .stage-rail {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--rail-cols, 8), minmax(0, 1fr));
   border-bottom: 1px solid var(--rule);
   background: var(--surface-tint);
 }
@@ -1130,6 +1181,10 @@ pre {
 
 .rail-item.active b {
   color: var(--accent);
+}
+
+.rail-item.is-skipped {
+  opacity: 0.42;
 }
 
 .timeline {
@@ -3065,7 +3120,7 @@ body[data-view="agent"] #version-chip {
 
 .chat-progress-track {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--progress-cols, 8), minmax(0, 1fr));
   gap: 4px;
   margin: 0 0 9px;
 }
@@ -3084,6 +3139,11 @@ body[data-view="agent"] #version-chip {
 .chat-progress-segment.is-current {
   background: var(--accent);
   transform: scaleY(1.5);
+}
+
+.chat-progress-segment.is-skipped {
+  background: #edf2ef;
+  opacity: 0.55;
 }
 
 .chat-progress-list {

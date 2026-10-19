@@ -14,6 +14,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Callable
 
+from search_agent.core.difficulty import difficulty_floor
 from search_agent.llm.client import LlmUsage, estimated_usage
 from search_agent.models.api import SearchRequest, SearchResponse
 
@@ -273,8 +274,8 @@ class ScriptedLlmClient:
             "must_abilities": abilities,
             "nice_abilities": [],
             "hard_constraints": hard_constraints,
-            "subjective_difficulty": "mid",
-            "difficulty_reason": "演示脚本按关键词归一为中档",
+            "subjective_difficulty": difficulty_floor(query),
+            "difficulty_reason": "演示脚本按查询的显式程度判定",
             "needs_clarification": False,
             "clarify_questions": [],
             "talent_profile": {

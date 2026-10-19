@@ -10,7 +10,17 @@ const STAGES = [
 ];
 
 const STAGE_LABEL = Object.fromEntries(STAGES);
-const STAGE_ORDER = new Map(STAGES.map(([key], i) => [key, i]));
+const STAGE_KEYS = STAGES.map(([key]) => key);
+const ROUTE_STAGES = Object.freeze({
+  single_pass: ["understand", "execute", "judge", "evaluate", "finalize"],
+  reduced: STAGE_KEYS,
+  standard: STAGE_KEYS,
+});
+const ROUTE_LABEL = Object.freeze({
+  single_pass: "轻量搜索",
+  reduced: "缩减反思",
+  standard: "完整反思",
+});
 const STAGE_META = {
   understand: { kind: "READ", glyph: "01" },
   plan: { kind: "PLAN", glyph: "02" },
@@ -47,6 +57,7 @@ const state = {
   controller: null,
   startedAt: 0,
   activeRun: null,
+  routeMeta: null,
   lastResult: null,
   runEvents: [],
   executeCount: 0,
@@ -91,6 +102,73 @@ const nextPageBtn = $("next-page");
 const conversationLabel = $("conversation-label");
 const conversationHistory = $("conversation-history");
 const newConversationBtn = $("new-conversation");
+
+function stageKeysForRoute(route, plannedStages) {
+  if (Array.isArray(plannedStages) && plannedStages.length) {
+    return plannedStages.filter((stage) => STAGE_LABEL[stage]);
+  }
+  return ROUTE_STAGES[route] || STAGE_KEYS;
+}
+
+function routeLabel(route) {
+  return ROUTE_LABEL[route] || "自适应反思";
+}
+
+function routeFootnote(route) {
+  if (route === "single_pass") return "轻量搜索：跳过制定计划、反思与策略改写，只保留真实执行的检索阶段。";
+  if (route === "reduced") return "缩减反思：按查询难度限制路径数与反思轮次，未执行的阶段会标记为跳过。";
+  return "完整反思：允许规划多条路径，并根据覆盖检查决定是否继续反思。";
+}
+
+function routeStageTotal(route, plannedStages) {
+  if (Array.isArray(plannedStages) && plannedStages.length) return plannedStages.length;
+  return route === "single_pass" ? 5 : 8;
+}
+
+function resetRouteSummary() {
+  const intent = $("route-intent");
+  const strategy = $("route-strategy");
+  const rule = $("route-rule");
+  const stageCount = $("route-stage-count");
+  const stageDetail = $("route-stage-detail");
+  if (intent) intent.textContent = "—";
+  if (strategy) strategy.textContent = "—";
+  if (rule) rule.textContent = "等待判定";
+  if (stageCount) stageCount.textContent = "阶段待判定";
+  if (stageDetail) stageDetail.textContent = "等待 Agent 事件";
+}
+
+function updateRouteSummary({
+  intent = "SEARCH",
+  intentRule = "search",
+  difficultyRoute,
+  plannedStages,
+  executedStages,
+  executedCount,
+} = {}) {
+  const route = difficultyRoute || "";
+  const intentNode = $("route-intent");
+  const strategyNode = $("route-strategy");
+  const ruleNode = $("route-rule");
+  const stageCountNode = $("route-stage-count");
+  const stageDetailNode = $("route-stage-detail");
+  if (intentNode) intentNode.textContent = `${intent} · ${INTENT_LABEL[intent] || "自定义"}`;
+  if (strategyNode) strategyNode.textContent = route ? routeLabel(route) : "待判定";
+  if (ruleNode) ruleNode.textContent = `规则 ${intentRule || "—"}`;
+  if (stageCountNode) {
+    stageCountNode.textContent = route
+      ? `计划 ${routeStageTotal(route, plannedStages)} 阶段`
+      : "阶段待判定";
+  }
+  if (stageDetailNode) {
+    const executed = Number.isFinite(executedCount)
+      ? executedCount
+      : Array.isArray(executedStages)
+        ? executedStages.length
+        : 0;
+    stageDetailNode.textContent = executed ? `已执行 ${executed} 阶段` : "等待阶段事件";
+  }
+}
 const agentView = $("agent-view");
 const consoleView = $("console-view");
 const viewAgentBtn = $("view-agent");
@@ -537,18 +615,12 @@ function beginChatRun() {
   const progress = el("section", "chat-progress");
   const progressHead = el("div", "chat-progress-head");
   const progressTitle = el("strong", "", "Agent 正在执行");
-  const progressMeta = el("span", "", "实时");
+  const progressMeta = el("span", "", "分析执行路由");
   progressHead.append(progressTitle, progressMeta);
   const progressTrack = el("div", "chat-progress-track");
   progressTrack.setAttribute("aria-hidden", "true");
-  for (const [stage, label] of STAGES) {
-    const segment = el("span", "chat-progress-segment");
-    segment.dataset.stage = stage;
-    segment.title = label;
-    progressTrack.append(segment);
-  }
   const progressList = el("ol", "chat-progress-list");
-  const progressFootnote = el("p", "chat-progress-footnote", "完整阶段事件已折叠，可在下方执行详情查看。");
+  const progressFootnote = el("p", "chat-progress-footnote", "正在判断应使用轻量搜索还是完整反思链路。");
   progress.append(progressHead, progressTrack, progressList, progressFootnote);
 
   const details = el("details", "chat-run-details");
@@ -571,6 +643,7 @@ function beginChatRun() {
     progressList,
     progressFootnote,
     visitedStages: new Set(),
+    route: null,
     details,
     detailsSummary,
     detailsBody,
@@ -581,9 +654,43 @@ function beginChatRun() {
   return run;
 }
 
+function renderProgressTrack(track, stageKeys) {
+  track.replaceChildren();
+  track.style.setProperty("--progress-cols", String(Math.max(1, stageKeys.length)));
+  for (const stage of stageKeys) {
+    const segment = el("span", "chat-progress-segment");
+    segment.dataset.stage = stage;
+    segment.title = STAGE_LABEL[stage] || stage;
+    track.append(segment);
+  }
+}
+
+function ensureProgressSegment(run, stage) {
+  if (!STAGE_LABEL[stage]) return;
+  if ([...run.progressTrack.children].some((segment) => segment.dataset.stage === stage)) return;
+  const segment = el("span", "chat-progress-segment");
+  segment.dataset.stage = stage;
+  segment.title = STAGE_LABEL[stage];
+  run.progressTrack.append(segment);
+  run.progressTrack.style.setProperty("--progress-cols", String(run.progressTrack.children.length));
+}
+
+function configureChatRoute(run, detail = {}) {
+  const route = detail.difficultyRoute || "standard";
+  if (run.route === route && run.progressTrack.children.length) return;
+  run.route = route;
+  renderProgressTrack(run.progressTrack, stageKeysForRoute(route, detail.plannedStages));
+  run.progressFootnote.textContent = routeFootnote(route);
+  run.progressMeta.textContent = `0 阶段 · ${routeLabel(route)}`;
+}
+
 function addChatStage(stage, detail = {}) {
   const run = beginChatRun();
-  if (stage === "understand") renderChatCriteria(run, detail);
+  if (stage === "understand") {
+    configureChatRoute(run, detail);
+    renderChatCriteria(run, detail);
+  }
+  ensureProgressSegment(run, stage);
 
   const item = el("li", "chat-progress-item is-active");
   const marker = el("span", "chat-progress-marker");
@@ -607,8 +714,12 @@ function addChatStage(stage, detail = {}) {
     segment.classList.toggle("is-hit", run.visitedStages.has(segment.dataset.stage));
     segment.classList.toggle("is-current", segment.dataset.stage === stage);
   }
-  run.progressMeta.textContent = `${run.visitedStages.size}/${STAGES.length} 阶段 · ${state.stageCount} 个事件`;
-  run.progressTitle.textContent = stage === "finalize" ? "执行完成" : "Agent 正在执行";
+  run.progressMeta.textContent = `${run.visitedStages.size} 阶段 · ${routeLabel(run.route)} · ${state.stageCount} 个事件`;
+  run.progressTitle.textContent = stage === "finalize"
+    ? "执行完成"
+    : run.route === "single_pass"
+      ? "轻量搜索执行中"
+      : "Agent 正在执行";
   rebuildChatDetails(run);
   scrollChatToEnd();
 }
@@ -875,6 +986,10 @@ function appendChatReasoning(container, payload) {
 
 function renderChatResult(payload) {
   const run = beginChatRun();
+  configureChatRoute(run, {
+    difficultyRoute: payload.debug?.difficultyRoute,
+    plannedStages: payload.debug?.plannedStages,
+  });
   const cancelled = Boolean(payload.debug?.cancelled);
   const clarification = Boolean(payload.clarification?.needClarification);
   const degradedReason =
@@ -901,14 +1016,20 @@ function renderChatResult(payload) {
       ? "等待补充需求"
       : "执行完成";
   run.progressMeta.textContent = clarification
-    ? `${run.visitedStages.size}/${STAGES.length} 阶段 · 等待补充`
-    : `${Math.max(1, state.executeCount)} 轮 · ${state.stageCount} 个事件`;
+    ? `${run.visitedStages.size} 阶段 · 等待补充`
+    : `${run.visitedStages.size} 阶段 · ${routeLabel(run.route)} · ${state.stageCount} 个事件`;
   run.progressFootnote.textContent = clarification
     ? "只完成了岗位理解，未启动检索、候选人判断或策略修订。"
-    : "完整阶段、工具结果和 Trace 已折叠在下方执行详情。";
+    : routeFootnote(run.route);
   for (const item of run.progressList.querySelectorAll(".chat-progress-item")) {
     item.classList.remove("is-active");
     item.classList.add("is-done");
+  }
+  for (const segment of run.progressTrack.children) {
+    const visited = run.visitedStages.has(segment.dataset.stage);
+    segment.classList.toggle("is-hit", visited);
+    segment.classList.toggle("is-skipped", !visited && !clarification);
+    segment.classList.remove("is-current");
   }
 
   const message = createChatMessage("agent", "chat-result-message agent-delivery");
@@ -1115,10 +1236,12 @@ function resetConversation() {
   renderConversation();
 }
 
-function buildRail() {
+function buildRail(stageKeys = STAGE_KEYS) {
   const rail = $("stage-rail");
   rail.replaceChildren();
-  for (const [key, label] of STAGES) {
+  rail.style.setProperty("--rail-cols", String(Math.max(1, stageKeys.length)));
+  for (const key of stageKeys) {
+    const label = STAGE_LABEL[key] || key;
     const item = el("span", "rail-item");
     item.append(el("span", "", label), el("b", "", key));
     item.dataset.stage = key;
@@ -1127,17 +1250,20 @@ function buildRail() {
 }
 
 function markRail(stage) {
-  const index = STAGE_ORDER.get(stage);
-  if (index === undefined) return;
+  if (!STAGE_LABEL[stage]) return;
   for (const item of document.querySelectorAll(".rail-item")) {
     item.classList.toggle("active", item.dataset.stage === stage);
-    if (STAGE_ORDER.get(item.dataset.stage) < index) item.classList.add("hit");
+    item.classList.remove("is-skipped");
+    if (item.dataset.stage === stage) item.classList.add("hit");
   }
 }
 
 function completeRail() {
+  const visited = new Set(state.runEvents.map((event) => event.stage));
   for (const item of document.querySelectorAll(".rail-item")) {
-    item.classList.add("hit");
+    const hit = visited.has(item.dataset.stage);
+    item.classList.toggle("hit", hit);
+    item.classList.toggle("is-skipped", !hit);
     item.classList.remove("active");
   }
 }
@@ -1150,6 +1276,8 @@ function resetUI() {
   setResultsEmptyCopy("等待 Agent 交付", "这里不会只给名字：命中能力、硬条件与来源路径会一起到达。");
   metrics.hidden = true;
   traceWrap.hidden = true;
+  state.routeMeta = null;
+  resetRouteSummary();
   traceJson.textContent = "";
   resultsHint.textContent = "—";
   hideConsoleDelivery();
@@ -1162,9 +1290,7 @@ function resetUI() {
   state.pageHasMore = false;
   state.executeCount = 0;
   state.stageCount = 0;
-  for (const item of document.querySelectorAll(".rail-item")) {
-    item.classList.remove("hit", "active");
-  }
+  buildRail();
   setAgentProgress();
   setAgentState("idle", "Agent 待命", "等待岗位简报；收到后会先拆解能力，再决定从哪里搜。");
 }
@@ -1412,6 +1538,20 @@ function appendDeliverySummary(payload) {
 function addEvent(stage, detail) {
   removeWaiting();
   state.stageCount += 1;
+
+  if (stage === "understand") {
+    buildRail(stageKeysForRoute(detail.difficultyRoute, detail.plannedStages));
+    metrics.hidden = false;
+    state.routeMeta = {
+      intent: detail.requestIntent || "SEARCH",
+      intentRule: detail.intentRule || "search",
+      difficultyRoute: detail.difficultyRoute,
+      plannedStages: detail.plannedStages,
+    };
+  }
+  if (state.routeMeta) {
+    updateRouteSummary({ ...state.routeMeta, executedCount: state.stageCount });
+  }
 
   if (stage === "execute") {
     if (state.executeCount >= 1) addRoundDivider(state.executeCount + 1);
@@ -1746,6 +1886,13 @@ function setMetric(id, value) {
 function renderMetrics(payload) {
   const m = payload.debug?.agentMetrics;
   metrics.hidden = false;
+  updateRouteSummary({
+    intent: payload.debug?.requestIntent || "SEARCH",
+    intentRule: payload.debug?.intentRule || "search",
+    difficultyRoute: payload.debug?.difficultyRoute,
+    plannedStages: payload.debug?.plannedStages,
+    executedStages: payload.debug?.executedStages,
+  });
   if (!m) {
     setMetric("m-calls", "—");
     setMetric("m-tokens", "—");
@@ -1778,6 +1925,11 @@ function renderTrace(payload) {
       agentMetrics: debug.agentMetrics,
       degradedReason: debug.degradedReason,
       finalizeReason: debug.finalizeReason,
+      requestIntent: debug.requestIntent,
+      intentRule: debug.intentRule,
+      difficultyRoute: debug.difficultyRoute,
+      plannedStages: debug.plannedStages,
+      executedStages: debug.executedStages,
     },
     null,
     2,
@@ -1811,6 +1963,7 @@ function showError(message) {
 }
 
 const INTENT_LABEL = {
+  SEARCH: "招聘搜索",
   GREETING: "问候",
   HELP: "能力说明",
   OUT_OF_SCOPE: "范围说明",
