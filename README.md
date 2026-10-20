@@ -16,10 +16,11 @@
 ![Search Agent — conversational candidate search](docs/console.png)
 
 > 内置 Web 体验（零构建，FastAPI 直接托管）：`search-agent serve --offline` → <http://127.0.0.1:8000>。
-> 默认是 **Agent 体验**：像和招聘助手对话一样提交复杂需求，实时看到条件解析、搜索路径、
-> 能力覆盖检查、反思改写和内联候选人卡片；技术细节收进可展开的执行详情。
-> 右上角可切到 **执行观测**，保留原三栏控制台，专门查看实际执行阶段（5 或 8 段）、路径、指标和原始 Trace。
-> 两种模式共享同一条 SSE 运行，切换视图不会重新搜索；会话续接、停止语义和结果分页均保留。
+> 默认是 **Agent 体验**：左侧保留“新建检索 / 本次会话 / 检索原则”，主区像和招聘助手对话一样提交复杂需求，
+> 实时看到条件解析、搜索路径、能力覆盖检查、反思改写和内联候选人卡片；技术细节收进可展开的执行详情。
+> 顶部可切到 **执行观测**，保留原三栏控制台，专门查看实际执行阶段（5 或 8 段）、路径、指标和原始 Trace。
+> 两种模式共享同一条 SSE 运行，切换视图不会重新搜索；当前视图会同步到 `?view=agent|console`，刷新后保持。
+> 会话续接、停止语义和结果分页均保留。
 
 <details>
 <summary>查看一次完整搜索的对话交付</summary>
@@ -438,9 +439,9 @@ curl -s -X POST http://127.0.0.1:8000/search -H "Content-Type: application/json"
 curl -s "http://127.0.0.1:8000/sessions/<queryToken>?offset=5&limit=5"
 ```
 
-两种 Web 视图都已接入同一协议：同一标签页会复用 `conversationId`，显示历史 query 与当前轮次；
-对话内候选人和执行观测中的列表都可翻页，点击“新对话”后下一轮不会继承旧上下文。未配置 Redis 时使用进程内降级，
-多进程部署请设置 `SEARCH_AGENT_REDIS_URL` 或 `REDIS_URL`。
+两种 Web 视图都已接入同一协议：同一标签页会复用 `conversationId`，Agent 体验的左侧会话栏列出最近轮次并可
+回填 query，执行观测显示完整历史与当前轮次；对话内候选人和执行观测中的列表都可翻页，点击“新对话”后下一轮
+不会继承旧上下文。未配置 Redis 时使用进程内降级，多进程部署请设置 `SEARCH_AGENT_REDIS_URL` 或 `REDIS_URL`。
 
 演示时可以先输入“找有 3 年以上经验的后端工程师”，随后在同一会话输入“最好有大厂背景”，
 观察 `understand` 阶段的“历史上下文 1 轮”和来源假设变化；离线脚本化 LLM 也会对
@@ -709,11 +710,12 @@ $env:SEARCH_AGENT_MODEL = "search-agent-primary"
 
 - [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 442 个测试（其中 24 个为可选 ES 集成测试，ES 不可达时跳过）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
+- [x] 466 个测试（442 个默认离线 + 24 个可选 ES 集成测试，ES 不可达时跳过）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
-- [x] Web 体验：零构建双模式单页——默认对话式 Agent（需求解析 / 自然语言进度 / 内联候选人 / 可展开执行详情），
-      可切换三栏执行观测（八阶段摘要 / SearchTool / metrics / raw trace），`GET /` 直接托管；
+- [x] Web 体验：零构建双模式单页——默认 Agent 工作区（左侧会话栏 / 需求解析 / 自然语言进度 /
+      内联候选人 / 可展开执行详情），可切换三栏执行观测（八阶段摘要 / SearchTool / metrics / raw trace），
+      视图状态同步到 URL；`GET /` 直接托管；
       截图 `docs/console.png`、`docs/console-run.png`；SSE 支持 `POST /search/stream`（查询不进 URL），
       客户端断开触发阶段边界取消。
 - [x] 轻量多轮会话（结构化摘要、最近 3 轮注入、租户隔离）与结果池分页（`/sessions/{queryToken}`，

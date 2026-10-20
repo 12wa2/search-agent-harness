@@ -42,7 +42,7 @@
 不在固定词表里而被误伤。
 
 `IntentRouter` 是无状态规则层，不保存对话上下文；它的职责是能力边界与成本保护，不是通用聊天。
-`POST /search` 仍保持纯搜索契约；需要能力路由的交互入口是 `/search/stream` 和 Web 控制台。
+`POST /search` 仍保持纯搜索契约；需要能力路由的交互入口是 `/search/stream` 和 Web 体验。
 
 ## 2. 八个阶段
 

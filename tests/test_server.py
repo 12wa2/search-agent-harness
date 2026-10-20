@@ -306,6 +306,12 @@ def test_root_serves_the_web_console(client: TestClient) -> None:
     assert "mode-toggle" in resp.text
     assert "今天要找" in resp.text
     assert "什么样的人？" in resp.text
+    assert 'id="sidebar-new"' in resp.text
+    assert 'id="agent-session-list"' in resp.text
+    assert 'id="agent-session-count"' in resp.text
+    assert "本次会话" in resp.text
+    assert "检索原则" in resp.text
+    assert "一条需求如何变成名单" in resp.text
     assert "执行观测" in resp.text
     assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
 
@@ -349,6 +355,8 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "agent-delivery" in script.text
     assert "chat-progress-item" in script.text
     assert "renderChatResult" in script.text
+    assert "agent-session-list" in script.text
+    assert 'url.searchParams.set("view", next)' in script.text
     assert "clarification-options" in script.text
     assert "为什么继续搜索" in script.text
     assert "排序分仅用于同一结果集内排序" in script.text
@@ -379,6 +387,8 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert 'id="candidate-method-note"' in index.text
     assert 'id="route-summary"' in index.text
     assert 'id="route-intent"' in index.text
+    assert 'id="sidebar-new"' in index.text
+    assert 'id="agent-session-list"' in index.text
 
     styles = client.get("/styles.css")
     assert styles.status_code == 200
@@ -393,6 +403,9 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert ".rail-item.is-skipped" in styles.text
     assert ".chat-progress-segment.is-skipped" in styles.text
     assert ".route-summary" in styles.text
+    assert ".agent-sidebar" in styles.text
+    assert ".agent-session-list" in styles.text
+    assert ".intro-grid" in styles.text
 
 
 def test_search_response_exposes_delivery_target_and_end_reason(client: TestClient) -> None:

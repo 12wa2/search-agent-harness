@@ -7,6 +7,12 @@
 
 ### Added
 
+- **Agent 工作区改版**（`src/search_agent/web/`）：对话视图增加固定会话侧栏，集中展示“新建检索”、
+  本次会话轮次与检索原则；首屏改为大标题导语与“一条需求如何变成名单”流程说明的双栏布局，
+  复杂需求示例和输入区保持可操作。执行观测新增独立页头，统一阶段、检索路径、账本与 Trace 的
+  信息层级。顶部视图切换现在同步到 `?view=agent|console`，刷新后保持当前视图；补充键盘焦点、
+  对比度、减少动效和响应式细节，并更新 `tests/test_server.py` 的页面结构与资源断言。
+  同步刷新 `docs/console.png` 与 `docs/console-run.png`。
 - **Hybrid V2 直连简单搜索**（`direct_search.py`、`hybrid_v2/parser.py`、`service.py`、`server.py`、
   `web/`）：明确技能、岗位、年限或城市的低不确定查询先经过保守直连门槛，再由 Hybrid V2 parser
   生成 `CandidateSearchIR`，最后只调用一次 `SearchTool` 完成 normalize、compile、BM25/kNN 召回
