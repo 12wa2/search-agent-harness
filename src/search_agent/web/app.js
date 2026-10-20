@@ -501,13 +501,10 @@ function createChatMessage(role, extraClass = "") {
   return { article, body, status: null };
 }
 
-function appendChatUserMessage(query, topK) {
+function appendChatUserMessage(query) {
   const { body } = createChatMessage("user", "agent-task-message");
   const bubble = el("div", "chat-user-bubble");
   bubble.append(el("p", "", query));
-  const meta = el("div", "chat-user-meta");
-  meta.append(el("span", "", `目标交付 ${topK} 人`), el("span", "", "招聘需求"));
-  bubble.append(meta);
   body.append(bubble);
   scrollChatToEnd();
 }
@@ -1381,7 +1378,7 @@ function renderRestoredConversation(memory) {
   chatIntro.hidden = true;
 
   for (const turn of turns) {
-    appendChatUserMessage(turn.query || "", Number(turn.topK || 20));
+    appendChatUserMessage(turn.query || "");
     const message = createChatMessage("agent", "chat-result-message agent-delivery restored-conversation-message");
     const cancelled = turn.status === "cancelled";
     const clarification = Boolean(turn.clarification?.needClarification);
@@ -2331,7 +2328,7 @@ async function runSearch(query, topK) {
   chatIntro.hidden = true;
   state.runEvents = [];
   state.lastResult = null;
-  appendChatUserMessage(query, topK);
+  appendChatUserMessage(query);
   state.activeRun = {
     query,
     topK,

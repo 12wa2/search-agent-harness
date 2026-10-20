@@ -2940,12 +2940,14 @@ body[data-view="agent"] #version-chip {
 }
 
 .chat-message-user .chat-message-body {
-  width: auto;
+  width: fit-content;
   max-width: min(82%, 720px);
 }
 
 .chat-user-bubble {
-  padding: 14px 17px 11px;
+  width: max-content;
+  max-width: 100%;
+  padding: 14px 17px;
   border: 1px solid #d4e8e1;
   border-radius: 18px 18px 5px 18px;
   background: #eaf5f1;
@@ -2957,16 +2959,7 @@ body[data-view="agent"] #version-chip {
   font-size: 13.5px;
   line-height: 1.7;
   white-space: pre-wrap;
-}
-
-.chat-user-meta {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 8px;
-  color: #688079;
-  font-size: 9.5px;
+  overflow-wrap: anywhere;
 }
 
 .chat-avatar {
@@ -5635,9 +5628,10 @@ p {
 }
 
 .chat-user-bubble {
-  max-width: min(760px, 88%);
+  width: max-content;
+  max-width: 100%;
   margin-left: auto;
-  padding: 13px 15px 10px;
+  padding: 13px 15px;
   border: 1px solid var(--forest);
   border-radius: 14px 14px 4px 14px;
   background: var(--forest);
@@ -5648,12 +5642,6 @@ p {
   color: inherit;
   font-size: 13px;
   line-height: 1.65;
-}
-
-.chat-user-meta {
-  gap: 12px;
-  color: rgba(234, 242, 237, 0.6);
-  font-size: 8.5px;
 }
 
 .chat-lead,
