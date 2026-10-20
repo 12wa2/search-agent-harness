@@ -584,6 +584,7 @@ def _event_payload(frame: str) -> tuple[str, dict]:
     ("query", "intent"),
     [
         ("你好", "GREETING"),
+        ("你是谁", "IDENTITY"),
         ("你能做什么？", "HELP"),
         ("帮我写一首诗", "OUT_OF_SCOPE"),
         ("推荐一本书", "OUT_OF_SCOPE"),

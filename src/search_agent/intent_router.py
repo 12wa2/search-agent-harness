@@ -17,6 +17,7 @@ from typing import Any
 
 class Intent(str, Enum):
     GREETING = "GREETING"
+    IDENTITY = "IDENTITY"
     HELP = "HELP"
     SEARCH = "SEARCH"
     OUT_OF_SCOPE = "OUT_OF_SCOPE"
@@ -67,6 +68,16 @@ _EDGE_PUNCT = " \t\r\n!！?？。.,，;；:：~～…\"'“”‘’()（）[]�
 _GREETING_RE = re.compile(
     r"^(?:你好|您好|嗨|哈喽|哈啰|在吗|早安|早上好|上午好|中午好|下午好|晚上好|晚安|"
     r"hello|hi|hey)(?:呀|啊|哦|哈|呢|\s+there)?$",
+    re.IGNORECASE,
+)
+
+_IDENTITY_RE = re.compile(
+    r"^(?:"
+    r"(?:你|您)(?:是谁|叫什么|叫什么名字|是做什么的|是什么|是什么助手|是什么系统|是什么工具)|"
+    r"(?:请|麻烦)?(?:介绍|说明)一下(?:你|您|你自己|您自己)|"
+    r"(?:你的|您的)(?:身份|定位|角色|作用)|"
+    r"who are you|what are you|what(?:'s| is) your name|introduce yourself"
+    r")(?:呀|啊|呢|嘛|哦)?$",
     re.IGNORECASE,
 )
 
@@ -190,6 +201,14 @@ class IntentRouter:
                 "你好！我是 Search Agent，可以根据岗位、技能、年限和项目背景帮你发现候选人。\n"
                 "告诉我目标岗位和关键要求，我会展示检索路径、匹配依据与运行指标。",
                 rule="greeting",
+            )
+        if _IDENTITY_RE.fullmatch(text):
+            return _reply(
+                Intent.IDENTITY,
+                "我是 Search Agent，一个面向招聘场景的候选人搜索助手。\n"
+                "你可以告诉我目标岗位、必备技能、工作年限、城市或项目背景；"
+                "我会选择合适的检索链路，并展示候选人与匹配依据。",
+                rule="identity",
             )
         if _HELP_RE.fullmatch(text):
             return _reply(

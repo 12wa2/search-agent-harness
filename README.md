@@ -50,11 +50,12 @@ search-agent serve --offline
 | 输入类型 | 路由 | 行为 | LLM / 检索 |
 |---|---|---|---|
 | “你好” / “Hello” | `GREETING` | 返回能力介绍与示例需求 | 0 次 |
+| “你是谁” / “介绍一下你自己” | `IDENTITY` | 返回身份定位、能力范围与输入建议，不承接招聘上下文 | 0 次 |
 | “你能做什么？” / “怎么使用？” | `HELP` | 返回能力边界与输入建议 | 0 次 |
 | 写诗 / 翻译 / 推荐书影音 / 天气 / 通用知识 | `OUT_OF_SCOPE` | 说明只处理招聘搜索，不伪造成 Agent 结果 | 0 次 |
 | 招聘需求，或无法确定 | `SEARCH` | 先尝试 3 阶段直连搜索；未命中时进入自适应 Agent：轻量查询 5 阶段，完整反思最多 8 阶段 | 直连 0 次 Agent LLM、≥1 次 V2 parser LLM；Agent 路由按预算执行 |
 
-设计上刻意保守：只有**明确**的问候、帮助问题和无关任务会在 Harness 之前被拦下；其余输入默认交给
+设计上刻意保守：只有**明确**的问候、身份询问、帮助问题和无关任务会在 Harness 之前被拦下；其余输入默认交给
 Agent，避免把不常见但真实的招聘表达误判成聊天。路由是规则匹配，不调用 LLM，也不读取或写入
 多轮会话记忆——这是路由的能力边界，不是通用聊天机器人。
 
@@ -413,7 +414,7 @@ SSE 事件协议：
 | `event` | 何时出现 | 载荷 | 是否终止 |
 |---|---|---|---|
 | `stage` | 搜索请求每完成一个阶段 | `stage` + `detail`；`understand` 额外含 `requestIntent` / `intentRule` | 否 |
-| `reply` | 问候 / 帮助 / 明确无关任务 | `type` / `intent` / `message` / `suggestions` / `searchStarted=false` | 是，且为唯一一帧 |
+| `reply` | 问候 / 身份询问 / 帮助 / 明确无关任务 | `type` / `intent` / `message` / `suggestions` / `searchStarted=false` | 是，且为唯一一帧 |
 | `result` | 搜索完成（含协作取消终态） | 完整 `SearchResponse`；`debug` 含请求意图、检索策略与实际阶段 | 是 |
 | `error` | Harness 抛出未预期异常 | `message` | 是 |
 
@@ -443,7 +444,7 @@ Web 顶栏的「快速演示 / 完整在线」是可点击的预设按钮：快�
   可用 `SEARCH_AGENT_CONVERSATION_TTL_SEC` / `SEARCH_AGENT_CONVERSATION_MAX_TURNS` 覆盖。每轮保存
   query、摘要、路由/状态、`queryToken`、候选人 ID 和最多 10 张精简卡片；左侧“最近会话”可恢复历史，
   新建检索只切换活动会话，不会删除旧归档。所有会话按 `(companyId, hrId)` 精确校验归属。
-- 问候、帮助和范围外说明也会以 `status=reply` 写入当前会话并立即出现在左侧；这些轮次不进入 L1
+- 问候、身份询问、帮助和范围外说明也会以 `status=reply` 写入当前会话并立即出现在左侧；这些轮次不进入 L1
   搜索上下文，仍保持 0 次 Agent LLM 与 0 次检索。若会话从“你好”开始，之后的首条检索需求会成为
   左侧会话标题。
 - **L3 候选人记忆**：记录本会话看过的人和招聘者显式排除的人。只有显式排除项会传给
@@ -561,7 +562,7 @@ search-agent-harness/
 │   ├── runner.py            # 可替换执行后端（默认 LoopRunner）
 │   ├── graph.py             # 可选：LangGraphRunner（同一批阶段 → StateGraph，行为等价）
 │   ├── server.py            # 可选：FastAPI HTTP 服务（SSE 阶段事件流）
-│   ├── intent_router.py     # Harness 之前的确定性请求路由（问候 / 帮助 / 无关任务 / 搜索）
+│   ├── intent_router.py     # Harness 之前的确定性请求路由（问候 / 身份 / 帮助 / 无关任务 / 搜索）
 │   ├── stages/              # 8 个阶段（每个都是纯函数，可独立单测）
 │   ├── core/                # 签名 / 合并 / 预算 / 降级 / 难度路由 / 指标 / trace / 策略记忆 / 消融开关
 │   ├── contract/tool.py     # SearchTool 协议 —— 与检索后端的唯一边界
@@ -764,7 +765,7 @@ $env:SEARCH_AGENT_MODEL = "search-agent-primary"
 - [x] 宽召回池语义：每路径召回 `max(top_k*3, 30)`（`SEARCH_AGENT_RECALL_POOL_SIZE`），judge 全量池、交付 top_k。
 - [x] 策略记忆：按查询族累计「哪一类策略有效」，并作为先验注入 plan / reflect（`core/experience.py`，Redis 可选）。
 - [x] 消融实验 + 评测门禁：`eval --ablate` 单开关对照表；`docs/eval_baseline.json` 作为 CI 基线，回归即红。
-- [x] 能力感知请求路由：问候 / 帮助 / 明确无关任务在 Harness 之前返回单帧 `reply`（零 LLM、零检索），
+- [x] 能力感知请求路由：问候 / 身份询问 / 帮助 / 明确无关任务在 Harness 之前返回单帧 `reply`（零 LLM、零检索），
       模糊输入默认走搜索；前端展示能力卡片与可填入的推荐需求。
 - [x] Hybrid V2 直连简单搜索：明确技能 / 岗位 / 年限 / 城市先由 V2 parser 生成
       `CandidateSearchIR`，再调用一次 `SearchTool`；SSE 为

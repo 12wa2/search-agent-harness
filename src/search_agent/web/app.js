@@ -2273,6 +2273,7 @@ function showError(message) {
 const INTENT_LABEL = {
   SEARCH: "招聘搜索",
   GREETING: "问候",
+  IDENTITY: "身份说明",
   HELP: "能力说明",
   OUT_OF_SCOPE: "范围说明",
 };

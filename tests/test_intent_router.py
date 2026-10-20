@@ -31,6 +31,26 @@ def test_help_questions(router: IntentRouter, query: str) -> None:
 @pytest.mark.parametrize(
     "query",
     [
+        "你是谁？",
+        "你是谁啊",
+        "你叫什么名字",
+        "介绍一下你自己",
+        "你是什么助手",
+        "Who are you?",
+        "introduce yourself",
+    ],
+)
+def test_identity_questions(router: IntentRouter, query: str) -> None:
+    decision = router.route(query)
+
+    assert decision.intent is Intent.IDENTITY
+    assert decision.rule == "identity"
+    assert "Search Agent" in decision.message
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
         "找有 3 年经验的后端工程师",
         "Python 工程师",
         "你好，帮我找 Python 工程师",
