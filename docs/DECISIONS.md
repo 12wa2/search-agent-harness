@@ -10,8 +10,8 @@
 **选择**：8 个阶段写成纯函数，`Harness.run` 是一个显式 `while` 循环
 （步数上限兜底），`phase` 字段驱动流转。
 
-**取舍**：放弃了框架的现成可视化与并行调度；换来完全可测（117 个单测）、
-零框架依赖、行为可解释。框架接入点通过 `runner.py` 的 `HarnessRunner` 协议预留，
+**取舍**：放弃了框架的现成可视化与并行调度；换来阶段行为可测试、零框架依赖、状态流转可解释。
+相关行为由单元测试与集成测试持续验证。框架接入点通过 `runner.py` 的 `HarnessRunner` 协议预留，
 迁移不需要动阶段代码。
 
 ## D2. SearchTool 协议作为唯一后端边界
@@ -74,7 +74,7 @@ plan / revise 产出的新路径先查签名（`core/signature.py`）。
 换来明确查询的低延迟、零 Agent 编排 LLM 成本，以及复杂查询仍保留完整反思能力。代价是简单
 搜索仍保留一次 V2 parser 调用，这与生产 Hybrid V2 的 NL2IR 口径一致。
 
-## D6. 降级矩阵：控制面永不抛异常
+## D6. 降级矩阵：阶段级失败可控、可观测
 
 **背景**：一次搜索涉及 5+ 次 LLM 调用与多条工具路径，任一点失败若直接冒泡，
 用户体验是「整单失败」。
@@ -82,8 +82,9 @@ plan / revise 产出的新路径先查签名（`core/signature.py`）。
 **选择**：把 `(阶段, 失败)` 映射为预定义动作（`core/degrade.py`），
 降级后循环继续或收敛；失败信息以 `degradedReason` 透传，可观测、可统计。
 
-**取舍**：需要仔细定义每个降级动作的语义与测试（`tests/test_degradation.py`）；
-换来线上永不 500，且降级率本身成为可监控的质量指标。
+**取舍**：需要仔细定义每个降级动作的语义与测试（`tests/test_degradation.py`）；换来阶段级失败的
+明确处理路径、可诊断的终止状态，以及可统计的降级质量指标。对于已覆盖的阶段级失败，系统尽可能通过
+降级继续执行或以可解释的方式终止，并通过 `degradedReason` 和 Trace 保留诊断信息。
 
 ## D7. Grounding：判断基于工具事实
 
@@ -192,7 +193,7 @@ dev 依赖里带上它们以在 CI 跑接口测试；核心安装仍然只有 py
 
 **选择**：`Dockerfile` 两阶段——build 阶段 `pip wheel ".[api,es]"` 产出全部 wheel，runtime 阶段只装 wheel（镜像里没有编译工具链）、非 root 运行、内置 `HEALTHCHECK`；compose 增加 `api` 服务，等待 Elasticsearch 与 gateway 健康后启动，先执行 `hybrid-v2 index --recreate` 重灌 16 人演示索引，再以 `--offline` 启动快速演示预置；配置主模型 key 后，compose 把在线预置接到内部 gateway。后端选择收敛到 `tools/factory.py`，CLI `--backend` 与容器入口共用一条路径。
 
-**取舍**：镜像默认「脚本化 LLM + 16 人内存库」的快速演示，零 API key 也能复现完整八阶段链路；配置上游 key 后可在页面切到「真实 LLM + Hybrid V2 + ES」。`--recreate` 对单实例演示是自愈，多副本部署应改成一次性 init job——这点写进了 README 的说明。
+**取舍**：镜像默认「脚本化 LLM + 16 人内存库」的快速演示，零 API key 也能复现完整自适应搜索链路；配置上游 key 后可在页面切到「真实 LLM + Hybrid V2 + ES」。`--recreate` 对单实例演示是自愈，多副本部署应改成一次性 init job——这点写进了 README 的说明。
 
 **影响**：`docker compose up -d --build` 之后 `/healthz` 的初始 `backend` 是 `InMemorySearchTool`，`onlineBackend` 是 `HybridV2SearchService`；配置 key 并通过 `/runtime/mode` 切换后，检索走容器内 Elasticsearch。后续加向量后端只需在 factory 里多一个分支。
 
@@ -328,13 +329,13 @@ BM25/kNN 与重排能一起运行；面试官只能看到接口，看不到执�
 部署」。
 
 **影响**：仓库现在有四条可运行检索路径；Hybrid V2 与 Agent 之间仍只有 `SearchTool` 协议，
-不会把检索实现细节泄漏进八阶段状态机。接入和字段契约见 `docs/HYBRID_V2.md`。
+不会把检索实现细节泄漏进 Agent 状态机。接入和字段契约见 `docs/HYBRID_V2.md`。
 
 ## D27. 轻量会话记忆：只存结构化条件摘要，不上向量 / 图记忆
 
 **背景**：招聘搜索天然是多轮的：“最好有大厂背景”“不要外包”“换个方向”都需要以上一轮
 条件为起点。但把完整对话、候选人简历或长期用户画像都塞进记忆，会同时放大 token、延迟、
-隐私和跨租户泄漏风险；这个 Agent 的主链路是八阶段搜索，不是通用聊天助手。
+隐私和跨租户泄漏风险；这个 Agent 的主链路是自适应招聘搜索，不是通用聊天助手。
 
 **选择**：`ConversationStore` 每轮只保存结构化摘要（must 能力、硬条件、难度、结果数和
 Top 候选人姓名），默认保留最近 10 轮、TTL 2 小时，Prompt 只注入最近 3 轮；归属严格绑定

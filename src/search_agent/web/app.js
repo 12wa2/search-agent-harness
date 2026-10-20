@@ -593,7 +593,7 @@ function chatStageCopy(stage, detail = {}) {
     const signals = [skills ? `技能 ${skills}` : "", city ? `城市 ${city}` : ""]
       .filter(Boolean)
       .join("，");
-    return `Hybrid V2 parser 已解析明确条件${signals ? `（${signals}）` : ""}并生成 CandidateSearchIR；随后直接调用 SearchTool，不启动 Agent 八阶段。`;
+    return `Hybrid V2 parser 已解析明确条件${signals ? `（${signals}）` : ""}并生成 CandidateSearchIR；随后直接调用 SearchTool，不启动 Agent 规划与反思循环。`;
   }
   if (stage === "understand") return "已读取岗位描述，提取必备能力、硬条件和可迁移经验。";
   if (stage === "plan") return `已规划 ${detail.paths || 0} 条互补的搜索路径，避免只依赖一个关键词。`;

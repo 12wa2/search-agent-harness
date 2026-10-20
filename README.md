@@ -18,7 +18,7 @@
 > 内置 Web 体验（零构建，FastAPI 直接托管）：`search-agent serve --offline` → <http://127.0.0.1:8000>。
 > 默认是 **Agent 体验**：左侧保留“新建检索 / 本次会话 / 检索原则”，主区像和招聘助手对话一样提交复杂需求，
 > 实时看到条件解析、搜索路径、能力覆盖检查、反思改写和内联候选人卡片；技术细节收进可展开的执行详情。
-> 顶部可切到 **执行观测**，保留原三栏控制台，专门查看实际执行阶段（5 或 8 段）、路径、指标和原始 Trace。
+> 顶部可切到 **执行观测**，保留原三栏控制台，专门查看实际执行阶段（3、5 或 8 阶段）、路径、指标和原始 Trace。
 > 两种模式共享同一条 SSE 运行，切换视图不会重新搜索；当前视图会同步到 `?view=agent|console`，刷新后保持。
 > 会话续接、停止语义和结果分页均保留。
 
@@ -52,7 +52,7 @@ search-agent serve --offline
 | “你好” / “Hello” | `GREETING` | 返回能力介绍与示例需求 | 0 次 |
 | “你能做什么？” / “怎么使用？” | `HELP` | 返回能力边界与输入建议 | 0 次 |
 | 写诗 / 翻译 / 推荐书影音 / 天气 / 通用知识 | `OUT_OF_SCOPE` | 说明只处理招聘搜索，不伪造成 Agent 结果 | 0 次 |
-| 招聘需求，或无法确定 | `SEARCH` | 先尝试 Hybrid V2 直连搜索；未命中时进入自适应 Agent：明确查询 5 阶段，复杂查询 8 阶段 | 直连 0 次 Agent LLM、≥1 次 V2 parser LLM；Agent 路由按预算执行 |
+| 招聘需求，或无法确定 | `SEARCH` | 先尝试 3 阶段直连搜索；未命中时进入自适应 Agent：轻量查询 5 阶段，完整反思最多 8 阶段 | 直连 0 次 Agent LLM、≥1 次 V2 parser LLM；Agent 路由按预算执行 |
 
 设计上刻意保守：只有**明确**的问候、帮助问题和无关任务会在 Harness 之前被拦下；其余输入默认交给
 Agent，避免把不常见但真实的招聘表达误判成聊天。路由是规则匹配，不调用 LLM，也不读取或写入
@@ -85,6 +85,17 @@ Hybrid V2 的 LLM reranker，其成本仍属于工具侧，不等于 Agent 编�
 无法安全直连的招聘需求再进入 Agent，并做第二次难度路由：明确查询走
 `understand → execute → judge → evaluate → finalize` 的轻量链路；开放式偏好（如“最好/优先/加分”）、
 抽象能力或需要多路径探索的查询，才进入带 `plan / reflect / revise` 的反思链路。
+
+执行路径统一定义如下：
+
+| 路由 | 实际阶段 | 使用场景 |
+|---|---|---|
+| 直连搜索 | `direct_search → execute → finalize` | 结构化条件明确，可以安全地直接生成 IR |
+| 轻量 Agent | `understand → execute → judge → evaluate → finalize` | 需求清晰，仍需判断与覆盖检查 |
+| 完整反思 Agent | `understand → plan → execute → judge → evaluate → reflect → revise → finalize` | 开放式偏好、抽象能力、跨岗位发现等复杂需求 |
+
+阶段数量以 SSE 实际事件为准。完整反思链路最多规划 8 个阶段；若执行中提前收敛，未触发的阶段会标记为
+跳过，不会因为前端展示了完整导航就记为已完成。
 
 SSE 的 `reply` 是终止帧，也是唯一一帧：不会出现 `stage`、`result`、`metrics` 或 `trace`。
 `POST /search` 仍保持纯搜索契约，假定调用方传入的就是招聘需求。
@@ -376,7 +387,7 @@ Web 控制台只保留两个完整预设，切换时会同时替换 LLM、Search
 
 | 预设 | LLM | 检索 | 数据 | 用途 |
 |---|---|---|---|---|
-| 快速演示（默认） | `ScriptedLlmClient` | `InMemorySearchTool` | 16 个内置虚构候选人 | 零 key、零 ES，快速展示完整八阶段链路 |
+| 快速演示（默认） | `ScriptedLlmClient` | `InMemorySearchTool` | 16 个内置虚构候选人 | 零 key、零 ES，快速展示 3 / 5 / 8 阶段自适应执行 |
 | 完整在线 | OpenAI-compatible 在线模型 | `HybridV2SearchService` | 使用者的 Elasticsearch 索引 | 真实模型、真实检索与会话记忆 |
 
 快速演示不连接 Elasticsearch；完整在线需要网关/模型 key 与已建好的 Hybrid V2 索引。
@@ -708,13 +719,13 @@ $env:SEARCH_AGENT_MODEL = "search-agent-primary"
 
 ## Roadmap
 
-- [x] 八阶段循环 + 预算 + 降级矩阵 + 并行执行
+- [x] 3 / 5 / 8 阶段自适应执行 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
 - [x] 466 个测试（442 个默认离线 + 24 个可选 ES 集成测试，ES 不可达时跳过）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] Web 体验：零构建双模式单页——默认 Agent 工作区（左侧会话栏 / 需求解析 / 自然语言进度 /
-      内联候选人 / 可展开执行详情），可切换三栏执行观测（八阶段摘要 / SearchTool / metrics / raw trace），
+      内联候选人 / 可展开执行详情），可切换三栏执行观测（实际执行阶段摘要 3/5/8 / SearchTool / metrics / raw trace），
       视图状态同步到 URL；`GET /` 直接托管；
       截图 `docs/console.png`、`docs/console-run.png`；SSE 支持 `POST /search/stream`（查询不进 URL），
       客户端断开触发阶段边界取消。

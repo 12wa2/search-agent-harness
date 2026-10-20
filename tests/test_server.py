@@ -306,6 +306,11 @@ def test_root_serves_the_web_console(client: TestClient) -> None:
     assert "mode-toggle" in resp.text
     assert "今天要找" in resp.text
     assert "什么样的人？" in resp.text
+    assert "自适应执行" in resp.text
+    assert "根据需求复杂度选择执行路径" in resp.text
+    assert "选择执行路径" in resp.text
+    assert "覆盖不足时反思并修订策略" in resp.text
+    assert "8 阶段反思" not in resp.text
     assert 'id="sidebar-new"' in resp.text
     assert 'id="agent-session-list"' in resp.text
     assert 'id="agent-session-count"' in resp.text
@@ -371,6 +376,9 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "difficultyRoute" in script.text
     assert "plannedStages" in script.text
     assert "is-skipped" in script.text
+    assert 'direct_search: ["direct_search", "execute", "finalize"]' in script.text
+    assert 'single_pass: ["understand", "execute", "judge", "evaluate", "finalize"]' in script.text
+    assert "function routeStageTotal" in script.text
     assert "updateRouteSummary" in script.text
     assert "`${intent} · ${routeLabel(route)} · ${stages} 阶段`" in script.text
     assert "function formatSeconds(milliseconds)" in script.text
