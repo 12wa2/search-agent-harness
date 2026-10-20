@@ -19,6 +19,7 @@ _MAX_PROFILE_SOURCES = 2
 def run_execute(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     job = state["job_profile"]
     seen = set(state.get("seen_doc_ids", set()))
+    excluded = set(state.get("excluded_doc_ids", set()))
     paths = list(state.get("paths", []))
     pending = [p for p in paths if p.status == "pending"]
     talent = state.get("talent_profile")
@@ -54,7 +55,7 @@ def run_execute(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
             top_k=state["top_k"],
             recall_pool_size=state.get("recall_pool_size"),
             routing=state["routing"],
-            exclude_doc_ids=list(seen),
+            exclude_doc_ids=sorted(seen | excluded),
             details=state.get("details", False),
             skip_rerank=True,
         )

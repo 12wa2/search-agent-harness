@@ -8,7 +8,7 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-466-brightgreen)
+![Tests](https://img.shields.io/badge/tests-475-brightgreen)
 ![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![version](https://img.shields.io/badge/version-v0.1.0-blue)
@@ -16,7 +16,7 @@
 ![Search Agent — conversational candidate search](docs/console.png)
 
 > 内置 Web 体验（零构建，FastAPI 直接托管）：`search-agent serve --offline` → <http://127.0.0.1:8000>。
-> 默认是 **Agent 体验**：左侧保留“新建检索 / 本次会话 / 检索原则”，主区像和招聘助手对话一样提交复杂需求，
+> 默认是 **Agent 体验**：左侧保留“新建检索 / 最近会话 / 检索原则”，主区像和招聘助手对话一样提交复杂需求，
 > 实时看到条件解析、搜索路径、能力覆盖检查、反思改写和内联候选人卡片；技术细节收进可展开的执行详情。
 > 顶部可切到 **执行观测**，保留原三栏控制台，专门查看实际执行阶段（3、5 或 8 阶段）、路径、指标和原始 Trace。
 > 两种模式共享同一条 SSE 运行，切换视图不会重新搜索；当前视图会同步到 `?view=agent|console`，刷新后保持。
@@ -398,6 +398,11 @@ Web 控制台只保留两个完整预设，切换时会同时替换 LLM、Search
 | `POST /search` | `SearchRequest` → `SearchResponse`（camelCase JSON；`details=true` 附带 `agentTrace` / `agentMetrics`） |
 | `GET /search/stream?query=…&topK=10` | SSE：非搜索请求返回单帧 `reply`；搜索请求逐阶段推送，最后 `result` 帧返回完整结果 |
 | `POST /search/stream` | 同一 SSE 流的 JSON body 版本（查询不进 URL / 访问日志）；客户端断开即请求后端取消 |
+| `POST /conversations` | 创建一个空会话；通常无需手动调用，首次搜索也会自动创建 |
+| `GET /conversations?companyId=…&hrId=…&limit=…&offset=…` | 列出当前租户的最近会话摘要 |
+| `GET /conversations/{conversationId}?companyId=…&hrId=…` | 恢复完整轮次与可展示的候选人快照 |
+| `DELETE /conversations/{conversationId}?companyId=…&hrId=…` | 删除指定归属的历史会话 |
+| `PATCH /conversations/{conversationId}/candidates/{docId}` | 设置显式排除或恢复候选人；后续搜索会携带排除条件 |
 | `GET /sessions/{queryToken}?offset=5&limit=5` | 分页读取本次 Agent 结果池，不重新检索、不调用 LLM |
 | `DELETE /sessions/{queryToken}` | 主动删除分页会话；不调用也会按 1 小时 TTL 过期 |
 | `GET /healthz` | 健康检查：当前预设、LLM、当前后端，以及 `offlineBackend` / `onlineBackend` / `onlineConfigured` |
@@ -430,10 +435,19 @@ Web 顶栏的「快速演示 / 完整在线」是可点击的预设按钮：快�
 
 ### 多轮会话与结果分页
 
-`SearchRequest` 额外支持两个可选字段：
+`SearchRequest` 额外支持 `conversationId` 与 `pageSize` 两个可选字段。会话记忆分为三层：
 
-- `conversationId`：省略时后端自动生成并在响应返回；后续请求带上它，`understand` 会读取最近 3 轮
-  条件摘要。对话记忆默认最多保留 10 轮、TTL 2 小时，并按 `(companyId, hrId)` 精确校验归属。
+- **L1 工作记忆**：`conversationId` 省略时由后端自动生成并在响应返回；后续请求带上它，理解
+  Prompt 只注入最近 3 轮结构化条件摘要，用于承接“最好有”“不要外包”等追问。
+- **L2 会话归档**：完整轮次写入 Redis（未配置时为进程内降级），默认保留 30 天、最多 50 轮，
+  可用 `SEARCH_AGENT_CONVERSATION_TTL_SEC` / `SEARCH_AGENT_CONVERSATION_MAX_TURNS` 覆盖。每轮保存
+  query、摘要、路由/状态、`queryToken`、候选人 ID 和最多 10 张精简卡片；左侧“最近会话”可恢复历史，
+  新建检索只切换活动会话，不会删除旧归档。所有会话按 `(companyId, hrId)` 精确校验归属。
+- 问候、帮助和范围外说明也会以 `status=reply` 写入当前会话并立即出现在左侧；这些轮次不进入 L1
+  搜索上下文，仍保持 0 次 Agent LLM 与 0 次检索。若会话从“你好”开始，之后的首条检索需求会成为
+  左侧会话标题。
+- **L3 候选人记忆**：记录本会话看过的人和招聘者显式排除的人。只有显式排除项会传给
+  `SearchToolRequest.exclude_doc_ids`，并额外对最终结果做防御性过滤；看过但未排除的人不会自动消失。
 - `pageSize`：本次返回的首页大小；不传时保持旧行为，也不创建分页 Session。`topK=20, pageSize=5`
   表示 Agent 最多交付 20 人，本次只返回前 5 人，并通过 `queryToken` 获取后续页。
 
@@ -450,9 +464,10 @@ curl -s -X POST http://127.0.0.1:8000/search -H "Content-Type: application/json"
 curl -s "http://127.0.0.1:8000/sessions/<queryToken>?offset=5&limit=5"
 ```
 
-两种 Web 视图都已接入同一协议：同一标签页会复用 `conversationId`，Agent 体验的左侧会话栏列出最近轮次并可
-回填 query，执行观测显示完整历史与当前轮次；对话内候选人和执行观测中的列表都可翻页，点击“新对话”后下一轮
-不会继承旧上下文。未配置 Redis 时使用进程内降级，多进程部署请设置 `SEARCH_AGENT_REDIS_URL` 或 `REDIS_URL`。
+两种 Web 视图都已接入同一协议：同一标签页会复用 `conversationId`，Agent 体验的左侧“最近会话”列出服务端
+归档并支持恢复完整轮次与候选人快照；执行观测显示完整历史与当前轮次。点击“新检索”只开启新上下文，不删除
+旧会话。候选人卡片可“排除/恢复”，显式排除会持久化到当前会话并用于后续搜索。对话内候选人和执行观测中的
+列表都可翻页。未配置 Redis 时使用进程内降级，多进程部署请设置 `SEARCH_AGENT_REDIS_URL` 或 `REDIS_URL`。
 
 演示时可以先输入“找有 3 年以上经验的后端工程师”，随后在同一会话输入“最好有大厂背景”，
 观察 `understand` 阶段的“历史上下文 1 轮”和来源假设变化；离线脚本化 LLM 也会对
@@ -679,6 +694,8 @@ pytest -q -m es
 | `SEARCH_AGENT_LLM_TIMEOUT_SEC` | `60` | 单次 LLM 请求超时（秒） |
 | `SEARCH_AGENT_DISABLE_THINKING` | `0` | `1` 时发送 `enable_thinking=false`，适用于 Qwen 等思考型模型 |
 | `SEARCH_AGENT_REDIS_URL` / `REDIS_URL` | — | 可选：会话记忆 / 结果分页 / 策略记忆（跨进程共享） |
+| `SEARCH_AGENT_CONVERSATION_TTL_SEC` | `2592000` | 会话归档 TTL（秒），默认 30 天 |
+| `SEARCH_AGENT_CONVERSATION_MAX_TURNS` | `50` | 每个会话最多保留的轮次 |
 | `SEARCH_AGENT_ES_URL` | `http://127.0.0.1:9200` | Elasticsearch 地址；同时启用 Hybrid V2 默认选择 |
 | `SEARCH_AGENT_HYBRID_V2_ES_URL` / `_ES_INDEX` | — / `candidate` | Hybrid V2 专用地址与索引 |
 | `SEARCH_AGENT_HYBRID_V2_VECTOR_MODE` | `flat` | `flat`（默认兼容路径）或 `nested` 向量字段布局 |
@@ -721,7 +738,7 @@ $env:SEARCH_AGENT_MODEL = "search-agent-primary"
 
 - [x] 3 / 5 / 8 阶段自适应执行 + 预算 + 降级矩阵 + 并行执行
 - [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 466 个测试（442 个默认离线 + 24 个可选 ES 集成测试，ES 不可达时跳过）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
+- [x] 475 个测试（451 个默认离线 + 24 个可选 ES 集成测试，ES 不可达时跳过）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
 - [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
 - [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
 - [x] Web 体验：零构建双模式单页——默认 Agent 工作区（左侧会话栏 / 需求解析 / 自然语言进度 /
@@ -729,8 +746,9 @@ $env:SEARCH_AGENT_MODEL = "search-agent-primary"
       视图状态同步到 URL；`GET /` 直接托管；
       截图 `docs/console.png`、`docs/console-run.png`；SSE 支持 `POST /search/stream`（查询不进 URL），
       客户端断开触发阶段边界取消。
-- [x] 轻量多轮会话（结构化摘要、最近 3 轮注入、租户隔离）与结果池分页（`/sessions/{queryToken}`，
-      翻页不重新运行 Agent）；两种 Web 视图都支持续接会话、新对话和上一页 / 下一页。
+- [x] L1/L2/L3 会话记忆（最近 3 轮工作记忆、服务端历史归档、显式候选人排除）、历史会话恢复与租户隔离；
+      结果池分页（`/sessions/{queryToken}`）翻页不重新运行 Agent；两种 Web 视图都支持续接、历史恢复、
+      新检索和上一页 / 下一页。
 - [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）
 - [x] SQLite/FTS5 后端（`tools/sqlite_fts.py`，标准库）：where 树编译 SQL + 跨后端一致性测试。
 - [x] Elasticsearch 真实后端 + `docker compose` 端到端示例（ES DSL 编译，`examples/es_end_to_end.py`）。

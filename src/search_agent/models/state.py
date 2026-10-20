@@ -80,6 +80,7 @@ class SearchState(TypedDict, total=False):
     final_items: list[ToolCandidate]
     final_total: int
     conversation_history: list[dict]
+    excluded_doc_ids: list[str]
 
 
 __all__ = ["SearchState"]

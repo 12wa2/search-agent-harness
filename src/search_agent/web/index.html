@@ -57,11 +57,11 @@
 
     <section class="sidebar-section" aria-labelledby="sidebar-session-title">
       <div class="sidebar-section-head">
-        <h2 id="sidebar-session-title">本次会话</h2>
-        <span id="agent-session-count">0 轮</span>
+        <h2 id="sidebar-session-title">最近会话</h2>
+        <span id="agent-session-count">0 个会话</span>
       </div>
       <ol class="agent-session-list" id="agent-session-list"></ol>
-      <p class="sidebar-empty" id="agent-session-empty">还没有检索记录。提交一条招聘需求后，这里会保留本次会话的轮次。</p>
+      <p class="sidebar-empty" id="agent-session-empty">还没有历史会话。新会话首次检索后会自动保存，之后可以随时恢复。</p>
     </section>
 
     <section class="sidebar-principles" aria-labelledby="sidebar-principles-title">
@@ -250,7 +250,7 @@
         </button>
       </div>
       <ol id="conversation-history" class="conversation-history" hidden></ol>
-      <p class="session-note" id="session-note">Redis 可用时保存最近 10 轮摘要，当前会话只注入最近 3 轮。</p>
+      <p class="session-note" id="session-note">会话保存 30 天；Prompt 只注入最近 3 轮，显式排除会延续到后续搜索。</p>
     </section>
 
     <section class="metrics" id="metrics" hidden aria-label="运行指标">

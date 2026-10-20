@@ -312,20 +312,39 @@ HTTP + SSE。配置 `PRIMARY_LLM_API_KEY` 后，compose 会把在线预置接到
 
 工程层只提供证据，决策仍在 LLM；取舍详见 `docs/DECISIONS.md` D23。
 
-## 15. 轻量多轮会话与结果分页
+## 15. 分层会话记忆与结果分页
 
-这里刻意不引入向量记忆或图记忆，只保留两类可过期状态：
+这里刻意不引入向量记忆、图记忆或长期用户画像，只保留可过期、可审计的 L1/L2/L3：
 
-| 状态 | 存储 | TTL | 内容 |
+| 层级 | 存储 | 保留策略 | 内容与用途 |
 |---|---|---|---|
-| 对话记忆 | Redis / 进程内降级 | 2 小时 | 最近最多 10 轮的结构化条件摘要，Prompt 只取最近 3 轮 |
-| 结果 Session | Redis / 进程内降级 | 1 小时 | 本次 `final_items`、Trace、指标与分页游标 |
+| L1 工作记忆 | 请求状态 + Prompt | 每次请求取最近 3 轮 | 结构化岗位条件、结果数；用于承接“最好有”“不要外包”等追加条件 |
+| L2 会话归档 | Redis / 进程内降级 | 30 天，最多 50 轮 | 完整轮次快照：query、摘要、route/status、queryToken、Top 候选人 ID、最多 10 张候选人卡片字段 |
+| L3 候选人记忆 | 随 L2 保存 | 同一会话内 | `seenCandidateIds` 记录看过的人，`excludedCandidateIds` 记录招聘者显式排除的人 |
+
+只有显式排除项会传给 `SearchToolRequest.exclude_doc_ids`，并作为复杂链路每轮召回与最终
+收敛搜索的过滤条件；服务端还会对最终结果做一次防御性过滤。看过但未排除的候选人不自动
+消失，避免一次浏览就永久漏掉合适人选。`seenCandidateIds` 仅用于历史/审计和当前轮内去重，
+不会作为后续搜索的排除条件；历史卡片会标注显式排除状态。
 
 `SearchAgentService` 在搜索前按 `conversationId` 加载历史，并按 `(companyId, hrId)` 精确校验归属
-（`hrId` 为空也视为一个独立作用域）；搜索结束后保存紧凑轮次摘要，再按需从 `final_items`
-创建 Session。`pageSize` 只控制首页切片，后续页通过 `GET /sessions/{queryToken}` 读取，
-不重新运行 Agent、不增加 LLM/token 成本。
+（`hrId` 为空也视为独立作用域）。搜索完成后先构建响应，再把同一轮 `queryToken` 与可恢复的
+候选人卡片快照写入 L2；新建检索只切换活动 `conversationId`，不删除旧会话。
 
-没有 `conversationId` 时由后端生成并返回，首次请求与旧客户端保持兼容；没有 `pageSize` 时
-响应仍返回完整 `final_items`，且不创建分页 Session。这两条兼容边界让记忆与分页都是可选增强，
-而不是主链路的新故障点。
+路由直接回复的问候、帮助和范围外说明同样以 `status=reply` 写入 L2，使左侧“最近会话”立即出现
+并可恢复；加载历史时会过滤这些轮次，L1 搜索上下文仍只包含实际搜索/澄清轮次。
+
+会话 API 位于静态资源挂载之前：
+
+| 方法与路径 | 用途 |
+|---|---|
+| `POST /conversations` | 创建一个空会话 |
+| `GET /conversations?companyId=&hrId=&limit=&offset=` | 按最近更新时间列出会话摘要 |
+| `GET /conversations/{id}?companyId=&hrId=` | 恢复完整轮次与候选人快照 |
+| `DELETE /conversations/{id}?companyId=&hrId=` | 删除指定归属的会话 |
+| `PATCH /conversations/{id}/candidates/{docId}` | 设置显式排除或恢复候选人 |
+
+结果分页与 L2 分离：`pageSize` 只控制首页切片，后续页通过 `GET /sessions/{queryToken}` 读取，
+不重新运行 Agent、不增加 LLM/token 成本。没有 `conversationId` 时由后端生成并返回；没有
+`pageSize` 时仍返回完整 `final_items`，且不创建分页 Session。这两条兼容边界让记忆与分页都是
+可选增强，而不是主链路的新故障点。

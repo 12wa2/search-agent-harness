@@ -7,6 +7,15 @@
 
 ### Added
 
+- **L1/L2/L3 会话记忆与历史会话恢复**（`conversation_memory.py`、`service.py`、`server.py`、`web/`）：
+  L1 只向理解 Prompt 注入最近 3 轮结构化条件；L2 将完整轮次归档到 Redis（未配置时进程内降级），
+  默认保留 30 天、最多 50 轮，并可恢复候选人与助手摘要；L3 记录已看候选人与显式排除项，只有显式排除
+  会传给 `SearchToolRequest.exclude_doc_ids` 并额外过滤最终结果。左侧会话栏改为“最近会话”，支持恢复
+  完整历史、候选人“排除/恢复”，新建检索不再删除旧归档。新增 `POST/GET/DELETE /conversations`、
+  `GET /conversations/{id}` 与候选人排除 PATCH API，补充租户隔离、快照恢复、排除传递和 API 回归测试；
+  新增 `SEARCH_AGENT_CONVERSATION_TTL_SEC` / `SEARCH_AGENT_CONVERSATION_MAX_TURNS` 配置。
+  问候、帮助和范围外回复也会写入 `status=reply` 的会话轮次并即时出现在左侧，但不会进入 L1 搜索上下文，
+  仍然不触发 Agent LLM 或检索工具。
 - **Agent 工作区改版**（`src/search_agent/web/`）：对话视图增加固定会话侧栏，集中展示“新建检索”、
   本次会话轮次与检索原则；首屏改为大标题导语与“一条需求如何变成名单”流程说明的双栏布局，
   复杂需求示例和输入区保持可操作。执行观测新增独立页头，统一阶段、检索路径、账本与 Trace 的

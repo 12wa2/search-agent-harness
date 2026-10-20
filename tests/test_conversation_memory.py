@@ -210,3 +210,69 @@ class TestConversationMemory:
         assert restored.conversation_id == "conv-abc"
         assert len(restored.turns) == 2
         assert restored.turns[1].query == "q2"
+
+
+class TestConversationHistory:
+    def test_create_list_and_delete_are_tenant_scoped(self):
+        store = ConversationStore(connect_redis=False)
+        company_id = 98761
+        backend = store.create(company_id, 7, title="Backend hiring")
+        store.create(company_id, 7, title="Frontend hiring")
+        store.create(40000, 7, title="Another company")
+
+        rows = store.list(company_id, 7)
+        assert {row.title for row in rows} == {"Backend hiring", "Frontend hiring"}
+        assert all(row.turn_count == 0 for row in rows)
+        assert store.list(40000, 7)[0].title == "Another company"
+
+        assert store.delete(backend.conversation_id, 40000, 7) is False
+        assert store.load(backend.conversation_id) is not None
+        assert store.delete(backend.conversation_id, company_id, 7) is True
+        assert store.load(backend.conversation_id) is None
+
+    def test_seen_and_excluded_candidates_are_persisted(self):
+        store = ConversationStore(connect_redis=False)
+        conv = store.create(39978, 7)
+        turn = _turn(0, "find backend")
+        turn.top_candidate_ids = ["d1", "d2"]
+        turn.result_items = [{"docId": "d3", "name": "Carol"}]
+        store.append_turn(conv.conversation_id, 39978, 7, turn)
+
+        memory = store.load(conv.conversation_id)
+        assert memory is not None
+        assert memory.seen_candidate_ids == ["d1", "d2", "d3"]
+
+        updated = store.set_candidate_excluded(
+            conv.conversation_id,
+            39978,
+            7,
+            "d2",
+            excluded=True,
+        )
+        assert updated is not None
+        assert updated.excluded_candidate_ids == ["d2"]
+
+        restored = store.set_candidate_excluded(
+            conv.conversation_id,
+            39978,
+            7,
+            "d2",
+            excluded=False,
+        )
+        assert restored is not None
+        assert restored.excluded_candidate_ids == []
+
+    def test_exclusion_rejects_wrong_scope(self):
+        store = ConversationStore(connect_redis=False)
+        conv = store.create(39978, 7)
+
+        assert (
+            store.set_candidate_excluded(
+                conv.conversation_id,
+                39978,
+                8,
+                "d1",
+                excluded=True,
+            )
+            is None
+        )

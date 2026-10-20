@@ -77,17 +77,22 @@ class SearchAgentService:
 
         perm_dict = req.permission.model_dump() if req.permission else None
         conversation_history: list[dict] = []
+        excluded_doc_ids: list[str] = []
         conv_id = req.conversationId or new_conversation_id()
+        conversation_turns = 0
         if req.conversationId:
             try:
                 memory = self._conversation_store.load(req.conversationId)
                 if memory and self._conversation_matches_scope(memory, req):
-                    conversation_history = [t.model_dump() for t in memory.turns]
+                    conversation_history = [
+                        turn.model_dump() for turn in memory.turns if turn.status != "reply"
+                    ]
+                    conversation_turns = memory.total_turns
+                    excluded_doc_ids = list(memory.excluded_candidate_ids)
                 elif memory:
                     conv_id = new_conversation_id()
             except Exception:
                 pass
-        conversation_turns = len(conversation_history)
 
         direct_plan = build_direct_search_plan(req.query)
         if direct_plan is not None:
@@ -96,6 +101,7 @@ class SearchAgentService:
                 direct_plan,
                 budget=budget,
                 conversation_history=conversation_history,
+                excluded_doc_ids=excluded_doc_ids,
                 cancel_event=cancel_event,
             )
         else:
@@ -119,17 +125,18 @@ class SearchAgentService:
                 "details": req.details,
                 "budget": budget,
                 "conversation_history": conversation_history,
+                "excluded_doc_ids": excluded_doc_ids,
             }
             state = self._runner.run(initial_state, deps)
 
-        if not state.get("cancelled"):
-            if direct_plan is None:
-                self._record_experience(state)
-            if conv_id:
-                try:
-                    conversation_turns = self._save_conversation_turn(conv_id, req, state)
-                except Exception:
-                    pass
+        # Defensive output filter: a backend must not be able to re-surface a
+        # candidate the recruiter explicitly excluded in this conversation.
+        if excluded_doc_ids and not state.get("cancelled"):
+            excluded = set(excluded_doc_ids)
+            state["final_items"] = [
+                tc for tc in (state.get("final_items") or []) if tc.doc_id not in excluded
+            ]
+            state["final_total"] = len(state["final_items"])
 
         if state.get("cancelled"):
             resp = self._handle_cancelled(req, state)
@@ -139,6 +146,23 @@ class SearchAgentService:
             resp = self._handle_clarify(req, state)
         else:
             resp = self._build_completed_response(req, state)
+
+        if not state.get("cancelled"):
+            if direct_plan is None:
+                self._record_experience(state)
+            if conv_id:
+                try:
+                    memory = self._save_conversation_turn(
+                        conv_id,
+                        req,
+                        state,
+                        resp,
+                        turn_index=conversation_turns,
+                    )
+                    conversation_turns = memory.total_turns
+                except Exception:
+                    pass
+
         return resp.model_copy(
             update={
                 "conversationId": conv_id,
@@ -154,6 +178,7 @@ class SearchAgentService:
         *,
         budget: Budget,
         conversation_history: list[dict],
+        excluded_doc_ids: list[str],
         cancel_event: Event | None,
     ) -> dict[str, Any]:
         """Run the complete Hybrid V2 simple-search path.
@@ -176,6 +201,7 @@ class SearchAgentService:
             "details": req.details,
             "budget": budget,
             "conversation_history": conversation_history,
+            "excluded_doc_ids": excluded_doc_ids,
             "job_profile": plan.job_profile,
             "talent_profile": plan.talent_profile,
             "difficulty_route": DIRECT_SEARCH_ROUTE,
@@ -257,6 +283,7 @@ class SearchAgentService:
                 recall_pool_size=req.recallPoolSize or req.topK,
                 routing=req.companyId,
                 details=req.details,
+                exclude_doc_ids=list(excluded_doc_ids),
                 skip_rerank=False,
             )
         )
@@ -524,49 +551,106 @@ class SearchAgentService:
             debug["directSearch"] = state["direct_search"]
         return debug
 
-    def _save_conversation_turn(
-        self, conversation_id: str, req: SearchRequest, state: dict[str, Any]
-    ) -> int:
-        """Save one conversation turn to Redis."""
-        import time as _time
+    @staticmethod
+    def _snapshot_candidate(tc: ToolCandidate) -> dict[str, Any]:
+        """Keep only the fields needed to restore a candidate card."""
+        item = SearchAgentService._to_candidate_item(tc)
+        fields = {
+            "docId",
+            "candidateProfileId",
+            "userId",
+            "score",
+            "name",
+            "workYears",
+            "summary",
+            "currentResidence",
+            "tags",
+            "skills",
+            "expectedPositions",
+            "expectedCities",
+            "matchExplanation",
+        }
+        return item.model_dump(
+            by_alias=True,
+            exclude_none=True,
+            include=fields,
+        )
 
+    def _save_conversation_turn(
+        self,
+        conversation_id: str,
+        req: SearchRequest,
+        state: dict[str, Any],
+        response: SearchResponse,
+        *,
+        turn_index: int,
+    ) -> ConversationMemory:
+        """Persist one complete turn so the sidebar can restore the session."""
         job = state.get("job_profile")
         summary: dict[str, Any] = {}
         if job:
             summary = {
+                "title": job.title,
                 "must_abilities": [a.name for a in (job.must_abilities or [])],
                 "hard_constraints": [c.model_dump() for c in (job.hard_constraints or [])],
                 "difficulty": job.subjective_difficulty,
             }
-        final_items = state.get("final_items", [])
-        top_names: list[str] = []
-        for tc in final_items[:3]:
-            name = getattr(getattr(tc, "item", None), "name", None)
-            if name:
-                top_names.append(name)
-        history = state.get("conversation_history", [])
-        turn_index = (
-            max(
-                (int(turn.get("turn_index", -1)) for turn in history),
-                default=-1,
-            )
-            + 1
-        )
+
+        final_items = list(state.get("final_items") or [])
+        top_names = [tc.item.name for tc in final_items[:3] if tc.item.name]
+        top_ids = [tc.doc_id for tc in final_items]
+        snapshots = [self._snapshot_candidate(tc) for tc in final_items[:10]]
+        cancelled = bool(state.get("cancelled"))
+        fallback = bool(state.get("fallback_baseline"))
+        clarification = response.clarification
+        if cancelled:
+            status = "cancelled"
+            assistant_summary = "本轮已取消，未交付候选人。"
+        elif clarification:
+            status = "clarification"
+            questions = [
+                str(question).strip()
+                for question in (clarification.get("questions") or [])
+                if str(question).strip()
+            ]
+            assistant_summary = "需要补充招聘条件：" + ("；".join(questions) or "岗位方向")
+        elif fallback:
+            status = "degraded"
+            assistant_summary = "本轮触发降级，未交付候选人。"
+        elif final_items:
+            status = "completed"
+            assistant_summary = f"本轮检索完成，交付 {len(final_items)} 位候选人。"
+        else:
+            status = "completed"
+            assistant_summary = "本轮检索完成，未找到符合条件的新候选人。"
+
+        if job and job.title:
+            assistant_summary = f"岗位：{job.title}。" + assistant_summary
+        if top_names:
+            assistant_summary += " 优先展示：" + "、".join(top_names) + "。"
+
         turn = ConversationTurn(
             turn_index=turn_index,
             query=req.query,
+            assistant_summary=assistant_summary,
             job_profile_summary=summary,
-            result_count=state.get("final_total", len(final_items)),
+            result_count=response.total,
             top_candidate_names=top_names,
-            timestamp=int(_time.time()),
+            top_candidate_ids=top_ids,
+            result_items=snapshots,
+            route=state.get("difficulty_route") or DIRECT_SEARCH_ROUTE,
+            status=status,
+            query_token=response.queryToken,
+            clarification=clarification,
+            top_k=req.topK,
+            timestamp=int(time.time()),
         )
-        self._conversation_store.append_turn(
+        return self._conversation_store.append_turn(
             conversation_id=conversation_id,
             company_id=req.companyId,
-            hr_id=getattr(req, "hrId", None),
+            hr_id=req.hrId,
             turn=turn,
         )
-        return turn_index + 1
 
 
 __all__ = ["SearchAgentService"]

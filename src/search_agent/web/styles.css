@@ -1497,6 +1497,50 @@ pre {
   cursor: help;
 }
 
+.cand-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.cand-exclude {
+  padding: 3px 7px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: color 140ms ease-out, border-color 140ms ease-out, background-color 140ms ease-out;
+}
+
+.cand-exclude:hover:not(:disabled) {
+  border-color: var(--danger-line);
+  color: var(--danger);
+}
+
+.cand-exclude[aria-pressed="true"] {
+  border-color: var(--danger-line);
+  background: var(--danger-wash);
+  color: var(--danger);
+}
+
+.cand-exclude:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.candidate.is-excluded {
+  opacity: 0.66;
+}
+
+.candidate.is-excluded .cand-id h3 {
+  text-decoration: line-through;
+  text-decoration-color: var(--danger-line);
+}
+
 .score-label {
   color: var(--quiet);
   font: 600 8px/1 var(--mono);
@@ -5116,6 +5160,11 @@ p {
 .agent-session-item:hover,
 .agent-session-item:focus-visible {
   background: rgba(255, 255, 255, 0.08);
+}
+
+.agent-session-item.is-active {
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 2px 0 0 #8fe0c2;
 }
 
 .agent-session-index {

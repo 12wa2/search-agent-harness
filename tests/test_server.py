@@ -12,6 +12,7 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from search_agent.conversation_memory import ConversationStore  # noqa: E402
 from search_agent.demo import DEMO_DATA, DEMO_QUERIES, ScriptedLlmClient  # noqa: E402
 from search_agent.server import create_app  # noqa: E402
 from search_agent.tools.memory import InMemorySearchTool  # noqa: E402
@@ -248,6 +249,83 @@ def test_session_endpoint_paginates_and_expires_after_delete(client: TestClient)
     assert client.get(f"/sessions/{token}").status_code == 404
 
 
+def test_conversation_api_persists_history_exclusions_and_tenant_scope() -> None:
+    store = ConversationStore(connect_redis=False)
+    app = create_app(offline=True, conversation_store=store)
+
+    with TestClient(app) as scoped:
+        created = scoped.post(
+            "/conversations",
+            json={"companyId": 39978, "hrId": 7, "title": "Backend hiring"},
+        )
+        assert created.status_code == 200
+        conversation_id = created.json()["conversationId"]
+
+        rows = scoped.get(
+            "/conversations",
+            params={"companyId": 39978, "hrId": 7},
+        )
+        assert rows.status_code == 200
+        assert rows.json()[0]["title"] == "Backend hiring"
+
+        excluded = scoped.patch(
+            f"/conversations/{conversation_id}/candidates/c004",
+            params={"companyId": 39978, "hrId": 7},
+            json={"excluded": True},
+        )
+        assert excluded.status_code == 200
+        assert excluded.json()["excludedCandidateIds"] == ["c004"]
+
+        detail = scoped.get(
+            f"/conversations/{conversation_id}",
+            params={"companyId": 39978, "hrId": 7},
+        )
+        assert detail.status_code == 200
+        assert detail.json()["excludedCandidateIds"] == ["c004"]
+
+        assert (
+            scoped.get(
+                f"/conversations/{conversation_id}",
+                params={"companyId": 40000, "hrId": 7},
+            ).status_code
+            == 404
+        )
+        assert scoped.delete(
+            f"/conversations/{conversation_id}",
+            params={"companyId": 40000, "hrId": 7},
+        ).json() == {"deleted": False}
+        assert scoped.delete(
+            f"/conversations/{conversation_id}",
+            params={"companyId": 39978, "hrId": 7},
+        ).json() == {"deleted": True}
+
+
+def test_search_writes_restorable_conversation_snapshot() -> None:
+    store = ConversationStore(connect_redis=False)
+    app = create_app(offline=True, conversation_store=store)
+
+    with TestClient(app) as scoped:
+        response = scoped.post(
+            "/search",
+            json={"query": QUERY, "topK": 5, "details": True, "pageSize": 2},
+        )
+        assert response.status_code == 200
+        body = response.json()
+
+        detail = scoped.get(
+            f"/conversations/{body['conversationId']}",
+            params={"companyId": 1},
+        )
+        assert detail.status_code == 200
+        turn = detail.json()["turns"][0]
+        assert turn["assistantSummary"]
+        assert turn["route"]
+        assert turn["status"] == "completed"
+        assert turn["queryToken"] == body["queryToken"]
+        assert turn["resultItems"]
+        assert turn["resultItems"][0]["docId"] == body["items"][0]["docId"]
+
+
 def test_search_rejects_empty_query(client: TestClient) -> None:
     resp = client.post("/search", json={"query": ""})
     assert resp.status_code == 422
@@ -314,7 +392,8 @@ def test_root_serves_the_web_console(client: TestClient) -> None:
     assert 'id="sidebar-new"' in resp.text
     assert 'id="agent-session-list"' in resp.text
     assert 'id="agent-session-count"' in resp.text
-    assert "本次会话" in resp.text
+    assert "最近会话" in resp.text
+    assert "本次会话" not in resp.text
     assert "检索原则" in resp.text
     assert "一条需求如何变成名单" in resp.text
     assert "执行观测" in resp.text
@@ -361,6 +440,11 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "chat-progress-item" in script.text
     assert "renderChatResult" in script.text
     assert "agent-session-list" in script.text
+    assert "/conversations/" in script.text
+    assert "restoreConversation" in script.text
+    assert "toggleCandidateExclusion" in script.text
+    assert "localStorage" in script.text
+    assert "excludedCandidateIds" in script.text
     assert 'url.searchParams.set("view", next)' in script.text
     assert "clarification-options" in script.text
     assert "为什么继续搜索" in script.text
@@ -397,6 +481,7 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert 'id="route-intent"' in index.text
     assert 'id="sidebar-new"' in index.text
     assert 'id="agent-session-list"' in index.text
+    assert "最近会话" in index.text
 
     styles = client.get("/styles.css")
     assert styles.status_code == 200
@@ -509,11 +594,20 @@ def test_non_search_requests_return_one_reply_without_calling_llm_or_tool(
 ) -> None:
     llm = _ExplodingLlm()
     tool = _ExplodingSearchTool()
-    app = create_app(tool=tool, llm_client=llm)
+    conversations = ConversationStore(connect_redis=False)
+    company_id = 800_000_000 + (id(conversations) % 100_000_000)
+    app = create_app(tool=tool, llm_client=llm, conversation_store=conversations)
     kwargs = (
-        {"params": {"query": query, "topK": 5}}
+        {"params": {"query": query, "topK": 5, "companyId": company_id}}
         if method == "GET"
-        else {"json": {"query": query, "topK": 5, "details": True}}
+        else {
+            "json": {
+                "query": query,
+                "topK": 5,
+                "details": True,
+                "companyId": company_id,
+            }
+        }
     )
     with TestClient(app) as routed:
         with routed.stream(method, "/search/stream", **kwargs) as resp:
@@ -527,11 +621,59 @@ def test_non_search_requests_return_one_reply_without_calling_llm_or_tool(
     assert payload["intent"] == intent
     assert payload["searchStarted"] is False
     assert payload["suggestions"]
+    assert payload["conversationId"]
+    assert payload["conversationTurns"] == 1
     assert llm.calls == 0
     assert tool.calls == 0
     assert "event: stage" not in text
     assert "event: result" not in text
     assert "event: error" not in text
+
+    rows = conversations.list(company_id, None)
+    assert len(rows) == 1
+    assert rows[0].title == query
+    assert rows[0].last_query == query
+    assert rows[0].status == "reply"
+    assert rows[0].turn_count == 1
+
+
+def test_routed_reply_reuses_conversation_id() -> None:
+    llm = _ExplodingLlm()
+    tool = _ExplodingSearchTool()
+    conversations = ConversationStore(connect_redis=False)
+    app = create_app(tool=tool, llm_client=llm, conversation_store=conversations)
+
+    with TestClient(app) as routed:
+        with routed.stream(
+            "POST",
+            "/search/stream",
+            json={"query": "你好", "topK": 5, "details": True, "companyId": 39978},
+        ) as first_response:
+            first_text = "".join(first_response.iter_text())
+        first_payload = _event_payload(_frames(first_text)[0])[1]
+
+        with routed.stream(
+            "POST",
+            "/search/stream",
+            json={
+                "query": "你能做什么？",
+                "topK": 5,
+                "details": True,
+                "conversationId": first_payload["conversationId"],
+                "companyId": 39978,
+            },
+        ) as second_response:
+            second_text = "".join(second_response.iter_text())
+        second_payload = _event_payload(_frames(second_text)[0])[1]
+
+    assert second_payload["conversationId"] == first_payload["conversationId"]
+    assert second_payload["conversationTurns"] == 2
+    memory = conversations.load(first_payload["conversationId"])
+    assert memory is not None
+    assert [turn.query for turn in memory.turns] == ["你好", "你能做什么？"]
+    assert [turn.status for turn in memory.turns] == ["reply", "reply"]
+    assert llm.calls == 0
+    assert tool.calls == 0
 
 
 def test_greeting_plus_recruitment_uses_direct_search(client: TestClient) -> None:

@@ -70,6 +70,9 @@ const state = {
   conversationId: null,
   conversationTurns: 0,
   conversationHistory: [],
+  conversations: [],
+  conversationsLoading: false,
+  excludedCandidateIds: new Set(),
   queryToken: null,
   pageOffset: 0,
   pageLimit: PAGE_SIZE,
@@ -1210,12 +1213,11 @@ function resetChatView() {
 
 function loadConversationState() {
   try {
-    const raw = sessionStorage.getItem(CONVERSATION_KEY);
-    if (!raw) return;
-    const saved = JSON.parse(raw);
-    state.conversationId = saved.conversationId || null;
+    const requested = new URLSearchParams(location.search).get("conversation");
+    const raw = localStorage.getItem(CONVERSATION_KEY) || sessionStorage.getItem(CONVERSATION_KEY);
+    const saved = raw ? JSON.parse(raw) : {};
+    state.conversationId = requested || saved.conversationId || null;
     state.conversationTurns = Number(saved.conversationTurns || 0);
-    state.conversationHistory = Array.isArray(saved.history) ? saved.history.slice(-6) : [];
   } catch (err) {
     state.conversationId = null;
   }
@@ -1223,12 +1225,11 @@ function loadConversationState() {
 
 function saveConversationState() {
   try {
-    sessionStorage.setItem(
+    localStorage.setItem(
       CONVERSATION_KEY,
       JSON.stringify({
         conversationId: state.conversationId,
         conversationTurns: state.conversationTurns,
-        history: state.conversationHistory.slice(-6),
       }),
     );
   } catch (err) {
@@ -1236,9 +1237,36 @@ function saveConversationState() {
   }
 }
 
+function syncConversationUrl() {
+  try {
+    const url = new URL(location.href);
+    if (state.conversationId) url.searchParams.set("conversation", state.conversationId);
+    else url.searchParams.delete("conversation");
+    history.replaceState(null, "", url);
+  } catch (err) {
+    // URL state is optional; the active ID is also kept in localStorage.
+  }
+}
+
+async function loadConversations() {
+  if (state.conversationsLoading) return;
+  state.conversationsLoading = true;
+  try {
+    const resp = await fetch("/conversations?companyId=1&limit=30", { cache: "no-store" });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const rows = await resp.json();
+    state.conversations = Array.isArray(rows) ? rows : [];
+  } catch (err) {
+    state.conversations = state.conversations || [];
+  } finally {
+    state.conversationsLoading = false;
+    renderConversation();
+  }
+}
+
 function renderConversation() {
   const round = Math.max(1, state.conversationTurns || 1);
-  conversationLabel.textContent = state.conversationId && round > 1
+  conversationLabel.textContent = state.conversationId
     ? `第 ${round} 轮 · 续接当前会话`
     : "新会话 · 第 1 轮";
   conversationHistory.replaceChildren();
@@ -1259,36 +1287,28 @@ function renderConversation() {
   conversationHistory.hidden = state.conversationHistory.length === 0;
 
   if (agentSessionCount) {
-    agentSessionCount.textContent = `${state.conversationHistory.length} 轮`;
+    agentSessionCount.textContent = `${state.conversations.length} 个会话`;
   }
   if (agentSessionList) {
     agentSessionList.replaceChildren();
-    state.conversationHistory.forEach((turn, index) => {
+    state.conversations.forEach((conversation, index) => {
       const item = el("li");
       const button = el("button", "agent-session-item");
       button.type = "button";
-      button.title = turn.query || "";
+      button.title = conversation.title || conversation.lastQuery || "历史会话";
+      button.classList.toggle("is-active", conversation.conversationId === state.conversationId);
       button.append(
         el("span", "agent-session-index", String(index + 1).padStart(2, "0")),
-        el("span", "agent-session-query", turn.query || ""),
-        el("small", "", `${turn.total ?? 0} 人`),
+        el("span", "agent-session-query", conversation.title || conversation.lastQuery || "未命名会话"),
+        el("small", "", `${Number(conversation.turnCount || 0)} 轮`),
       );
-      button.addEventListener("click", () => {
-        chatQueryInput.value = turn.query || "";
-        if (state.viewMode === "agent") {
-          chatQueryInput.focus();
-          scrollChatToEnd("smooth");
-        } else {
-          queryInput.value = turn.query || "";
-          queryInput.focus();
-        }
-      });
+      button.addEventListener("click", () => restoreConversation(conversation.conversationId));
       item.append(button);
       agentSessionList.append(item);
     });
   }
   if (agentSessionEmpty) {
-    agentSessionEmpty.hidden = state.conversationHistory.length > 0;
+    agentSessionEmpty.hidden = state.conversations.length > 0;
   }
 }
 
@@ -1308,14 +1328,127 @@ function resetConversation() {
   state.conversationId = null;
   state.conversationTurns = 0;
   state.conversationHistory = [];
+  state.excludedCandidateIds = new Set();
   state.queryToken = null;
   try {
+    localStorage.removeItem(CONVERSATION_KEY);
     sessionStorage.removeItem(CONVERSATION_KEY);
   } catch (err) {
     // Ignore storage failures; clearing in-memory state is enough.
   }
+  syncConversationUrl();
   hidePager();
   renderConversation();
+}
+
+async function restoreConversation(conversationId) {
+  if (!conversationId || state.running) return;
+  try {
+    const resp = await fetch(
+      `/conversations/${encodeURIComponent(conversationId)}?companyId=1`,
+      { cache: "no-store" },
+    );
+    if (!resp.ok) throw new Error(resp.status === 404 ? "该会话已过期或被删除。" : `HTTP ${resp.status}`);
+    const memory = await resp.json();
+    const turns = Array.isArray(memory.turns) ? memory.turns : [];
+    state.conversationId = memory.conversationId;
+    state.conversationTurns = Number(memory.totalTurns || turns.length || 0);
+    state.conversationHistory = turns.slice(-6).map((turn) => ({
+      query: turn.query || "",
+      total: Number(turn.resultCount || 0),
+    }));
+    state.excludedCandidateIds = new Set(memory.excludedCandidateIds || []);
+    state.queryToken = turns[turns.length - 1]?.queryToken || null;
+    saveConversationState();
+    syncConversationUrl();
+    renderConversation();
+    renderRestoredConversation(memory);
+  } catch (err) {
+    runHint.classList.add("error");
+    runHint.textContent = err.message;
+    if (state.conversationId === conversationId) {
+      resetConversation();
+      await loadConversations();
+    }
+  }
+}
+
+function renderRestoredConversation(memory) {
+  resetUI();
+  resetChatView();
+  const turns = Array.isArray(memory.turns) ? memory.turns.slice(-6) : [];
+  if (!turns.length) return;
+  chatIntro.hidden = true;
+
+  for (const turn of turns) {
+    appendChatUserMessage(turn.query || "", Number(turn.topK || 20));
+    const message = createChatMessage("agent", "chat-result-message agent-delivery restored-conversation-message");
+    const cancelled = turn.status === "cancelled";
+    const clarification = Boolean(turn.clarification?.needClarification);
+    const routed = turn.status === "reply";
+    const tone = routed ? "complete" : cancelled ? "stopped" : clarification ? "clarify" : turn.status === "degraded" ? "degraded" : "complete";
+    const label = routed
+      ? INTENT_LABEL[turn.route] || "意图回复"
+      : cancelled ? "已停止" : clarification ? "需补充" : turn.status === "degraded" ? "已降级" : "已完成";
+    setChatStatus(message.status, label, tone);
+    message.body.append(
+      el("h3", "", routed ? "会话回复" : "历史检索结果"),
+      el("p", "chat-result-copy", turn.assistantSummary || "本轮对话已恢复。"),
+    );
+
+    if (clarification) {
+      const questions = (turn.clarification.questions || []).filter(Boolean);
+      if (questions.length) {
+        const list = el("ul", "chat-clarification-list");
+        for (const question of questions) list.append(el("li", "", question));
+        message.body.append(list);
+      }
+    }
+
+    const items = Array.isArray(turn.resultItems) ? turn.resultItems : [];
+    if (items.length) {
+      const list = el("ul", "chat-candidates");
+      items.forEach((item, index) => {
+        const card = renderCandidate(item, index + 1);
+        card.classList.add("chat-candidate");
+        const rank = card.querySelector(".rank");
+        if (rank) rank.textContent = `#${index + 1}`;
+        list.append(card);
+      });
+      message.body.append(list);
+    }
+  }
+
+  const last = turns[turns.length - 1];
+  const restoredPayload = {
+    query: last.query || "",
+    total: Number(last.resultCount || 0),
+    topK: Number(last.topK || 0),
+    items: Array.isArray(last.resultItems) ? last.resultItems : [],
+    clarification: last.clarification || null,
+    debug: {},
+  };
+  state.lastResult = restoredPayload;
+  if (last.status === "reply") {
+    results.replaceChildren();
+    hideConsoleDelivery();
+    resultsEmpty.hidden = true;
+    hidePager();
+    resultsHint.textContent = "意图回复";
+  } else {
+    renderResults(restoredPayload);
+    resultsHint.textContent = `${restoredPayload.items.length} 人 · 历史会话`;
+  }
+  metrics.hidden = true;
+  traceWrap.hidden = true;
+  setAgentState(
+    "completed",
+    "历史会话已恢复",
+    last.status === "reply"
+      ? `共 ${state.conversationTurns} 轮，当前展示最近一次意图回复。`
+      : `共 ${state.conversationTurns} 轮，当前展示最近一轮结果。`,
+  );
+  scrollChatToEnd("auto");
 }
 
 function buildRail(stageKeys = STAGE_KEYS) {
@@ -1715,8 +1848,55 @@ function renderSkills(item) {
   return names.map((name) => chip(name, "skill"));
 }
 
+function applyCandidateExclusionState(docId) {
+  const excluded = state.excludedCandidateIds.has(String(docId));
+  for (const card of document.querySelectorAll("[data-candidate-id]")) {
+    if (card.dataset.candidateId !== String(docId)) continue;
+    card.classList.toggle("is-excluded", excluded);
+    const button = card.querySelector(".cand-exclude");
+    if (!button) continue;
+    button.textContent = excluded ? "恢复" : "排除";
+    button.setAttribute("aria-pressed", String(excluded));
+    button.title = excluded ? "恢复到后续检索范围" : "在后续检索中排除此人";
+  }
+}
+
+async function toggleCandidateExclusion(docId, button) {
+  if (!state.conversationId || !docId) return;
+  const excluded = !state.excludedCandidateIds.has(String(docId));
+  button.disabled = true;
+  try {
+    const resp = await fetch(
+      `/conversations/${encodeURIComponent(state.conversationId)}/candidates/${encodeURIComponent(docId)}?companyId=1`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ excluded }),
+      },
+    );
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const memory = await resp.json();
+    state.excludedCandidateIds = new Set(memory.excludedCandidateIds || []);
+    applyCandidateExclusionState(docId);
+    setComposerNote(
+      excluded
+        ? "已排除该候选人，后续搜索会携带排除条件。"
+        : "已恢复该候选人，后续搜索不再自动排除。",
+    );
+  } catch (err) {
+    runHint.classList.add("error");
+    runHint.textContent = `更新排除条件失败：${err.message}`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function renderCandidate(item, rank) {
   const li = el("li", "candidate");
+  const docId = String(item.docId || "");
+  const excluded = state.excludedCandidateIds.has(docId);
+  li.dataset.candidateId = docId;
+  li.classList.toggle("is-excluded", excluded);
   const top = el("div", "cand-top");
   const meta = [item.docId, item.workYears != null ? `${item.workYears} 年` : null, item.currentResidence]
     .filter(Boolean)
@@ -1728,7 +1908,20 @@ function renderCandidate(item, rank) {
   score.title = "排序分用于同一结果集内排序，不表示绝对通过率。";
   score.setAttribute("aria-label", `排序分 ${scoreText}，用于同一结果集内排序，不表示绝对通过率`);
   score.append(el("span", "score-label", "排序分"), el("span", "score", scoreText));
-  top.append(el("span", "rank", rank), who, score);
+  const control = el("div", "cand-control");
+  control.append(score);
+  if (state.conversationId && docId) {
+    const excludeButton = el("button", "cand-exclude", excluded ? "恢复" : "排除");
+    excludeButton.type = "button";
+    excludeButton.setAttribute("aria-pressed", String(excluded));
+    excludeButton.title = excluded ? "恢复到后续检索范围" : "在后续检索中排除此人";
+    excludeButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void toggleCandidateExclusion(docId, excludeButton);
+    });
+    control.append(excludeButton);
+  }
+  top.append(el("span", "rank", rank), who, control);
 
   const explanation = item.matchExplanation || {};
   const matchedAbilities = (explanation.matchedAbilities || []).filter(Boolean);
@@ -2200,12 +2393,26 @@ async function runSearch(query, topK) {
           addChatStage(payload.stage, payload.detail || {});
         } else if (event === "reply") {
           sawReply = true;
+          if (payload.conversationId) {
+            state.conversationId = payload.conversationId;
+            state.conversationTurns = Number(payload.conversationTurns || 1);
+            saveConversationState();
+            syncConversationUrl();
+            rememberConversationTurn(query, 0);
+            void loadConversations();
+          }
           removeWaiting();
           document.getElementById("agent-mission-row")?.remove();
           renderAssistantReply(payload);
           renderChatReply(payload);
           timelineHint.textContent = "已回复 · Agent 未启动";
-          setAgentState("routed", "未启动 Agent", "意图路由直接回复，本次没有调用模型或检索工具。");
+          setAgentState(
+            "routed",
+            "未启动 Agent",
+            payload.conversationId
+              ? "意图路由直接回复；本次对话已保存，可在左侧最近会话中恢复。"
+              : "意图路由直接回复，本次没有调用模型或检索工具。",
+          );
         } else if (event === "result") {
           sawResult = true;
           sawCancelled = Boolean(payload.debug && payload.debug.cancelled);
@@ -2215,6 +2422,7 @@ async function runSearch(query, topK) {
             state.conversationId = payload.conversationId;
             state.conversationTurns = Number(payload.conversationTurns || state.conversationTurns || 1);
             saveConversationState();
+            syncConversationUrl();
           }
           state.queryToken = payload.queryToken || null;
           state.lastResult = payload;
@@ -2229,6 +2437,7 @@ async function runSearch(query, topK) {
           if (!sawCancelled && !needsClarification) {
             rememberConversationTurn(query, Number(payload.total || 0));
           }
+          if (!sawCancelled) void loadConversations();
           timelineHint.textContent = sawCancelled
             ? "已取消 · 未产出部分结果"
             : needsClarification
@@ -2446,6 +2655,11 @@ function initFromUrl() {
   }
 }
 
+async function initializeConversationState() {
+  await loadConversations();
+  if (state.conversationId) await restoreConversation(state.conversationId);
+}
+
 loadConversationState();
 buildRail();
 renderConversation();
@@ -2453,3 +2667,4 @@ bindEvents();
 initViewMode();
 initFromUrl();
 loadHealth();
+void initializeConversationState();

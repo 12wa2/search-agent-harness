@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import queue
 import threading
 import time
@@ -44,7 +45,13 @@ from starlette.types import Scope
 
 from search_agent import __version__
 from search_agent.contract.tool import SearchTool
-from search_agent.conversation_memory import ConversationStore
+from search_agent.conversation_memory import (
+    ConversationMemory,
+    ConversationStore,
+    ConversationSummary,
+    ConversationTurn,
+    new_conversation_id,
+)
 from search_agent.demo import DEMO_DATA, ScriptedLlmClient
 from search_agent.intent_router import Intent, IntentRouter, RouteDecision
 from search_agent.llm.client import LlmClient, OpenAILlmClient
@@ -58,6 +65,7 @@ from search_agent.tools.runtime import RuntimeSearchTool
 #: Console assets live inside the package so wheels and the Docker image both ship them.
 _WEB_DIR = Path(__file__).resolve().parent / "web"
 _PROCESS_STARTED_AT = time.time()
+logger = logging.getLogger(__name__)
 
 
 class _NoCacheStaticFiles(StaticFiles):
@@ -75,6 +83,20 @@ class RuntimeModeRequest(BaseModel):
     """Request body for switching the complete runtime preset."""
 
     mode: Literal["offline", "online"]
+
+
+class ConversationCreateRequest(BaseModel):
+    """Create an empty server-side conversation."""
+
+    companyId: int = 1
+    hrId: int | None = None
+    title: str = ""
+
+
+class CandidateExclusionRequest(BaseModel):
+    """Toggle one candidate in the conversation's explicit exclusion set."""
+
+    excluded: bool
 
 
 def _stage_payload(event: str, state: dict[str, Any]) -> dict[str, Any]:
@@ -159,9 +181,47 @@ def _sse(event: str, payload: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
-async def _stream_reply(decision: RouteDecision) -> AsyncIterator[str]:
+def _record_reply_turn(
+    store: ConversationStore,
+    req: SearchRequest,
+    decision: RouteDecision,
+) -> ConversationMemory | None:
+    """Archive a routed reply without starting search or changing L1 history."""
+    conversation_id = req.conversationId or new_conversation_id()
+    try:
+        memory = store.load(conversation_id) if req.conversationId else None
+        if memory is not None and (memory.company_id != req.companyId or memory.hr_id != req.hrId):
+            conversation_id = new_conversation_id()
+            memory = None
+        return store.append_turn(
+            conversation_id,
+            req.companyId,
+            req.hrId,
+            ConversationTurn(
+                turn_index=memory.total_turns if memory is not None else 0,
+                query=req.query,
+                assistant_summary=decision.message,
+                route=decision.intent.value,
+                status="reply",
+                top_k=req.topK,
+                timestamp=int(time.time()),
+            ),
+        )
+    except Exception as exc:
+        logger.warning("routed reply was not archived: %s", exc)
+        return None
+
+
+async def _stream_reply(
+    decision: RouteDecision,
+    memory: ConversationMemory | None = None,
+) -> AsyncIterator[str]:
     """Yield one terminal reply frame without starting the search Harness."""
-    yield _sse("reply", decision.to_payload())
+    payload = decision.to_payload()
+    if memory is not None:
+        payload["conversationId"] = memory.conversation_id
+        payload["conversationTurns"] = memory.total_turns
+    yield _sse("reply", payload)
 
 
 async def _tracked_search_events(
@@ -356,7 +416,8 @@ def create_app(
                 runtime,
             )
         else:
-            body = _stream_reply(decision)
+            memory = _record_reply_turn(resolved_conversations, req, decision)
+            body = _stream_reply(decision, memory)
         return StreamingResponse(
             body,
             media_type="text/event-stream",
@@ -389,6 +450,82 @@ def create_app(
     def search_stream_post(req: SearchRequest) -> StreamingResponse:
         """POST variant: keeps the query out of URLs and access logs."""
         return stream_response(req)
+
+    def conversation_for_scope(
+        conversation_id: str,
+        company_id: int,
+        hr_id: int | None,
+    ) -> ConversationMemory:
+        memory = resolved_conversations.load(conversation_id)
+        if memory is None or memory.company_id != company_id or memory.hr_id != hr_id:
+            raise HTTPException(status_code=404, detail="conversation not found")
+        return memory
+
+    @app.post("/conversations", response_model=ConversationMemory)
+    def create_conversation(req: ConversationCreateRequest) -> ConversationMemory:
+        return resolved_conversations.create(
+            req.companyId,
+            req.hrId,
+            title=req.title,
+        )
+
+    @app.get("/conversations", response_model=list[ConversationSummary])
+    def list_conversations(
+        companyId: int = Query(1, gt=0),
+        hrId: int | None = Query(None, gt=0),
+        limit: int = Query(50, ge=1, le=100),
+        offset: int = Query(0, ge=0),
+    ) -> list[ConversationSummary]:
+        return resolved_conversations.list(
+            companyId,
+            hrId,
+            limit=limit,
+            offset=offset,
+        )
+
+    @app.get("/conversations/{conversation_id}", response_model=ConversationMemory)
+    def get_conversation(
+        conversation_id: str,
+        companyId: int = Query(1, gt=0),
+        hrId: int | None = Query(None, gt=0),
+    ) -> ConversationMemory:
+        return conversation_for_scope(conversation_id, companyId, hrId)
+
+    @app.delete("/conversations/{conversation_id}")
+    def delete_conversation(
+        conversation_id: str,
+        companyId: int = Query(1, gt=0),
+        hrId: int | None = Query(None, gt=0),
+    ) -> dict[str, bool]:
+        return {
+            "deleted": resolved_conversations.delete(
+                conversation_id,
+                companyId,
+                hrId,
+            )
+        }
+
+    @app.patch(
+        "/conversations/{conversation_id}/candidates/{doc_id}",
+        response_model=ConversationMemory,
+    )
+    def set_candidate_exclusion(
+        conversation_id: str,
+        doc_id: str,
+        req: CandidateExclusionRequest,
+        companyId: int = Query(1, gt=0),
+        hrId: int | None = Query(None, gt=0),
+    ) -> ConversationMemory:
+        memory = resolved_conversations.set_candidate_excluded(
+            conversation_id,
+            companyId,
+            hrId,
+            doc_id,
+            excluded=req.excluded,
+        )
+        if memory is None:
+            raise HTTPException(status_code=404, detail="conversation not found")
+        return memory
 
     @app.get("/sessions/{query_token}", response_model=AgentSessionPage)
     def session_page(

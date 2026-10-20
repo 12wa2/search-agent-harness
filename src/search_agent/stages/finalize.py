@@ -354,7 +354,7 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
                     top_k=top_k,
                     recall_pool_size=state.get("recall_pool_size"),
                     routing=state["routing"],
-                    exclude_doc_ids=[],
+                    exclude_doc_ids=list(state.get("excluded_doc_ids") or []),
                     details=state.get("details", False),
                 )
             )

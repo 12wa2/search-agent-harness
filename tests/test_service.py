@@ -10,7 +10,7 @@ from search_agent.contract.tool import (
     SearchToolResult,
     ToolCandidate,
 )
-from search_agent.conversation_memory import ConversationStore
+from search_agent.conversation_memory import ConversationStore, ConversationTurn
 from search_agent.llm.client import FakeLlmClient
 from search_agent.models.api import CandidateItem, SearchRequest, SearchResponse
 from search_agent.models.ir import (
@@ -47,10 +47,12 @@ class _FakeTool:
         self._rerank = rerank_items or items
         self.search_calls = 0
         self.last_request = None
+        self.requests: list[SearchToolRequest] = []
 
     def search_with_intent(self, req: SearchToolRequest) -> SearchToolResult:
         self.search_calls += 1
         self.last_request = req
+        self.requests.append(req)
         return SearchToolResult(
             items=self._items, total=len(self._items), quality="rich", timings_ms={"total": 100}
         )
@@ -240,6 +242,120 @@ def test_service_turn_index_continues_after_memory_window():
     assert memory is not None
     assert [turn.turn_index for turn in memory.turns] == [2, 3]
     assert resp.conversationTurns == 4
+
+
+def test_reply_turn_is_archived_but_not_injected_into_search_history():
+    conversations = ConversationStore(connect_redis=False)
+    conversation = conversations.create(39978, 7)
+    conversations.append_turn(
+        conversation.conversation_id,
+        39978,
+        7,
+        ConversationTurn(
+            turn_index=0,
+            query="你好",
+            assistant_summary="你好！我是 Search Agent。",
+            route="GREETING",
+            status="reply",
+        ),
+    )
+    llm = _llm()
+    svc = SearchAgentService(
+        tool=_FakeTool([_candidate(f"d{i}") for i in range(5)]),
+        llm_client=llm,
+        runner=LoopRunner(),
+        conversation_store=conversations,
+        session_store=AgentSessionStore(connect_redis=False),
+    )
+
+    resp = svc.search(
+        SearchRequest(
+            query="Python engineer",
+            companyId=39978,
+            hrId=7,
+            topK=5,
+            conversationId=conversation.conversation_id,
+        )
+    )
+
+    understands = [json.loads(user) for name, user in llm.calls if name == "agent_understand"]
+    assert "conversation_history" not in understands[0]
+    memory = conversations.load(conversation.conversation_id)
+    assert memory is not None
+    assert memory.title == "Python engineer"
+    assert [turn.status for turn in memory.turns] == ["reply", "completed"]
+    assert [turn.turn_index for turn in memory.turns] == [0, 1]
+    assert resp.conversationTurns == 2
+
+
+def test_service_persists_restorable_turn_snapshot():
+    conversations = ConversationStore(connect_redis=False)
+    svc = SearchAgentService(
+        tool=_FakeTool([_candidate(f"d{i}") for i in range(5)]),
+        llm_client=_llm(),
+        runner=LoopRunner(),
+        conversation_store=conversations,
+        session_store=AgentSessionStore(connect_redis=False),
+    )
+
+    resp = svc.search(
+        SearchRequest(
+            query="Python engineer",
+            companyId=39978,
+            hrId=7,
+            topK=5,
+            pageSize=2,
+        )
+    )
+    memory = conversations.load(resp.conversationId)
+
+    assert memory is not None
+    assert len(memory.turns) == 1
+    turn = memory.turns[0]
+    assert turn.assistant_summary.startswith("岗位：Python engineer。")
+    assert turn.top_candidate_ids == ["d0", "d1", "d2", "d3", "d4"]
+    assert turn.result_items[0]["docId"] == "d0"
+    assert turn.result_count == 5
+    assert turn.query_token == resp.queryToken
+    assert turn.top_k == 5
+    assert turn.status == "completed"
+    assert turn.route
+
+
+def test_service_passes_explicit_exclusions_and_hides_them_defensively():
+    conversations = ConversationStore(connect_redis=False)
+    tool = _FakeTool([_candidate(f"d{i}") for i in range(5)])
+    svc = SearchAgentService(
+        tool=tool,
+        llm_client=_llm(),
+        runner=LoopRunner(),
+        conversation_store=conversations,
+        session_store=AgentSessionStore(connect_redis=False),
+    )
+    first = svc.search(SearchRequest(query="Python engineer", companyId=39978, hrId=7, topK=5))
+    conversations.set_candidate_excluded(
+        first.conversationId,
+        39978,
+        7,
+        "d2",
+        excluded=True,
+    )
+    request_count = len(tool.requests)
+
+    second = svc.search(
+        SearchRequest(
+            query="prefer big tech",
+            companyId=39978,
+            hrId=7,
+            topK=5,
+            conversationId=first.conversationId,
+        )
+    )
+
+    new_requests = tool.requests[request_count:]
+    assert new_requests
+    assert all("d2" in request.exclude_doc_ids for request in new_requests)
+    assert "d2" not in {item.docId for item in second.items}
 
 
 def test_service_returns_first_page_and_reusable_session_token():
