@@ -461,6 +461,9 @@ function setViewMode(mode, { persist = true } = {}) {
   if (persist) {
     try {
       sessionStorage.setItem(VIEW_KEY, next);
+      const url = new URL(location.href);
+      url.searchParams.set("view", next);
+      history.replaceState(null, "", url);
     } catch (err) {
       // View preference is optional.
     }

@@ -304,7 +304,8 @@ def test_root_serves_the_web_console(client: TestClient) -> None:
     assert 'id="mode-chip"' in resp.text
     assert 'id="online-mode-dialog"' in resp.text
     assert "mode-toggle" in resp.text
-    assert "今天要找什么样的人？" in resp.text
+    assert "今天要找" in resp.text
+    assert "什么样的人？" in resp.text
     assert "执行观测" in resp.text
     assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"
 
