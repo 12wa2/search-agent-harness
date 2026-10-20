@@ -3676,13 +3676,6 @@ body[data-view="agent"] #version-chip {
   text-wrap: pretty;
 }
 
-.chat-score-note {
-  margin: 9px 0 0;
-  color: var(--quiet);
-  font-size: 9px;
-  line-height: 1.5;
-}
-
 .chat-degrade-note {
   margin: 9px 0 0;
   padding: 8px 10px;

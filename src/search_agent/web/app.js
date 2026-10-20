@@ -1133,11 +1133,6 @@ function renderChatResult(payload) {
     const list = addChatCandidateCards(run, items, Number(payload.page?.offset || 0));
     run.resultList = list;
     message.body.append(list);
-    if (items.length) {
-      message.body.append(
-        el("p", "chat-score-note", "排序分仅用于同一结果集内排序，不代表概率或匹配率。"),
-      );
-    }
     const pagerParts = createChatPager();
     run.resultPager = pagerParts.pagerNode;
     run.resultPrevBtn = pagerParts.prev;

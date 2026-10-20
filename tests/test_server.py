@@ -448,7 +448,6 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert 'url.searchParams.set("view", next)' in script.text
     assert "clarification-options" in script.text
     assert "为什么继续搜索" in script.text
-    assert "排序分仅用于同一结果集内排序" in script.text
     assert "delivery-overview" in script.text
     assert "/runtime/mode" in script.text
     assert "toggleRuntimeMode" in script.text
