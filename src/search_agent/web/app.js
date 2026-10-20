@@ -917,6 +917,7 @@ function reasoningStep(kicker, copy) {
 }
 
 function appendChatReasoning(container, payload) {
+  if (payload.debug?.difficultyRoute === "direct_search") return;
   const events = state.runEvents || [];
   const overview = deliveryOverview(payload);
   let reflectIndex = -1;
@@ -1000,17 +1001,7 @@ function appendChatReasoning(container, payload) {
       el("span", "", "来自真实覆盖检查与最终结束原因"),
     );
     const evaluateEvent = [...events].reverse().find((event) => event.stage === "evaluate");
-    if (payload.debug?.difficultyRoute === "direct_search") {
-      title.replaceChildren(
-        el("strong", "", "为什么没有进入 Agent 反思链路"),
-        el("span", "", "明确查询由 Hybrid V2 parser 解析后直接执行"),
-      );
-      steps.append(
-        reasoningStep("解析", "Hybrid V2 parser LLM 将自然语言解析为 CandidateSearchIR，并记录 parser 调用与 Token。"),
-        reasoningStep("执行", "SearchTool 只执行一次，完整运行 compile、BM25/kNN 召回与重排。"),
-        reasoningStep("结束", "没有调用 understand / plan / judge / reflect；Agent LLM 为 0，V2 parser LLM 单独计入。"),
-      );
-    } else if (overview.reasonCode === "difficulty_single_pass") {
+    if (overview.reasonCode === "difficulty_single_pass") {
       steps.append(reasoningStep("路由", "需求被判定为低难度单次检索，覆盖检查后直接收敛。"));
     } else if (evaluateEvent?.detail?.next === "finalize") {
       steps.append(reasoningStep("判断", "覆盖检查已满足结束条件，未触发策略修订。"));
