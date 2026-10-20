@@ -1165,9 +1165,8 @@ function renderChatReply(payload) {
   const pending = state.activeRun?.pending;
   pending?.remove();
   const message = createChatMessage("agent", "chat-reply-message");
-  setChatStatus(message.status, INTENT_LABEL[payload.intent] || "已回复", "complete");
+  message.status?.remove();
   message.body.append(el("p", "chat-reply-text", payload.message || ""));
-  message.body.append(el("p", "chat-route-note", "意图路由直接回复 · 未启动 Harness · 未调用搜索工具或 LLM"));
   const suggestions = payload.suggestions || [];
   if (suggestions.length) {
     const actions = el("div", "chat-reply-suggestions");

@@ -4010,12 +4010,6 @@ body[data-view="agent"] #version-chip {
   padding-top: 2px;
 }
 
-.chat-route-note {
-  margin: 11px 0 0;
-  color: var(--quiet);
-  font: 8.5px/1.5 var(--mono);
-}
-
 .chat-reply-suggestions {
   display: flex;
   flex-wrap: wrap;
@@ -6023,11 +6017,6 @@ p {
 
 .chat-reply-message .chat-message-body {
   padding-top: 2px;
-}
-
-.chat-route-note {
-  color: var(--quiet);
-  font-size: 9px;
 }
 
 .chat-typing {
