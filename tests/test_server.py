@@ -389,6 +389,9 @@ def test_root_serves_the_web_console(client: TestClient) -> None:
     assert "选择执行路径" in resp.text
     assert "覆盖不足时反思并修订策略" in resp.text
     assert "8 阶段反思" not in resp.text
+    assert "明确条件可直接生成检索 IR" in resp.text
+    assert "只有覆盖不足时才定位缺口" in resp.text
+    assert "Reflect · 按需触发" in resp.text
     assert 'id="sidebar-new"' in resp.text
     assert 'id="agent-session-list"' in resp.text
     assert 'id="agent-session-count"' in resp.text
@@ -456,6 +459,8 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "快速演示" in script.text
     assert "完整在线" in script.text
     assert "轻量搜索" in script.text
+    assert "收到后会先判断难度，再选择直连、轻量或完整反思路径。" in script.text
+    assert "收到后会先拆解能力，再决定从哪里搜。" not in script.text
     assert "difficultyRoute" in script.text
     assert "plannedStages" in script.text
     assert "is-skipped" in script.text

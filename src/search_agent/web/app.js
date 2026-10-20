@@ -1483,7 +1483,11 @@ function resetUI() {
   state.stageCount = 0;
   buildRail();
   setAgentProgress();
-  setAgentState("idle", "Agent 待命", "等待岗位简报；收到后会先拆解能力，再决定从哪里搜。");
+  setAgentState(
+    "idle",
+    "Agent 待命",
+    "等待岗位简报；收到后会先判断难度，再选择直连、轻量或完整反思路径。",
+  );
 }
 
 function setRunning(active) {

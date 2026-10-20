@@ -2861,10 +2861,6 @@ body[data-view="agent"] {
   background: #f6faf8;
 }
 
-body[data-view="console"] {
-  background: var(--paper);
-}
-
 body[data-view="agent"] #backend-chip,
 body[data-view="agent"] #version-chip {
   display: none;
@@ -4031,10 +4027,6 @@ body[data-view="agent"] #version-chip {
 .chat-pager span {
   color: var(--quiet);
   font: 9px/1.4 var(--mono);
-}
-
-.chat-reply-message .chat-message-body {
-  padding-top: 2px;
 }
 
 .chat-reply-suggestions {

@@ -297,7 +297,7 @@
         <span class="agent-avatar" aria-hidden="true">SA</span>
         <div>
           <h2>Search Agent</h2>
-          <p>自主规划路径、调用工具、检查覆盖，需要时改变策略。</p>
+          <p>按需求复杂度选择直连、轻量或完整反思，并记录实际执行阶段。</p>
         </div>
       </div>
       <span class="hint" id="timeline-hint">等待任务</span>
@@ -307,7 +307,7 @@
       <span class="agent-runbar-pulse" aria-hidden="true"></span>
       <div class="agent-runbar-copy" aria-live="polite">
         <strong id="agent-state">Agent 待命</strong>
-        <span id="agent-state-detail">等待岗位简报；收到后会先拆解能力，再决定从哪里搜。</span>
+        <span id="agent-state-detail">等待岗位简报；收到后会先判断难度，再选择直连、轻量或完整反思路径。</span>
       </div>
       <div class="agent-runbar-meta" aria-label="执行进度">
         <span><b id="agent-stage-count">0</b> 阶段</span>
@@ -329,27 +329,27 @@
           </span>
           <div>
             <strong>把一个岗位交给它</strong>
-            <span>它不是把一句话翻译成一次查询，而是会规划、观察、判断，并在覆盖不足时主动换方向。</span>
+            <span>它会先判断需求是否足够明确：明确条件可直接生成检索 IR；需要更多判断时再规划路径，覆盖不足时反思修订。</span>
           </div>
         </div>
         <ol class="agent-ready-plan">
           <li>
             <span>01</span>
-            <div><b>先读岗位</b><small>从 JD 中抽取必备能力、硬条件与可迁移经验。</small></div>
+            <div><b>判断需求</b><small>抽取岗位、能力、硬条件与排除项，判断条件是否足够明确。</small></div>
           </li>
           <li>
             <span>02</span>
-            <div><b>再定计划</b><small>按公司、行业、岗位与项目拆成互补的检索路径。</small></div>
+            <div><b>选择路径</b><small>明确条件走直连；需要更多判断时走轻量或完整反思。</small></div>
           </li>
           <li>
             <span>03</span>
-            <div><b>边搜边判断</b><small>结果不够时定位能力缺口，改写策略后继续搜，而不是重复原查询。</small></div>
+            <div><b>按需反思</b><small>只有覆盖不足时才定位缺口、改写策略并继续检索。</small></div>
           </li>
         </ol>
         <div class="agent-ready-tools" aria-label="可用工具">
           <span>SearchTool · 多路召回</span>
           <span>Judge · 能力判定</span>
-          <span>Reflect · 覆盖反思</span>
+          <span>Reflect · 按需触发</span>
         </div>
       </div>
       <ol id="timeline" class="timeline" aria-live="polite"></ol>
