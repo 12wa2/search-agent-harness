@@ -3691,105 +3691,6 @@ body[data-view="agent"] #version-chip {
   font-weight: 650;
 }
 
-.chat-candidates {
-  margin: 4px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.chat-candidates .candidate {
-  margin: 0;
-  padding: 20px 0 18px;
-  border-bottom: 1px solid var(--rule-soft);
-  background: transparent;
-}
-
-.chat-candidates .candidate:hover,
-.chat-candidates .candidate:focus-within {
-  background: rgba(245, 250, 248, 0.75);
-}
-
-.chat-candidates .cand-top {
-  grid-template-columns: 31px minmax(0, 1fr) auto;
-  gap: 12px;
-}
-
-.chat-candidates .rank {
-  color: var(--accent);
-  font: 650 12px/1 var(--mono);
-}
-
-.chat-candidates .cand-id h3 {
-  font-size: 16px;
-  font-weight: 650;
-}
-
-.chat-candidates .cand-id p {
-  margin-top: 5px;
-  color: #798983;
-  font: 9.5px/1.5 var(--mono);
-}
-
-.chat-candidates .score {
-  border-color: #d4e5df;
-  border-radius: 999px;
-  background: #f4faf7;
-  color: #1e5d4d;
-  font-size: 10px;
-}
-
-.chat-candidates .score-block {
-  min-width: 56px;
-}
-
-.chat-candidates .score-label {
-  color: var(--quiet);
-  font-size: 8px;
-}
-
-.chat-candidates .cand-evidence {
-  margin-top: 10px;
-}
-
-.chat-candidates .cand-evidence-fact {
-  color: #58726b;
-  font-size: 10px;
-}
-
-.chat-candidates .cand-evidence-tags .tag.is-match {
-  font-size: 9.5px;
-}
-
-.chat-candidates .tag-row {
-  margin-top: 12px;
-}
-
-.chat-candidates .tag-row.cand-skills {
-  margin-top: 9px;
-}
-
-.chat-candidates .tag {
-  border-radius: 999px;
-  font-size: 9.5px;
-}
-
-.chat-candidates .candidate > details {
-  margin-top: 13px;
-}
-
-.chat-candidates .candidate > details > summary {
-  color: #667872;
-  font-size: 10.5px;
-}
-
-.chat-candidates .explain {
-  margin-top: 11px;
-  padding: 12px;
-  border: 1px solid var(--rule-soft);
-  border-radius: 8px;
-  background: #fbfdfc;
-}
-
 .chat-clarification {
   margin-top: 12px;
   padding: 15px;
@@ -4487,24 +4388,6 @@ body[data-view="agent"] #version-chip {
     justify-content: space-between;
   }
 
-  .chat-candidates .candidate {
-    padding: 18px 0 16px;
-  }
-
-  .chat-candidates .cand-top {
-    grid-template-columns: 25px minmax(0, 1fr) auto;
-    gap: 9px;
-  }
-
-  .chat-candidates .cand-id h3 {
-    font-size: 14px;
-  }
-
-  .chat-candidates .score {
-    min-width: 42px;
-    padding-inline: 5px;
-  }
-
   .composer-zone {
     padding: 9px 12px max(10px, env(safe-area-inset-bottom));
   }
@@ -4596,14 +4479,6 @@ body[data-view="agent"] #version-chip {
   .chat-message,
   .chat-result-message.agent-delivery {
     gap: 9px;
-  }
-
-  .chat-candidates .score-block {
-    min-width: 48px;
-  }
-
-  .chat-candidates .score {
-    min-width: 38px;
   }
 
   .chat-progress-copy strong {
@@ -5903,71 +5778,332 @@ p {
   font-size: 10.5px;
 }
 
+.candidate .cand-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 3px 0 0;
+  color: var(--muted);
+  font: 500 10px/1.45 var(--sans);
+  font-variant-numeric: tabular-nums;
+  white-space: normal;
+}
+
+.candidate .cand-meta > span + span::before {
+  display: inline-block;
+  width: 1px;
+  height: 9px;
+  margin: 0 5px 0 0;
+  background: var(--rule);
+  content: "";
+  vertical-align: -1px;
+}
+
+.candidate .cand-meta-id {
+  color: #526861;
+  font: 600 9.5px/1.45 var(--mono);
+  letter-spacing: 0.01em;
+}
+
+.candidate .cand-evidence-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 12px;
+}
+
+.candidate .cand-evidence-fact {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.candidate .cand-evidence-fact::before {
+  display: none;
+}
+
+.candidate .cand-evidence-fact b {
+  color: #344d45;
+  font: 650 10px/1.4 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.candidate .cand-evidence-fact.is-warning,
+.candidate .cand-evidence-fact.is-warning b {
+  color: var(--warning);
+}
+
+.candidate .cand-signals {
+  display: grid;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.candidate .cand-signal-group {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.candidate .cand-signal-label {
+  padding-top: 3px;
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.candidate .cand-signal-group.is-match .cand-signal-label {
+  color: var(--accent-strong);
+}
+
+.candidate .cand-signal-group.is-missing .cand-signal-label {
+  color: var(--warning);
+}
+
+.candidate .cand-evidence-tags,
+.candidate .tag-row.cand-skills {
+  margin-top: 0;
+}
+
+.candidate .cand-evidence-more {
+  align-self: center;
+  color: var(--muted);
+  font: 500 9px/1.4 var(--mono);
+}
+
 .chat-candidates {
-  margin-top: 18px;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
   border-top: 1px solid var(--rule);
 }
 
 .chat-candidates .candidate {
-  padding: 18px 0 17px;
+  margin: 0;
+  padding: 20px 0 21px;
   border-top: 0;
   border-bottom: 1px solid var(--rule-soft);
   border-radius: 0;
   background: transparent;
+  transition: background-color 160ms ease-out;
 }
 
 .chat-candidates .candidate:hover,
 .chat-candidates .candidate:focus-within {
-  background: rgba(255, 255, 255, 0.56);
+  background: rgba(255, 255, 255, 0.52);
 }
 
 .chat-candidates .cand-top {
-  grid-template-columns: 26px minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
 }
 
 .chat-candidates .rank {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--accent-line);
+  border-radius: 7px;
+  background: var(--accent-wash);
   color: var(--accent-strong);
-  font: 600 9px/1.8 var(--mono);
+  font: 650 11.5px/1 var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.035em;
 }
 
 .chat-candidates .cand-id h3 {
   color: var(--ink);
-  font-size: 15px;
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.32;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
 }
 
-.chat-candidates .cand-id p {
-  color: var(--quiet);
-  font-size: 9px;
+.chat-candidates .cand-id .cand-meta {
+  margin-top: 4px;
+  font: 500 12px/1.5 var(--sans);
+}
+
+.chat-candidates .cand-meta > span + span::before {
+  height: 10px;
+  margin: 0 8px 0 0;
+}
+
+.chat-candidates .cand-meta-id {
+  font: 600 11px/1.5 var(--mono);
+}
+
+.chat-candidates .cand-control {
+  align-items: flex-start;
+  gap: 9px;
+  padding-top: 1px;
+}
+
+.chat-candidates .score-block {
+  min-width: 0;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 5px;
+  padding-top: 5px;
+}
+
+.chat-candidates .score-label {
+  color: var(--muted);
+  font: 600 10px/1.4 var(--sans);
+  letter-spacing: 0;
 }
 
 .chat-candidates .score {
-  min-width: 52px;
-  padding: 5px 8px;
-  border-color: var(--rule);
-  background: var(--surface);
-  color: var(--ink);
-  font: 600 10px/1 var(--mono);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  font: 650 13px/1.4 var(--mono);
   font-variant-numeric: tabular-nums;
 }
 
+.chat-candidates .cand-exclude {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 9px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font: 600 11px/1.3 var(--sans);
+  cursor: pointer;
+  transition:
+    color 140ms ease-out,
+    border-color 140ms ease-out,
+    background-color 140ms ease-out,
+    transform 90ms ease-out;
+}
+
+.chat-candidates .cand-exclude:hover:not(:disabled) {
+  border-color: var(--danger-line);
+  background: var(--danger-wash);
+  color: var(--danger);
+}
+
+.chat-candidates .cand-exclude:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.chat-candidates .cand-exclude[aria-pressed="true"] {
+  border-color: var(--danger-line);
+  background: var(--danger-wash);
+  color: var(--danger);
+}
+
 .chat-candidates .cand-evidence {
-  padding-top: 7px;
+  margin-top: 12px;
+  padding-top: 0;
+}
+
+.chat-candidates .cand-evidence-facts {
+  gap: 4px 18px;
 }
 
 .chat-candidates .cand-evidence-fact {
+  gap: 5px;
   color: var(--muted);
+  font: 500 11px/1.5 var(--sans);
+}
+
+.chat-candidates .cand-evidence-fact b {
+  font: 650 11.5px/1.4 var(--mono);
+}
+
+.chat-candidates .cand-signals {
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.chat-candidates .cand-signal-group {
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.chat-candidates .cand-signal-label {
+  padding-top: 4px;
+  font-size: 11px;
+  letter-spacing: 0.015em;
+}
+
+.chat-candidates .cand-evidence-tags,
+.chat-candidates .tag-row.cand-skills {
+  min-width: 0;
+}
+
+.chat-candidates .tag {
+  min-height: 25px;
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.chat-candidates .tag.skill {
+  border-color: var(--rule);
+  background: var(--surface);
+  color: #5a6d67;
+}
+
+.chat-candidates .cand-evidence-more {
   font-size: 10px;
 }
 
 .chat-candidates .candidate > details {
-  margin-top: 9px;
+  margin-top: 10px;
 }
 
 .chat-candidates .candidate > details > summary {
-  min-height: 30px;
+  min-height: 32px;
+  align-items: center;
+  padding: 4px 0;
   color: var(--muted);
-  font-size: 9.5px;
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.chat-candidates .explain {
+  margin-top: 11px;
+  padding: 13px 14px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 8px;
+  background: #fbfdfc;
+}
+
+@media (min-width: 761px) {
+  .chat-candidates .cand-evidence-fact + .cand-evidence-fact {
+    padding-left: 18px;
+    border-left: 1px solid var(--rule);
+  }
+}
+
+@media (pointer: coarse) {
+  .chat-candidates .cand-exclude {
+    position: relative;
+    min-height: 36px;
+  }
+
+  .chat-candidates .cand-exclude::after {
+    position: absolute;
+    inset: -4px;
+    content: "";
+  }
 }
 
 .chat-pager {
@@ -6583,7 +6719,100 @@ p {
   }
 
   .chat-candidates .candidate {
-    padding-block: 16px;
+    padding-block: 18px;
+  }
+
+  .chat-candidates .cand-top {
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+
+  .chat-candidates .rank {
+    width: 30px;
+    height: 30px;
+    border-radius: 7px;
+    font-size: 11px;
+  }
+
+  .chat-candidates .cand-id h3 {
+    font-size: 16px;
+    line-height: 1.35;
+  }
+
+  .chat-candidates .cand-id .cand-meta {
+    margin-top: 3px;
+    font-size: 11.5px;
+  }
+
+  .chat-candidates .cand-meta-id {
+    font-size: 10.5px;
+  }
+
+  .chat-candidates .cand-control {
+    gap: 7px;
+  }
+
+  .chat-candidates .score-block {
+    gap: 4px;
+    padding-top: 4px;
+  }
+
+  .chat-candidates .score-label {
+    font-size: 9.5px;
+  }
+
+  .chat-candidates .score {
+    font-size: 12.5px;
+  }
+
+  .chat-candidates .cand-exclude {
+    padding-inline: 8px;
+    font-size: 10.5px;
+  }
+
+  .chat-candidates .cand-evidence {
+    margin-top: 10px;
+  }
+
+  .chat-candidates .cand-evidence-facts {
+    gap: 4px 14px;
+  }
+
+  .chat-candidates .cand-evidence-fact {
+    font-size: 10.5px;
+  }
+
+  .chat-candidates .cand-evidence-fact b {
+    font-size: 11px;
+  }
+
+  .chat-candidates .cand-signals {
+    gap: 6px;
+    margin-top: 10px;
+  }
+
+  .chat-candidates .cand-signal-group {
+    grid-template-columns: 50px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .chat-candidates .cand-signal-label {
+    font-size: 10.5px;
+  }
+
+  .chat-candidates .tag {
+    min-height: 24px;
+    padding-inline: 8px;
+    font-size: 10.5px;
+  }
+
+  .chat-candidates .candidate > details {
+    margin-top: 8px;
+  }
+
+  .chat-candidates .candidate > details > summary {
+    min-height: 34px;
+    font-size: 11px;
   }
 
   .composer-zone {
@@ -6679,6 +6908,27 @@ p {
     gap: 12px;
   }
 
+  .chat-candidates .cand-control {
+    gap: 6px;
+  }
+
+  .chat-candidates .score-label {
+    font-size: 9px;
+  }
+
+  .chat-candidates .cand-exclude {
+    padding-inline: 7px;
+  }
+
+  .chat-candidates .cand-evidence-facts {
+    gap: 4px 12px;
+  }
+
+  .chat-candidates .cand-signal-group {
+    grid-template-columns: 47px minmax(0, 1fr);
+    gap: 7px;
+  }
+
   .panel-head {
     align-items: flex-start;
     flex-direction: column;
@@ -6699,6 +6949,30 @@ p {
 
   .console-heading {
     padding-inline: 14px;
+  }
+}
+
+@media (max-width: 360px) {
+  .chat-candidates .cand-top {
+    grid-template-columns: 30px minmax(0, 1fr);
+    row-gap: 7px;
+  }
+
+  .chat-candidates .rank {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .chat-candidates .cand-id {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .chat-candidates .cand-control {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: start;
+    padding-top: 0;
   }
 }
 

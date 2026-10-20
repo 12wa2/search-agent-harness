@@ -827,8 +827,6 @@ function addChatCandidateCards(run, items, offset = 0) {
   items.forEach((item, index) => {
     const card = renderCandidate(item, offset + index + 1);
     card.classList.add("chat-candidate");
-    const rank = card.querySelector(".rank");
-    if (rank) rank.textContent = `#${offset + index + 1}`;
     list.append(card);
   });
   return list;
@@ -841,8 +839,6 @@ function replaceChatCandidateCards(items, offset = 0) {
   items.forEach((item, index) => {
     const card = renderCandidate(item, offset + index + 1);
     card.classList.add("chat-candidate");
-    const rank = card.querySelector(".rank");
-    if (rank) rank.textContent = `#${offset + index + 1}`;
     run.resultList.append(card);
   });
 }
@@ -1393,8 +1389,6 @@ function renderRestoredConversation(memory) {
       items.forEach((item, index) => {
         const card = renderCandidate(item, index + 1);
         card.classList.add("chat-candidate");
-        const rank = card.querySelector(".rank");
-        if (rank) rank.textContent = `#${index + 1}`;
         list.append(card);
       });
       message.body.append(list);
@@ -1873,6 +1867,12 @@ async function toggleCandidateExclusion(docId, button) {
   }
 }
 
+function formatCandidateRank(rank) {
+  const value = Number(rank);
+  if (!Number.isFinite(value) || value < 1) return "—";
+  return String(Math.trunc(value)).padStart(2, "0");
+}
+
 function renderCandidate(item, rank, { showRawMatchExplanation = false } = {}) {
   const li = el("li", "candidate");
   const docId = String(item.docId || "");
@@ -1880,11 +1880,13 @@ function renderCandidate(item, rank, { showRawMatchExplanation = false } = {}) {
   li.dataset.candidateId = docId;
   li.classList.toggle("is-excluded", excluded);
   const top = el("div", "cand-top");
-  const meta = [item.docId, item.workYears != null ? `${item.workYears} 年` : null, item.currentResidence]
-    .filter(Boolean)
-    .join(" · ");
   const who = el("div", "cand-id");
-  who.append(el("h3", "", item.name || item.docId), el("p", "", meta));
+  who.append(el("h3", "", item.name || item.docId));
+  const meta = el("p", "cand-meta");
+  if (item.docId) meta.append(el("span", "cand-meta-id", item.docId));
+  if (item.workYears != null) meta.append(el("span", "", `${item.workYears} 年经验`));
+  if (item.currentResidence) meta.append(el("span", "", item.currentResidence));
+  if (meta.childElementCount) who.append(meta);
   const scoreText = Number(item.score || 0).toFixed(2);
   const score = el("div", "score-block");
   score.title = "排序分用于同一结果集内排序，不表示绝对通过率。";
@@ -1903,7 +1905,9 @@ function renderCandidate(item, rank, { showRawMatchExplanation = false } = {}) {
     });
     control.append(excludeButton);
   }
-  top.append(el("span", "rank", rank), who, control);
+  const rankNode = el("span", "rank", formatCandidateRank(rank));
+  rankNode.setAttribute("aria-label", `结果排序第 ${rank} 位`);
+  top.append(rankNode, who, control);
 
   const explanation = item.matchExplanation || {};
   const matchedAbilities = (explanation.matchedAbilities || []).filter(Boolean);
@@ -1913,55 +1917,72 @@ function renderCandidate(item, rank, { showRawMatchExplanation = false } = {}) {
 
   const evidence = el("div", "cand-evidence");
   const facts = el("div", "cand-evidence-facts");
+  const addFact = (label, value, { tone = "", title = "" } = {}) => {
+    const fact = el("span", `cand-evidence-fact ${tone}`.trim());
+    fact.append(
+      el("span", "cand-evidence-fact-label", label),
+      el("b", "", value),
+    );
+    if (title) fact.title = title;
+    facts.append(fact);
+  };
   if (matchedAbilities.length) {
-    facts.append(el("span", "cand-evidence-fact", `命中 ${matchedAbilities.length} 项能力`));
+    addFact("能力命中", `${matchedAbilities.length} 项`);
   }
   if (hardMatches.length) {
     const passed = hardMatches.filter((hard) => hard.matched).length;
-    const fact = el("span", "cand-evidence-fact", `硬条件 ${passed}/${hardMatches.length}`);
-    fact.classList.toggle("is-warning", passed < hardMatches.length);
-    fact.title = hardMatches
+    const title = hardMatches
       .map((hard) => {
         const values = Array.isArray(hard.values) ? hard.values.join("/") : hard.values;
         return `${hard.field || "?"}: ${values ?? "—"} ${hard.matched ? "满足" : "未满足"}`;
       })
       .join("\n");
-    facts.append(fact);
+    addFact("硬条件", `${passed}/${hardMatches.length}`, {
+      tone: passed < hardMatches.length ? "is-warning" : "",
+      title,
+    });
   }
   if (missingAbilities.length) {
-    const fact = el(
-      "span",
-      "cand-evidence-fact is-warning",
-      `未覆盖 ${missingAbilities.length} 项能力`,
-    );
-    fact.title = missingAbilities.join("\n");
-    facts.append(fact);
+    addFact("能力缺口", `${missingAbilities.length} 项`, {
+      tone: "is-warning",
+      title: missingAbilities.join("\n"),
+    });
   }
   if (pathRationale.length) {
-    const fact = el("span", "cand-evidence-fact", `${pathRationale.length} 条来源路径`);
-    fact.title = pathRationale.join("\n");
-    facts.append(fact);
+    addFact("路径证据", `${pathRationale.length} 条`, { title: pathRationale.join("\n") });
   }
   if (facts.childElementCount) evidence.append(facts);
 
-  const evidenceTags = el("div", "cand-evidence-tags");
-  for (const ability of matchedAbilities.slice(0, 3)) {
-    evidenceTags.append(chip(ability, "is-match"));
-  }
-  for (const ability of missingAbilities.slice(0, 3)) {
-    evidenceTags.append(chip(ability, "is-missing"));
-  }
-  if (matchedAbilities.length > 3) {
-    evidenceTags.append(el("span", "cand-evidence-more", `+${matchedAbilities.length - 3}`));
-  }
-  if (evidenceTags.childElementCount) evidence.append(evidenceTags);
+  const signals = el("div", "cand-signals");
+  const appendSignalGroup = (label, abilities, { tagTone = "", groupTone = "" } = {}) => {
+    if (!abilities.length) return;
+    const group = el("div", `cand-signal-group ${groupTone}`.trim());
+    const tags = el("div", "tag-row cand-evidence-tags");
+    for (const ability of abilities.slice(0, 3)) {
+      tags.append(chip(ability, tagTone));
+    }
+    if (abilities.length > 3) {
+      tags.append(el("span", "cand-evidence-more", `+${abilities.length - 3}`));
+    }
+    group.append(el("span", "cand-signal-label", label), tags);
+    signals.append(group);
+  };
+  appendSignalGroup("命中能力", matchedAbilities, { tagTone: "is-match", groupTone: "is-match" });
+  appendSignalGroup("未覆盖", missingAbilities, { tagTone: "is-missing", groupTone: "is-missing" });
 
-  const tags = el("div", "tag-row cand-skills");
-  tags.setAttribute("aria-label", "简历技能");
-  for (const skill of renderSkills(item)) tags.append(skill);
+  const skills = renderSkills(item);
+  if (skills.length) {
+    const skillGroup = el("div", "cand-signal-group cand-skill-group");
+    const skillTags = el("div", "tag-row cand-skills");
+    skillTags.setAttribute("aria-label", "简历技能");
+    skillTags.append(...skills);
+    skillGroup.append(el("span", "cand-signal-label", "技能"), skillTags);
+    signals.append(skillGroup);
+  }
+  if (signals.childElementCount) evidence.append(signals);
 
   const details = el("details");
-  const summary = el("summary", "", "匹配依据 / 来源路径");
+  const summary = el("summary", "", "查看匹配依据与来源路径");
   const explain = el("div", "explain");
 
   if (item.summary) explain.append(el("p", "", item.summary));
@@ -2003,7 +2024,6 @@ function renderCandidate(item, rank, { showRawMatchExplanation = false } = {}) {
   details.append(summary, explain);
   li.append(top);
   if (evidence.childElementCount) li.append(evidence);
-  if (tags.childElementCount) li.append(tags);
   li.append(details);
   return li;
 }
