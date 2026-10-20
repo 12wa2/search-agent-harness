@@ -1078,7 +1078,7 @@ function renderChatResult(payload) {
       ? "当前需求只说明了技能，还没有说明希望寻找哪类候选人。补充方向后我会继续执行，不重复消耗本轮工作。"
       : degraded
         ? "搜索已完成，但部分阶段触发了降级。以下结果保留，建议结合匹配证据复核。"
-        : "以下是根据当前需求筛选出的候选人。展开卡片可查看完整匹配证据与来源路径。";
+        : "以下是根据当前需求筛选出的候选人。悬停或聚焦候选人，可查看完整匹配证据与来源路径。";
   heading.append(
     el("h3", "", headingTitle),
     el("p", "", headingCopy),
@@ -1873,6 +1873,241 @@ function formatCandidateRank(rank) {
   return String(Math.trunc(value)).padStart(2, "0");
 }
 
+const candidateTooltipContent = new WeakMap();
+let candidateTooltipNode = null;
+let candidateTooltipTrigger = null;
+let candidateTooltipHideTimer = 0;
+let candidateTooltipSequence = 0;
+let candidateTooltipOpenedByFocus = false;
+let candidateTooltipPinned = false;
+
+function ensureCandidateTooltip() {
+  if (candidateTooltipNode) return candidateTooltipNode;
+  const tooltip = el("div", "candidate-tooltip");
+  tooltip.id = "candidate-evidence-tooltip";
+  tooltip.setAttribute("role", "tooltip");
+  tooltip.hidden = true;
+  tooltip.addEventListener("pointerenter", cancelCandidateTooltipHide);
+  tooltip.addEventListener("pointerleave", () => {
+    if (candidateTooltipTrigger) scheduleCandidateTooltipHide(candidateTooltipTrigger);
+  });
+  tooltip.addEventListener("focusin", cancelCandidateTooltipHide);
+  tooltip.addEventListener("focusout", () => {
+    if (candidateTooltipTrigger) scheduleCandidateTooltipHide(candidateTooltipTrigger);
+  });
+  document.body.append(tooltip);
+  candidateTooltipNode = tooltip;
+  return tooltip;
+}
+
+function cancelCandidateTooltipHide() {
+  if (!candidateTooltipHideTimer) return;
+  clearTimeout(candidateTooltipHideTimer);
+  candidateTooltipHideTimer = 0;
+}
+
+function hideCandidateTooltip() {
+  cancelCandidateTooltipHide();
+  if (candidateTooltipNode) candidateTooltipNode.hidden = true;
+  candidateTooltipTrigger = null;
+  candidateTooltipOpenedByFocus = false;
+  candidateTooltipPinned = false;
+}
+
+function scheduleCandidateTooltipHide(trigger) {
+  cancelCandidateTooltipHide();
+  candidateTooltipHideTimer = window.setTimeout(() => {
+    candidateTooltipHideTimer = 0;
+    if (candidateTooltipTrigger === trigger) hideCandidateTooltip();
+  }, 160);
+}
+
+function positionCandidateTooltip(trigger, tooltip, anchorEvent = null) {
+  const margin = 12;
+  const gap = 16;
+  const viewportWidth = document.documentElement.clientWidth;
+  const viewportHeight = window.innerHeight;
+  const width = tooltip.offsetWidth;
+  const height = tooltip.offsetHeight;
+  const hasPointer = Boolean(
+    anchorEvent &&
+      Number.isFinite(anchorEvent.clientX) &&
+      Number.isFinite(anchorEvent.clientY),
+  );
+  let left;
+  let top;
+  if (hasPointer) {
+    left = anchorEvent.clientX + gap;
+    top = anchorEvent.clientY + gap;
+    if (left + width > viewportWidth - margin) left = anchorEvent.clientX - width - gap;
+    if (top + height > viewportHeight - margin) top = anchorEvent.clientY - height - gap;
+  } else {
+    const box = trigger.getBoundingClientRect();
+    left = box.right + gap;
+    top = box.top;
+    if (left + width > viewportWidth - margin) left = box.left - width - gap;
+    if (left < margin) {
+      left = box.left;
+      top = box.bottom + gap;
+      if (top + height > viewportHeight - margin) top = box.top - height - gap;
+    }
+  }
+  left = Math.max(margin, Math.min(left, viewportWidth - width - margin));
+  top = Math.max(margin, Math.min(top, viewportHeight - height - margin));
+  tooltip.style.left = `${Math.round(left)}px`;
+  tooltip.style.top = `${Math.round(top)}px`;
+}
+
+function showCandidateTooltip(trigger, anchorEvent = null) {
+  const content = candidateTooltipContent.get(trigger);
+  if (!content) return;
+  cancelCandidateTooltipHide();
+  const tooltip = ensureCandidateTooltip();
+  if (candidateTooltipTrigger !== trigger || tooltip.firstElementChild !== content) {
+    tooltip.replaceChildren(content);
+  }
+  candidateTooltipTrigger = trigger;
+  candidateTooltipPinned = !anchorEvent;
+  tooltip.hidden = false;
+  positionCandidateTooltip(trigger, tooltip, anchorEvent);
+}
+
+function bindCandidateTooltip(trigger) {
+  trigger.classList.add("has-candidate-tooltip");
+  trigger.tabIndex = 0;
+  trigger.addEventListener("pointerenter", (event) => {
+    if (event.pointerType && event.pointerType !== "mouse" && event.pointerType !== "pen") return;
+    showCandidateTooltip(trigger, event);
+  });
+  trigger.addEventListener("pointerleave", () => scheduleCandidateTooltipHide(trigger));
+  trigger.addEventListener("focusin", () => {
+    candidateTooltipOpenedByFocus = true;
+    showCandidateTooltip(trigger);
+  });
+  trigger.addEventListener("focusout", (event) => {
+    if (!trigger.contains(event.relatedTarget)) scheduleCandidateTooltipHide(trigger);
+  });
+  trigger.addEventListener("click", (event) => {
+    if (event.target.closest("button, a, summary, input, textarea, select")) return;
+    if (!window.matchMedia("(hover: none)").matches) return;
+    if (candidateTooltipOpenedByFocus && candidateTooltipTrigger === trigger) {
+      candidateTooltipOpenedByFocus = false;
+      return;
+    }
+    if (candidateTooltipTrigger === trigger && candidateTooltipNode && !candidateTooltipNode.hidden) {
+      hideCandidateTooltip();
+    } else {
+      showCandidateTooltip(trigger);
+    }
+  });
+}
+
+document.addEventListener(
+  "pointerdown",
+  (event) => {
+    if (!candidateTooltipNode || candidateTooltipNode.hidden) return;
+    if (candidateTooltipNode.contains(event.target) || candidateTooltipTrigger?.contains(event.target)) return;
+    hideCandidateTooltip();
+  },
+  true,
+);
+
+window.addEventListener(
+  "scroll",
+  (event) => {
+    if (!candidateTooltipNode || candidateTooltipNode.hidden) return;
+    if (candidateTooltipNode.contains(event.target)) return;
+    if (candidateTooltipPinned && candidateTooltipTrigger) {
+      const box = candidateTooltipTrigger.getBoundingClientRect();
+      if (box.bottom < 8 || box.top > window.innerHeight - 8) {
+        hideCandidateTooltip();
+      } else {
+        positionCandidateTooltip(candidateTooltipTrigger, candidateTooltipNode);
+      }
+      return;
+    }
+    hideCandidateTooltip();
+  },
+  true,
+);
+
+window.addEventListener("resize", hideCandidateTooltip);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") hideCandidateTooltip();
+});
+
+function buildCandidateTooltip(item, rank, explanation, groups, showRawMatchExplanation) {
+  const { matchedAbilities, missingAbilities, hardMatches, pathRationale } = groups;
+  const hasDetails = Boolean(
+    item.summary ||
+      matchedAbilities.length ||
+      missingAbilities.length ||
+      hardMatches.length ||
+      pathRationale.length ||
+      showRawMatchExplanation,
+  );
+  if (!hasDetails) return null;
+
+  const content = el("div", "candidate-tooltip-content");
+  const head = el("div", "candidate-tooltip-head");
+  const title = el("div", "candidate-tooltip-title");
+  title.append(
+    el("span", "candidate-tooltip-kicker", `结果 ${formatCandidateRank(rank)} · 匹配依据`),
+    el("strong", "", item.name || item.docId || "候选人"),
+  );
+  head.append(title);
+
+  const explain = el("div", "explain candidate-tooltip-explain");
+  const description = ["匹配依据"];
+  if (item.summary) {
+    explain.append(el("p", "candidate-tooltip-summary", item.summary));
+    description.push(item.summary);
+  }
+  const addTagSection = (label, values, tone = "") => {
+    if (!values.length) return;
+    const row = el("div", "explain-tags");
+    for (const value of values) row.append(chip(value, tone));
+    const section = el("section", "candidate-tooltip-section");
+    section.append(el("h4", "", label), row);
+    explain.append(section);
+    description.push(`${label}：${values.join("、")}`);
+  };
+  const addListSection = (label, entries) => {
+    if (!entries.length) return;
+    const list = el("ul");
+    for (const entry of entries) list.append(el("li", entry.tone || "", entry.text));
+    const section = el("section", "candidate-tooltip-section");
+    section.append(el("h4", "", label), list);
+    explain.append(section);
+    description.push(`${label}：${entries.map((entry) => entry.text).join("；")}`);
+  };
+
+  addTagSection("命中能力", matchedAbilities, "is-match");
+  addTagSection("未覆盖能力", missingAbilities, "is-missing");
+  addListSection(
+    "来源路径",
+    pathRationale.map((rationale) => ({ text: rationale })),
+  );
+  addListSection(
+    "硬条件",
+    hardMatches.map((hard) => {
+      const values = Array.isArray(hard.values) ? hard.values.join("/") : hard.values;
+      return {
+        text: `${hard.field || "?"}: ${values ?? "—"} ${hard.matched ? "✓ 满足" : "! 未满足"}`,
+        tone: hard.matched ? "" : "is-warning",
+      };
+    }),
+  );
+  if (showRawMatchExplanation) {
+    const raw = el("details", "candidate-tooltip-raw");
+    raw.append(el("summary", "", "raw matchExplanation"), el("pre", "", JSON.stringify(explanation, null, 2)));
+    explain.append(raw);
+  }
+
+  content.append(head, explain);
+  return { content, description: description.join("。") };
+}
+
 function renderCandidate(item, rank, { showRawMatchExplanation = false } = {}) {
   const li = el("li", "candidate");
   const docId = String(item.docId || "");
@@ -1981,50 +2216,24 @@ function renderCandidate(item, rank, { showRawMatchExplanation = false } = {}) {
   }
   if (signals.childElementCount) evidence.append(signals);
 
-  const details = el("details");
-  const summary = el("summary", "", "查看匹配依据与来源路径");
-  const explain = el("div", "explain");
-
-  if (item.summary) explain.append(el("p", "", item.summary));
-  if (matchedAbilities.length) {
-    const row = el("div", "explain-tags");
-    for (const ability of matchedAbilities) row.append(chip(ability));
-    explain.append(el("p", "", "命中能力"), row);
-  }
-  if (missingAbilities.length) {
-    const row = el("div", "explain-tags");
-    for (const ability of missingAbilities) row.append(chip(ability, "is-missing"));
-    explain.append(el("p", "", "未覆盖能力"), row);
-  }
-  if (pathRationale.length) {
-    const ul = el("ul");
-    for (const rationale of pathRationale) ul.append(el("li", "", rationale));
-    if (ul.childElementCount) explain.append(el("p", "", "来源路径"), ul);
-  }
-  if (hardMatches.length) {
-    const ul = el("ul");
-    for (const hard of hardMatches) {
-      const values = Array.isArray(hard.values) ? hard.values.join("/") : hard.values;
-      ul.append(
-        el(
-          "li",
-          hard.matched ? "" : "is-warning",
-          `${hard.field || "?"}: ${values ?? "—"} ${hard.matched ? "✓ 满足" : "! 未满足"}`,
-        ),
-      );
-    }
-    explain.append(el("p", "", "硬条件"), ul);
-  }
-  if (showRawMatchExplanation) {
-    const raw = el("details");
-    raw.append(el("summary", "", "raw matchExplanation"), el("pre", "", JSON.stringify(explanation, null, 2)));
-    explain.append(raw);
-  }
-
-  details.append(summary, explain);
   li.append(top);
   if (evidence.childElementCount) li.append(evidence);
-  li.append(details);
+  const tooltipDetail = buildCandidateTooltip(
+    item,
+    rank,
+    explanation,
+    { matchedAbilities, missingAbilities, hardMatches, pathRationale },
+    showRawMatchExplanation,
+  );
+  if (tooltipDetail) {
+    const description = el("span", "sr-only");
+    description.id = `candidate-evidence-${++candidateTooltipSequence}`;
+    description.textContent = tooltipDetail.description;
+    li.setAttribute("aria-describedby", description.id);
+    candidateTooltipContent.set(li, tooltipDetail.content);
+    li.append(description);
+    bindCandidateTooltip(li);
+  }
   return li;
 }
 

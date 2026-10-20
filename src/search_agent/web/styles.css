@@ -1642,22 +1642,14 @@ pre {
   color: var(--muted);
 }
 
-.candidate > details {
-  margin-top: 9px;
+.candidate.has-candidate-tooltip {
+  cursor: help;
 }
 
-.candidate > details > summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  width: fit-content;
-  color: var(--muted);
-  font-size: 10.5px;
-  line-height: 1.5;
-}
-
-.candidate > details > summary:hover {
-  color: var(--ink);
+.candidate.has-candidate-tooltip:focus-visible {
+  outline: 1px solid var(--accent-line);
+  outline-offset: -1px;
+  background: var(--surface-tint);
 }
 
 .explain {
@@ -1704,6 +1696,147 @@ pre {
 
 .explain pre {
   max-height: 180px;
+}
+
+.candidate-tooltip {
+  position: fixed;
+  z-index: 120;
+  width: min(380px, calc(100vw - 24px));
+  max-height: min(480px, calc(100vh - 24px));
+  max-height: min(480px, calc(100dvh - 24px));
+  padding: 14px 15px 15px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid #cfe2da;
+  border-radius: 10px;
+  background: rgba(252, 254, 253, 0.985);
+  box-shadow:
+    0 18px 52px rgba(17, 43, 35, 0.16),
+    0 2px 8px rgba(17, 43, 35, 0.07);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.62;
+  scrollbar-color: #b9cec6 transparent;
+  scrollbar-width: thin;
+  animation: candidate-tooltip-in 120ms ease-out both;
+}
+
+.candidate-tooltip[hidden] {
+  display: none;
+}
+
+.candidate-tooltip-head {
+  margin-bottom: 10px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.candidate-tooltip-title {
+  display: grid;
+  gap: 2px;
+}
+
+.candidate-tooltip-kicker {
+  color: var(--accent-strong);
+  font: 600 9.5px/1.45 var(--mono);
+  letter-spacing: 0.035em;
+}
+
+.candidate-tooltip-title strong {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.candidate-tooltip .explain {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 12px;
+  line-height: 1.62;
+}
+
+.candidate-tooltip .candidate-tooltip-summary {
+  margin: 0 0 11px;
+  color: #3f554e;
+  line-height: 1.68;
+}
+
+.candidate-tooltip-section {
+  margin-top: 11px;
+}
+
+.candidate-tooltip-section h4 {
+  margin: 0 0 5px;
+  color: var(--quiet);
+  font: 600 9.5px/1.4 var(--mono);
+  letter-spacing: 0.035em;
+}
+
+.candidate-tooltip-section .explain-tags {
+  margin: 0;
+}
+
+.candidate-tooltip-section ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.candidate-tooltip-section li {
+  margin: 3px 0;
+}
+
+.candidate-tooltip-section li::marker {
+  color: #78a696;
+}
+
+.candidate-tooltip-section li.is-warning {
+  color: var(--warning);
+}
+
+.candidate-tooltip .tag {
+  min-height: 23px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.candidate-tooltip .tag.is-match {
+  border-color: #b9dfd0;
+  background: #effaf5;
+  color: #0c6c53;
+  font-weight: 600;
+}
+
+.candidate-tooltip-raw {
+  margin-top: 12px;
+  padding-top: 9px;
+  border-top: 1px solid var(--rule-soft);
+}
+
+.candidate-tooltip-raw > summary {
+  color: var(--quiet);
+  font: 500 9.5px/1.4 var(--mono);
+}
+
+.candidate-tooltip-raw pre {
+  max-height: 150px;
+  margin-top: 8px;
+  overflow: auto;
+}
+
+@keyframes candidate-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .warn-line {
@@ -6065,27 +6198,6 @@ p {
   font-size: 10px;
 }
 
-.chat-candidates .candidate > details {
-  margin-top: 10px;
-}
-
-.chat-candidates .candidate > details > summary {
-  min-height: 32px;
-  align-items: center;
-  padding: 4px 0;
-  color: var(--muted);
-  font-size: 11.5px;
-  font-weight: 500;
-}
-
-.chat-candidates .explain {
-  margin-top: 11px;
-  padding: 13px 14px;
-  border: 1px solid var(--rule-soft);
-  border-radius: 8px;
-  background: #fbfdfc;
-}
-
 @media (min-width: 761px) {
   .chat-candidates .cand-evidence-fact + .cand-evidence-fact {
     padding-left: 18px;
@@ -6804,15 +6916,6 @@ p {
     min-height: 24px;
     padding-inline: 8px;
     font-size: 10.5px;
-  }
-
-  .chat-candidates .candidate > details {
-    margin-top: 8px;
-  }
-
-  .chat-candidates .candidate > details > summary {
-    min-height: 34px;
-    font-size: 11px;
   }
 
   .composer-zone {
