@@ -1878,7 +1878,7 @@ async function toggleCandidateExclusion(docId, button) {
   }
 }
 
-function renderCandidate(item, rank) {
+function renderCandidate(item, rank, { showRawMatchExplanation = false } = {}) {
   const li = el("li", "candidate");
   const docId = String(item.docId || "");
   const excluded = state.excludedCandidateIds.has(docId);
@@ -1999,9 +1999,11 @@ function renderCandidate(item, rank) {
     }
     explain.append(el("p", "", "硬条件"), ul);
   }
-  const raw = el("details");
-  raw.append(el("summary", "", "raw matchExplanation"), el("pre", "", JSON.stringify(explanation, null, 2)));
-  explain.append(raw);
+  if (showRawMatchExplanation) {
+    const raw = el("details");
+    raw.append(el("summary", "", "raw matchExplanation"), el("pre", "", JSON.stringify(explanation, null, 2)));
+    explain.append(raw);
+  }
 
   details.append(summary, explain);
   li.append(top);
@@ -2037,7 +2039,9 @@ function updatePager(page) {
 
 function renderCandidateList(items, offset = 0) {
   results.replaceChildren();
-  items.forEach((item, index) => results.append(renderCandidate(item, offset + index + 1)));
+  items.forEach((item, index) => {
+    results.append(renderCandidate(item, offset + index + 1, { showRawMatchExplanation: true }));
+  });
 }
 
 function hideConsoleDelivery() {
