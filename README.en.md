@@ -4,7 +4,7 @@
 
 **Turn talent search from a one-shot query into a budget-aware search-policy loop.**
 
-Deterministic direct search · Adaptive reflection for harder requests · Evidence-grounded judgment · End-to-end observability
+Controlled direct search · Adaptive reflection for harder requests · Evidence-grounded judgment · End-to-end observability
 
 [简体中文](README.md) · [English](README.en.md)
 
@@ -18,7 +18,7 @@ Deterministic direct search · Adaptive reflection for harder requests · Eviden
 
 </div>
 
-> A reference agent for talent search: structured requests use deterministic retrieval, clear requests use a lightweight agent, and complex requests enter multi-path planning, judgment, and reflective revision. It runs without API keys and also supports real LLMs, Hybrid V2, and Elasticsearch 8.
+> An adaptive Search Agent for talent search: explicit constraints are first parsed into retrieval IR by Hybrid V2 and then executed through a controlled direct-search path; requests that need capability judgment use a lightweight agent; complex requests add multi-path planning, evidence-grounded judgment, and reflective revision inside a budget-governed loop. The project includes a zero-API-key demo and supports real LLMs and Elasticsearch 8.
 
 [Quick start](#quick-start) · [Execution model](#execution-model) · [Evaluation](#evaluation-snapshot) · [Core design](#core-design) · [Documentation](#documentation)
 
@@ -40,7 +40,7 @@ Search Agent Harness adds a controlled policy loop on top of deterministic retri
 
 - **Adaptive execution**: structured requests use a 3-stage direct path; clear requests use a 5-stage lightweight agent; complex requests may use the 8-stage reflective loop.
 - **Evidence first**: the judge consumes candidate facts returned by the search tool; cards expose matched abilities, gaps, hard constraints, and source paths.
-- **Governed loop**: explicit state machine, iteration/path/LLM/wall-clock budgets, signature deduplication, and stage-level degradation.
+- **Governed loop**: explicit state machine, iteration/path/LLM/token/wall-clock budgets, signature deduplication, and stage-level degradation.
 - **Observable and conversational**: SSE stage events, actual executed stages, raw trace, L1 recent context, L2 conversation archive, and L3 candidate exclusion.
 - **Pluggable and reproducible**: in-memory, SQLite/FTS5, Elasticsearch, and Hybrid V2 share one contract; 484 tests and a zero-key demo run locally.
 
@@ -136,7 +136,7 @@ The default view is a conversational agent workspace: recent conversations on th
 
 ## Evaluation snapshot
 
-All public numbers below come from reproducible synthetic benchmarks. They are engineering measurements, not production SLAs, recruiting accuracy claims, or company data.
+Public evaluation uses synthetic candidates, fixed datasets, and explicit experiment configurations; no real company resumes are used. Scripted offline experiments are deterministic to rerun, while real-LLM experiments vary with model version, serving implementation, and generation randomness. The numbers are only engineering measurements of mechanism and cost/quality trade-offs, not production-environment claims.
 
 | Benchmark | Single pass | Full agent loop | Cost |
 |---|---:|---:|---:|
@@ -157,7 +157,7 @@ Full tables, confidence intervals, per-query failure analysis, and reproduction 
 ## Core design
 
 - **Adaptive harness**: stages are pure functions behind an explicit loop; an optional LangGraph runner compiles the same stages without changing behavior.
-- **Budgets and degradation**: the state machine governs iterations, paths, LLM calls, and wall-clock time; stage failures either degrade or terminate with an explainable reason.
+- **Budgets and degradation**: the state machine governs five resource classes—iterations, search paths, LLM calls, tokens, and wall-clock time—and handles covered stage failures through degradation or an explainable termination.
 - **Conversation tiers**: L1 injects recent structured context, L2 persists the complete conversation, and L3 records viewed or explicitly excluded candidates.
 - **Retrieval boundary**: implement the two methods below to connect your own search system without changing Agent stages.
 
