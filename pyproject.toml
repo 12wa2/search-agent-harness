@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "search-agent-harness"
 version = "0.1.0"
-description = "An eight-stage reflective retrieval agent for talent search: intent IR, budget-governed reasoning loop, degradation matrix, and an offline zero-key demo."
+description = "An adaptive 3/5/8-stage search agent for talent search: intent IR, budget-governed reflective loop, degradation matrix, and an offline zero-key demo."
 authors = [{ name = "12wa2", email = "12wa2@users.noreply.github.com" }]
 readme = "README.md"
 requires-python = ">=3.12"

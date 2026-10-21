@@ -189,6 +189,10 @@
   与 BM25 按 RRF 融合（`search_semantic` / `hybrid_search`，示例 `examples/es_hybrid_recall.py`）；
   新增 5 个离线向量测试与 5 个 ES 集成用例。
 
+### Changed
+
+- **README 重构为项目首页**（`README.md`、`README.en.md`、`docs/EVALUATION.md`）：将原 800 余行的说明文档收敛为问题背景、执行模型、快速开始、能力边界、实测摘要、接口与文档导航；新增独立英文入口与评测详情页，刷新 Agent 体验、执行观测和交付截图，并同步测试徽章、阶段口径与合成数据边界。
+
 ### Fixed
 
 - **Judge 输入与简单查询延迟**（`harness.py`、`llm/prompts/__init__.py`）：`single_pass` 路由把

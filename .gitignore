@@ -24,6 +24,7 @@ htmlcov/
 .env
 gateway.local.json
 logs/
+.tmp-*
 
 # Editors / OS
 .idea/

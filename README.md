@@ -1,625 +1,203 @@
-# search-agent-harness
+<div align="center">
 
-**把「一次检索」升级为「会反思、会自我修正、有预算纪律」的检索 Agent。**
+# Search Agent Harness
 
-> 一个可嵌入的自适应检索 Agent Harness（明确结构化查询走 Hybrid V2 parser + 3 阶段直连搜索，其余明确招聘需求走 5 阶段轻量 Agent，复杂查询走完整 8 阶段反思；以人才搜索为端到端示例场景）。
-> 纯 Python，唯一运行时依赖是 pydantic；自带离线演示，不需要任何 API Key。
+**把人才搜索从“一次查询”升级为“有预算的搜索策略循环”**
+
+明确条件直连 · 复杂需求自适应反思 · 证据驱动判断 · 全链路可观测
+
+[简体中文](README.md) · [English](README.en.md)
 
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
-![pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-475-brightgreen)
-![Lint](https://img.shields.io/badge/lint-ruff%20clean-261230)
+![Pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
+![Tests](https://img.shields.io/badge/tests-484-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![version](https://img.shields.io/badge/version-v0.1.0-blue)
+![Version](https://img.shields.io/badge/version-v0.1.0-blue)
 
-![Search Agent — conversational candidate search](docs/console.png)
+<img src="docs/console.png" alt="Search Agent 对话式人才搜索界面" width="100%">
 
-> 内置 Web 体验（零构建，FastAPI 直接托管）：`search-agent serve --offline` → <http://127.0.0.1:8000>。
-> 默认是 **Agent 体验**：左侧保留“新建检索 / 最近会话 / 检索原则”，主区像和招聘助手对话一样提交复杂需求，
-> 实时看到条件解析、搜索路径、能力覆盖检查、反思改写和内联候选人卡片；技术细节收进可展开的执行详情。
-> 顶部可切到 **执行观测**，保留原三栏控制台，专门查看实际执行阶段（3、5 或 8 阶段）、路径、指标和原始 Trace。
-> 两种模式共享同一条 SSE 运行，切换视图不会重新搜索；当前视图会同步到 `?view=agent|console`，刷新后保持。
-> 会话续接、停止语义和结果分页均保留。
+</div>
 
-<details>
-<summary>查看一次完整搜索的对话交付</summary>
+> 一个面向人才搜索场景的参考实现：明确条件直接走检索 IR；需要判断时走轻量 Agent；复杂需求才进入多路径规划和反思修订。项目自带零 Key 离线演示，同时支持真实 LLM、Hybrid V2 和 Elasticsearch 8。
 
-![Search Agent — completed run with criteria, live progress and inline candidates](docs/console-run.png)
+[快速开始](#快速开始) · [工作方式](#工作方式) · [实测结果](#实测结果) · [接入检索后端](#接入自己的检索后端) · [文档导航](#文档导航)
 
-</details>
+---
 
-### 本地查看 Web 体验
+## 它解决什么问题
 
-目前**没有托管公网在线 Demo**；仓库提供的是可一键复现的本地演示，默认模式使用脚本化 LLM
-和 16 个虚构候选人，**不需要任何 API Key**：
+招聘搜索的难点通常不是“ES 会不会排序”，而是另一层决策：
 
-```bash
-pip install -e ".[api]"
-search-agent serve --offline
-# 浏览器打开 http://127.0.0.1:8000
-```
+- 自然语言里的岗位、能力、年限和排除项，应该怎样变成可执行检索条件？
+- 一条路径召回不够时，应该放宽条件、换来源，还是承认当前结果已经足够？
+- 模型判断的是简历里真实存在的证据，还是只被关键词相似度误导？
+- 多轮对话里，哪些条件应该继承，哪些候选人已经被招聘者明确排除？
+- 反思能带来多少效果，代价是多少 token、延迟和降级风险？
 
-“Agent 体验”和“执行观测”只改变展示方式，不会重跑 Agent。页面上的“停止”会断开 SSE 连接并通知后端取消：后端会在当前阶段结束后、下一次 LLM 调用前
-或进入下一阶段检索前停止后续工作。已经在途的模型请求不会被强杀，因此界面文案使用“已请求停止”，不宣称立即终止。
+Search Agent Harness 在确定性检索之上增加一层受控的搜索策略循环。LLM 只负责理解、规划、判断和反思；状态流转、预算、签名防重、终止条件和降级由工程层控制。底层检索通过 `SearchTool` 协议接入，不需要重写 Agent。
 
-### 有边界的请求路由
+这个仓库不是通用聊天机器人，也不是“让模型自由搜索”的演示外壳。它更关注三件事：**什么时候该深入搜索、怎样证明结果够用、每一步为什么这样走**。
 
-两种 Web 视图和两个 `/search/stream` 入口会先经过确定性的 `IntentRouter`，再决定是否启动 Agent：
+## 核心能力
 
-| 输入类型 | 路由 | 行为 | LLM / 检索 |
-|---|---|---|---|
-| “你好” / “Hello” | `GREETING` | 返回能力介绍与示例需求 | 0 次 |
-| “你是谁” / “介绍一下你自己” | `IDENTITY` | 返回身份定位、能力范围与输入建议，不承接招聘上下文 | 0 次 |
-| “你能做什么？” / “怎么使用？” | `HELP` | 返回能力边界与输入建议 | 0 次 |
-| 写诗 / 翻译 / 推荐书影音 / 天气 / 通用知识 | `OUT_OF_SCOPE` | 说明只处理招聘搜索，不伪造成 Agent 结果 | 0 次 |
-| 招聘需求，或无法确定 | `SEARCH` | 先尝试 3 阶段直连搜索；未命中时进入自适应 Agent：轻量查询 5 阶段，完整反思最多 8 阶段 | 直连 0 次 Agent LLM、≥1 次 V2 parser LLM；Agent 路由按预算执行 |
+| 能力 | 实现 |
+|---|---|
+| 自适应执行 | 结构化 `3` 阶段直连；明确需求 `5` 阶段轻量 Agent；复杂需求最多 `8` 阶段反思 |
+| 受控循环 | 显式状态机、单次请求预算、迭代上限、路径上限、墙钟与 token 记账 |
+| 证据优先 | Judge 读取工具返回的候选人事实；候选人卡展示命中能力、缺口、硬条件和来源路径 |
+| 可观测性 | SSE 阶段事件、实际执行阶段、SearchTool 调用、运行指标和原始 Trace |
+| 多轮会话 | L1 最近上下文、L2 会话归档、L3 候选人排除；Redis 可选，未配置时进程内降级 |
+| 可插拔检索 | 内存、SQLite/FTS5、Elasticsearch 简版、独立 Hybrid V2 四个后端共用同一契约 |
+| 容错与取消 | 阶段级降级、LLM 重试、主备网关；客户端断开后在阶段边界协作取消 |
+| 零 Key 演示 | 脚本化 LLM + 16 个虚构候选人；不连接模型和 Elasticsearch 也能跑完整 UI |
 
-设计上刻意保守：只有**明确**的问候、身份询问、帮助问题和无关任务会在 Harness 之前被拦下；其余输入默认交给
-Agent，避免把不常见但真实的招聘表达误判成聊天。路由是规则匹配，不调用 LLM，也不读取或写入
-多轮会话记忆——这是路由的能力边界，不是通用聊天机器人。
-
-“推荐”单独出现时仍视为模糊搜索信号；只有出现书籍、歌曲、电影等明确对象时才判为范围外。
-因此“推荐一本书”与“推荐算法工程师”不会互相误判。
-
-行业词本身不是拒绝依据：只要有招聘或搜索动作，路由就默认交给 Agent；因此
-“招聘音乐制作人”“找电影剪辑师”这类不在常见岗位词表中的需求不会被行业词误伤。
-
-确定为招聘搜索后，Service 会先做一次保守的直连判断：技能、岗位、年限、城市等字段足够明确，
-且没有“最好 / 优先 / 可迁移 / 重点考察”等开放式信号时，进入完整 Hybrid V2 简单搜索链路：
+## 工作方式
 
 ```text
-query -> hybrid_v2.parser LLM -> CandidateSearchIR -> SearchTool
-      -> normalize / compile / BM25 + kNN / rerank -> topK
+自然语言输入
+     │
+     ▼
+IntentRouter ─── 问候 / 身份 / 帮助 / 明确无关任务 ───> reply
+     │ SEARCH
+     ▼
+难度判断
+     ├── 结构化条件 ──> Hybrid V2 parser -> CandidateSearchIR -> SearchTool
+     │                   direct_search -> execute -> finalize
+     │
+     ├── 清晰需求 ────> understand -> execute -> judge -> evaluate -> finalize
+     │
+     └── 复杂需求 ────> understand -> plan -> execute -> judge -> evaluate
+                        -> reflect -> revise -> finalize
+
+每次执行：预算检查 · 签名防重 · 阶段级降级 · 可取消边界 · 全程 Trace
 ```
 
-这条链路对应 `direct_search → execute → finalize` 三帧 SSE，不产生
-`understand / plan / judge / reflect`。例如“帮我找会 Python 的”和“寻找有 3 年经验的 Python
-工程师”。在线模式使用当前运行时网关解析；快速演示使用同一 IR 契约的脚本化 parser。
+三条搜索路径共享同一套模型、工具、预算和可观测层，只是按需求复杂度启用不同阶段。
 
-指标必须分开看：直连链路的 **Agent LLM 调用为 0**，但 **V2 parser LLM 通常为 1 次**
-（parser 语义重试时最多 2 次）；Token、耗时和 `llmRetries` 会在
-`agentMetrics.meta.parserLlmCalls` / `promptTokens` / `completionTokens` 中单独记录。若启用
-Hybrid V2 的 LLM reranker，其成本仍属于工具侧，不等于 Agent 编排成本。parser 不可用时会显式降级为
-`irSource=local_rules_fallback`，并把 `hybrid_v2_parse_failed` 写入 trace，而不是伪装成完整解析。
-
-无法安全直连的招聘需求再进入 Agent，并做第二次难度路由：明确查询走
-`understand → execute → judge → evaluate → finalize` 的轻量链路；开放式偏好（如“最好/优先/加分”）、
-抽象能力或需要多路径探索的查询，才进入带 `plan / reflect / revise` 的反思链路。
-
-执行路径统一定义如下：
-
-| 路由 | 实际阶段 | 使用场景 |
+| 路径 | 实际阶段 | 适合什么请求 |
 |---|---|---|
-| 直连搜索 | `direct_search → execute → finalize` | 结构化条件明确，可以安全地直接生成 IR |
-| 轻量 Agent | `understand → execute → judge → evaluate → finalize` | 需求清晰，仍需判断与覆盖检查 |
-| 完整反思 Agent | `understand → plan → execute → judge → evaluate → reflect → revise → finalize` | 开放式偏好、抽象能力、跨岗位发现等复杂需求 |
+| 直连搜索 | `direct_search → execute → finalize` | 技能、岗位、年限、城市等结构化条件明确 |
+| 轻量 Agent | `understand → execute → judge → evaluate → finalize` | 需求清楚，但仍需能力判断与覆盖检查 |
+| 完整反思 | `understand → plan → execute → judge → evaluate → reflect → revise → finalize` | 开放式偏好、抽象能力、可迁移经验或需要多路径探索 |
 
-阶段数量以 SSE 实际事件为准。完整反思链路最多规划 8 个阶段；若执行中提前收敛，未触发的阶段会标记为
-跳过，不会因为前端展示了完整导航就记为已完成。
+直连路径不运行 Agent 的理解、规划、判断与反思阶段，Agent 编排 LLM 调用为 `0`；Hybrid V2 parser 仍通常调用 `1` 次模型，失败时回退到本地规则。
 
-SSE 的 `reply` 是终止帧，也是唯一一帧：不会出现 `stage`、`result`、`metrics` 或 `trace`。
-`POST /search` 仍保持纯搜索契约，假定调用方传入的就是招聘需求。
+## 快速开始
 
-### 模糊需求与结果解释
+### 零 Key 体验
 
-首轮输入只有裸技能、且没有搜索动作时（例如“懂 Java”或“熟悉 Spark”），服务会先返回「后端开发 /
-机器学习与 AI / 数据工程」三个可点击方向，并在 `understand` 事件中标记
-`needsClarification=true`；确认前不会启动 `plan → execute`，也不展示空的候选人名单。像“找会 Python
-的”这种已经可执行的请求会直接进入轻量检索，不再先追问岗位方向。已有会话历史时不会重复打断，
-后续追问仍交给正常 Agent 链路处理。
-
-对话结果把执行过程压缩成“当前阶段 + 实际执行阶段数 + 事件数”，完整阶段和 Trace 默认折叠；候选人卡同时
-展示命中能力、未覆盖能力、硬条件状态与来源路径。交付区明确列出目标人数、实际交付、人数缺口和
-`finalizeReason`，并用真实的 `evaluate → reflect → revise` 事件解释本轮为何继续搜索或在这里结束，
-不补写模型没有产生的推理。简单直连返回的是 Hybrid V2 单次检索后的重排分；复杂链路最终顺序优先
-考虑 judge 的能力覆盖与硬条件结果，检索/重排分只作为次级依据。两条链路的分数量纲不同，不能跨请求
-横向比较。排序分只表示同一结果集内的相对顺序，不代表概率或匹配率。
-
-## 这是什么
-
-传统检索是「一问一答」：解析 → 搜索 → 排序 → 返回。这个项目把它变成一个**推理循环**：
-
-```text
-understand → plan → execute → judge → evaluate → reflect → revise → finalize
-     ↑                                                                  │
-     └──────────── 反思循环（有预算、可降级、防重复）─────────────────────┘
-```
-
-在循环里，Agent 会：
-
-- 把自然语言查询拆成 岗位画像 + 人才画像 + 难度评估（不是拿裸 query 直搜）
-- 规划多条**不同召回意图**的搜索路径（硬条件精准匹配 / 语义拓宽 / 来源假设 …）
-- 用工具返回的事实（而非模型想象）对候选人做能力级判断
-- 每轮反思「缺什么」，修订路径再搜，直到达标或预算耗尽
-- 全程可降级：任何一步失败都不会让整个请求崩掉
-- 客户端断开后可协作取消：在阶段边界和下一次 LLM 调用前停止，未完成结果不会冒充最终结果
-
-## 设计动机（这个项目从哪来）
-
-起点是一个很具体的现象：招聘 JD 写的是抽象能力（比如「高并发系统设计能力」），简历写的是具体项目（订单系统、支付系统、分布式架构）——同一种能力可能来自完全不同的岗位、行业或产品线；反过来，岗位名称不同，经验却是可迁移的。纯关键词检索在这种情况下天然会漏人。
-
-我起初在做这条链路的上游：把自然语言解析成检索 IR（NL2IR）。解析准确率提上去之后，天花板反而更清楚了：**解析得再准，也只是把一句话翻译成一个查询。**整条链路（自然语言 → IR → ES 召回 → LLM 重排 → 返回）是一次性的——首轮条件过严或者搜索方向选错，系统不会根据结果主动修正，也没有任何一个环节回答「召回到的这些人够不够、有没有覆盖岗位的必备能力」。所以缺的不是检索能力，ES 本身已经很强；缺的是**搜索策略的决策能力**——是「搜什么、从哪搜、够不够、要不要换」这一层。
-
-再看真人猎头是怎么干活的：他不会只敲一次关键词，而是先想「什么样的人可能具备这种能力」，然后从公司、行业、岗位、项目几个不同来源分别去找，看完结果再判断要不要换方向。这层决策恰好是 LLM 擅长的，但它又不能失控——招聘搜索对成本和延迟有要求，不能让它无限反思。
-
-所以我的做法不是「把搜索换成 Agent」，而是在确定性的混合检索之上加一层**受控的推理闭环**：用显式状态机编排八个阶段，LLM 只负责岗位理解、路径规划、能力判断和反思；工程层负责状态流转、预算控制、签名防重和终止条件；底层的 IR 编译、ES 召回、重排全部通过 `SearchTool` 协议复用原有能力，不重写执行层。
-
-一句话总结：原来的系统解决的是「一次查询怎么执行」，我解决的是「这次搜索策略对不对」。
-
-### 为什么把检索层也一起放进仓库
-
-Agent 只负责「理解 → 规划 → 执行 → 判断 → 反思 → 修订」这层编排，真正决定一次搜索能不能找到人的，是下面的检索执行层。因此仓库不只保留 `SearchTool` 接口，还把可独立运行的 **Hybrid V2** 引擎一并开源：IR 编译、硬条件过滤、BM25 + kNN 混合召回、可解释的硬匹配事实和受控重排都在 `src/search_agent/hybrid_v2/` 中。
-
-它连接**使用者自己提供的 Elasticsearch 8**，地址、索引、认证、字段名、embedding、标签字典和重排模型全部由环境变量决定；默认使用确定性本地向量与本地重排，零 API key 也能跑。仓库不包含任何主机、凭据或真实简历，公开演示数据仍全部是虚构候选人。详细接法见 `docs/HYBRID_V2.md`。
-
-因此，「换引擎不改 Agent 代码」不只靠接口声明，而是有四条可运行路径来证明：内存 / SQLite / Elasticsearch 简版 / Hybrid V2，复用同一个 `SearchTool` 契约。
-
-## 30 秒上手
+要求 Python 3.12+。
 
 ```bash
 git clone https://github.com/12wa2/search-agent-harness.git
 cd search-agent-harness
-pip install -e ".[dev]"
+python -m venv .venv
 
-search-agent demo        # 离线演示：脚本化 LLM + 16 个合成候选人，零 API key
-search-agent eval        # 离线评测：单趟基线 vs Agent 全循环（确定性、可复现）
-search-agent serve --offline   # 快速演示：脚本 LLM + 16 人内存库 → http://127.0.0.1:8000
-```
+# Windows
+.venv\Scripts\activate
 
-接入真实 LLM（任何 OpenAI 兼容端点：OpenAI / Qwen / DeepSeek / vLLM …）：
+# macOS / Linux
+source .venv/bin/activate
 
-```bash
-pip install -e ".[openai]"
-export SEARCH_AGENT_API_KEY=sk-...                       # Windows: $env:SEARCH_AGENT_API_KEY="sk-..."
-export SEARCH_AGENT_BASE_URL=https://api.openai.com/v1   # 可选
-search-agent search "招聘推荐算法工程师，要求 5 年以上，有召回排序经验"
-```
-
-使用 Qwen 等默认开启思考的模型时，建议关闭隐藏推理并放宽墙钟预算：
-
-```powershell
-$env:SEARCH_AGENT_DISABLE_THINKING = "1"
-$env:SEARCH_AGENT_TIME_BUDGET_SEC = "180"
-```
-
-## 运行效果
-
-`search-agent demo` 的实测输出（本机离线运行、纯 CPU、单进程）：
-
-```text
-查询 1: 找有 3 年以上经验、做过高并发系统的后端工程师，最好来自大厂
-  [1/8 understand] 岗位=后端工程师  必须能力=['高并发系统设计', '服务端开发']  硬条件=1 条
-  [2/8 plan] 生成 2 条搜索路径 → p1: 硬条件精准匹配 | p2: 放宽硬条件的语义拓宽路径
-  [3/8 execute] 并行执行 2 条路径，召回 30 人次（p1:rich, p2:rich）
-  [4/8 judge] 能力级判断完成，累计合格候选人 12
-  [5/8 evaluate] → reflect
-  [6/8 reflect] 共性=['普遍命中：服务端开发', '普遍命中：高并发系统设计']  缺口=['高并发系统设计']  新增软信号=2
-  [7/8 revise] 画像软信号=6  收敛=False  迭代=1
-  [8/8 finalize] 最终 10 人（收敛再搜 14 人次）
-
-  共 10 人，展示前 10 人：
-   #  姓名       年限     分数  命中能力                           来源
-  ------------------------------------------------------------------------------
-   1  赵敏        4   3.01  高并发系统设计、服务端开发         硬条件精准匹配
-   2  李娜      6.5   2.75  高并发系统设计、服务端开发         硬条件精准匹配
-   3  张伟        8   2.59  高并发系统设计、服务端开发         硬条件精准匹配
-   ...
-  运行指标: LLM 调用 6 次 · 迭代 1 轮 · 召回完成度 0.65（13/20） · 降级=无
-  用时 91 ms
-```
-
-（演示数据为 16 个虚构候选人；真实模式下同一循环直接对接你自己的检索后端。）
-
-## 评测：单趟基线 vs 全循环
-
-仓库内置两套**离线确定性**评测（脚本化 LLM + 合成语料，零 API key）：
-
-**口径 ①：成本 / 判定池对比**（16 个演示候选人 · 3 个查询）——循环多花多少钱、把候选池铺多宽：
-
-| 指标（3 个查询合计） | 单趟基线 | Agent 全循环 | 变化 |
-|---|---|---|---|
-| 判定候选（进入 judge 的池子） | 30 人 | 48 人 | +18（+60%） |
-| 平均召回完成度（池/目标） | 0.50 | 0.80 | +0.30 |
-| LLM 调用次数 | 6 次 | 15 次 | ×2.5 |
-| token 消耗 | ≈12.5k | ≈35.1k | ×2.8 |
-| 累计耗时 | 6.5 ms | 13.2 ms | ×2.0 |
-
-> 「判定候选」是**池子规模**不是质量：全循环的语义放宽路径会把候选池铺得更宽，judge 自然判得更多。
-> 列表质量请看下面的 oracle 口径与消融表——这里只回答「多花了多少钱」。
-
-**口径 ②：Oracle 基准**（真值来自生成器，不靠 Agent 自评）——把当前实现的**天花板**量出来：
-
-```bash
-search-agent eval --generated 120 --seed 7 --markdown   # 种子化合成语料 + oracle 真值
-```
-
-120 条合成候选人里，每条简历按能力逐个掷骰：一部分人用技能关键词表达能力，
-另一部分人**只用项目语言**表达（「订单交易链路 / 洪峰压测」而不写「高并发」）。
-生成器保证「仅语义可见」的人至少缺一项所需能力的证据词，但实现里的词法打分是更粗的
-bigram 命中，技能名 / 岗位词里的共享语素（「服务」「开发」「系统」）仍会漏进一部分人——
-所以这是一个被部分打穿的盲区、而不是 0 分神话；下表把它量成了具体数字：
-
-| 指标（6 个查询 · micro） | 单趟基线 | Agent 全循环 |
-|---|---|---|
-| 池召回（探索层：看到过） | 0.70 | 0.76 |
-| 召回（交付 top-10：交付到手） | 0.32 | 0.30 |
-| 精确率（交付列表） | 0.35 | 0.33 |
-| 关键词可见召回 | 0.19 | 0.12 |
-| 仅语义可见召回 | 0.36 | 0.36 |
-| 仅全循环发现 | — | 平均每条查询多发现 9.0 人，其中合格 0.7 人（7.4%） |
-
-> **怎么读「池召回 → 交付召回」的落差**：池召回衡量探索层——全循环把它从 0.70 抬到 0.76
-> （Q4 最典型：0.60 → 1.00，多捞进 4 个合格人），说明循环确实在扩大探索；但交付 top-10
-> 反而 0.32 → 0.30——新捞到的人排不进前 10。把交付深度放到 `--top-k 30`，全循环交付召回
-> 升到 0.62（同深度基线 0.67，全循环仍略低），说明损失发生在**打分与排序**：最终重排是
-> 粗粒度的词法命中（每个能力只记 0/1、并列按 docId 排序），分不出「证据充分」与「偶然
-> 共享语素」。三张表一起看：口径 ① 给成本；口径 ② 给「探索有货、排序丢货」；消融表把账
-> 算到机制头上。要修的是打分，而不是继续堆路径数——`dense_vector` + RRF 通道已就位，
-> 换掉 `tools/embedding.py` 的 `embed_text` 即可。
-
-> **实验设计（为什么基线是单趟 Agent，而不是传统关键词检索）**：基线是同一条 Agent 链路去掉
-> reflect + revise 的单趟版本（understand → plan → execute → judge），唯一变量就是反思闭环，
-> 收益因此可以归因到具体模块；若直接对比「Agent vs 传统检索」，query 理解 / 多路径 / 语义检索 /
-> 反思的贡献会混在一起，效果差异说不清来自哪里。指标定义与「仅全循环发现」一致：
-> `A_only = A − B`（A = 全循环、B = 单趟基线），新增相关候选 = `|A_only ∩ R|`，
-> 独有候选相关率 = `|A_only ∩ R| / |A_only|`（R = 标注相关集）。
-
-### 消融：每个机制值多少钱
-
-```bash
-search-agent eval --generated 120 --seed 7 --ablate                                   # 六行对照表
-search-agent eval --generated 120 --seed 7 --ablate --baseline docs/eval_baseline.json # CI 门禁
-```
-
-同一语料、同一 seed，每行只关掉一个结构开关（`core/ablation.py`；消融默认把目标合格数抬到语料规模，
-强制循环真的迭代——否则首轮就达标，关掉 reflect 也看不出差别）：
-
-| 配置 | 池召回（探索层） | 召回（交付 top-10） | 精确率 | 关键词可见 | 仅语义可见 | 仅该行发现（合格） | LLM 调用 | tokens |
-|---|---|---|---|---|---|---|---|---|
-| 完整八阶段循环 | 0.76 | 0.41 | 0.45 | 0.31 | 0.44 | 54 人（4 合格） | 29 | ~109.5k |
-| 去掉收敛再搜 | 0.76 | 0.30（-0.11） | 0.33 | 0.12 | 0.36 | 54 人（4 合格） | 29 | ~109.5k |
-| 去掉签名防重 | 0.76 | 0.41（+0.00） | 0.45 | 0.31 | 0.44 | 54 人（4 合格） | 30 | ~117.1k |
-| 只跑一轮（无 reflect / revise） | 0.76 | 0.30（-0.11） | 0.33 | 0.12 | 0.36 | 54 人（4 合格） | 23 | ~95.9k |
-| 每轮只规划 1 条路径（无多路径） | 0.70 | 0.42（+0.02） | 0.47 | 0.31 | 0.46 | — | 24 | ~69.9k |
-| 单趟基线 | 0.70 | 0.32（-0.09） | 0.35 | 0.19 | 0.36 | — | 12 | ~49.7k |
-
-怎么读这张表（结论不全是好消息——这才是它存在的意义）：
-
-- **探索层和交付层分开读**：池召回 = 循环有没有把对的人带进池子；召回 = 有没有把他们排进
-  交付 top-10。两列一起看，才能把「没找到人」和「找到了但没排上来」分开。
-- **多路径买的是探索宽度**：关掉多路径，池召回 0.76 → 0.70（少看到 6% 的合格人），交付反而
-  略高（0.42 vs 0.41）、成本减半（~70k vs ~110k）——多看到的这批人受限于词法打分排不上来。
-  收益要等真实 embedding（语义路径才有差异化召回），这条直接写进 Roadmap。
-- **反思 + 收敛再搜买的是交付**：关掉任意一个，池召回不变（0.76，人都看过），交付从 0.41
-  掉到 0.30——机制的价值在「把池子里的人推到前 10」，不在扩大探索。
-- **签名防重是廉价保险**：关掉后指标不变，但多 1 次 LLM、+7% tokens——它买的是「别重复做同一件事」。
-- **可复现**：`docs/eval_baseline.json` 是门禁基线，CI 的 `eval-gate` 作业每次 push 比对——池召回 /
-  召回 / 精确率掉超 0.02、成本涨超 10%、或多出一次降级，流水线直接变红。
-
-> 数字来自本机离线运行，毫秒级会有抖动；重新生成：`search-agent eval --markdown`、
-> `search-agent eval --generated 120 --seed 7 --markdown`（`--oracle DIR` 可读入
-> `search-agent corpus --out DIR` 落盘的固定语料）。目的不是刷分，而是展示
-> **效果与成本的定量权衡**与**可回归、去自证的评测入口**。
-
-### 真实模型 + Hybrid V2 的 A/B 复核（100 人合成基准）
-
-离线消融验证机制是否按设计工作；真实模型实验验证换到 Hybrid V2 + 真实 LLM 后结论是否还成立。
-`examples/real_ab_experiment.py` 固定同一 Qwen 网关、Elasticsearch 索引、`top-k=5` 和同一标注集：
-基线为 `understand → 单路径 → judge → finalize`，Agent 为完整反思循环；两条链路共享模型、检索工具、
-语料和 top-k，唯一结构变量是 `reflect + revise`。
-
-正式复核使用索引 `search-agent-hybrid-v2-bench100`、`qwen3.8-flash`（网关别名
-`search-agent-primary`）、100 个种子化虚构候选人、10 条复杂 query 和 `synthetic_oracle` 标签。
-单次观测结果如下：
-
-| 指标 | 单趟基线 | Agent 反思循环 | 变化 |
-|---|---:|---:|---:|
-| 平均 recall@5 | 0.392 | 0.473 | +0.081（bootstrap 95% CI -0.031 ~ +0.201） |
-| 平均池召回 | 0.735 | 0.937 | +0.202（CI +0.065 ~ +0.351） |
-| 平均 precision@5 | 0.740 | 0.840 | +0.100 |
-| 新增相关候选 | — | 17 人（1.7/query） | — |
-| 新增候选相关率 | — | 0.708 | — |
-| LLM 调用 | 20 | 59 | ×3.0 |
-| tokens | 148,428 | 446,704 | ×3.0 |
-| p50 延迟 | 50.7 s | 139.9 s | ×2.8 |
-| 降级次数 | 0 | 2 | — |
-
-结论要分两层读。**探索层**的变化更明确：池召回从 0.735 升到 0.937，bootstrap 区间不跨 0，
-说明多路径规划与反思确实扩大了有效候选的覆盖面。**交付层**的平均 recall@5 也上升，但这 10 条 query
-的配对区间跨 0，不能据此宣称稳定的统计显著提升；precision@5 从 0.740 升到 0.840，说明新增候选
-并非单纯扩大噪声。与此同时，Agent 在 `microservice_backend` 上出现回退，并在 2 条 query 触发
-`budget_exceeded`，成本约为主模型的 3 倍。下一轮应优先优化 judge / rerank、收敛搜索和预算分配，
-而不是继续盲目增加反思轮数。
-
-> 这是 100 个虚构候选人、10 条 query 的**单次 `synthetic_oracle` 实验**，不是人工标注基准或统计
-> 显著性结论，也不能与简历中公司真实简历库的 13.4 个新增相关 / 79.8% 混用；后者不可公开复现。
-> 完整逐条结果与环境见 [`docs/real_llm_ab_results_100.md`](docs/real_llm_ab_results_100.md)，
-> 标注 query 见 [`examples/real_ab_queries_100.json`](examples/real_ab_queries_100.json)，
-> 语料与重建/索引说明见 [`examples/bench100/README.md`](examples/bench100/README.md)。
-
-复现入口：
-
-```powershell
-.\.venv\Scripts\python.exe examples\real_ab_experiment.py `
-  --benchmark examples\real_ab_queries_100.json --top-k 5 --workers 4
-```
-
-## 策略记忆：跨请求复用「哪一类策略有效」
-
-循环解决「这一次怎么搜」，策略记忆回答「这类岗位下次先试哪一招」。每次运行结束后，每个合格候选人
-按来源路径归因（每条判断计一次，落在它第一个来源路径的 `origin` 上：`plan` / `loosen` / `tighten` /
-`add_path` / `default` / `fallback`，收敛再搜记 `converged`），按查询族累计：
-
-```bash
-search-agent demo --repeat 3 --top-k 5     # 同一查询跑 3 次，打印策略记忆快照
-```
-
-```text
-  策略记忆（查询族 → 策略 → runs / qualified / avg）:
-    a847d082898f  plan       runs=3 qualified=15 avg=5.0
-```
-
-下一次同类岗位运行时，plan / reflect 的 prompt 多一个字段（没有观测时整键省略）：
-
-```json
-"strategyPriors": [{"strategy": "plan", "runs": 2, "avg_qualified": 5.0}]
-```
-
-- **族键 = must 能力集哈希**（能力名排序后 sha1 取前 12 位），不是查询原文：近似 JD 共享先验，
-  且没有任何查询文本 / 候选人数据离开进程。
-- **存储可降级**：配置 `SEARCH_AGENT_REDIS_URL` / `REDIS_URL` 时用 Redis 字段计数器（30 天 TTL，
-  跨进程 / 跨重启共享）；否则进程内。任何读写异常只记日志，绝不影响本次搜索。
-- **只给先验、不做决策**：prompt 约定样本不足（`runs < 2`）时忽略该行；取舍仍由 LLM 在当次上下文里
-  完成，工程层只保证「有证据可参考」，不引入第二个决策者。
-
-离线回归见 `tests/test_experience.py`（24 个用例：族键稳定性、归因口径、Redis 降级、注入链路）。
-脚本化 LLM 是规则替身，离线 demo 里会忽略 `strategyPriors`——验证的是归因与注入链路，不是学习效果。
-
-## HTTP 服务（可选）
-
-```bash
 pip install -e ".[api]"
-search-agent serve --offline    # 快速演示：脚本化 LLM + InMemorySearchTool
-search-agent serve --backend hybrid_v2  # 完整在线：在线 LLM + Hybrid V2 + 你的 ES 索引
+search-agent demo
+search-agent serve --offline
 ```
 
-Web 控制台只保留两个完整预设，切换时会同时替换 LLM、SearchTool 和候选人数据：
+打开 <http://127.0.0.1:8000>。离线模式使用脚本化 LLM 和 16 个虚构候选人，不发送外部模型请求。
 
-| 预设 | LLM | 检索 | 数据 | 用途 |
-|---|---|---|---|---|
-| 快速演示（默认） | `ScriptedLlmClient` | `InMemorySearchTool` | 16 个内置虚构候选人 | 零 key、零 ES，快速展示 3 / 5 / 8 阶段自适应执行 |
-| 完整在线 | OpenAI-compatible 在线模型 | `HybridV2SearchService` | 使用者的 Elasticsearch 索引 | 真实模型、真实检索与会话记忆 |
-
-快速演示不连接 Elasticsearch；完整在线需要网关/模型 key 与已建好的 Hybrid V2 索引。
-
-| 端点 | 说明 |
-|---|---|
-| `GET /` | 内置 Web 体验（默认对话式 Agent；可切换三栏执行观测视图） |
-| `POST /search` | `SearchRequest` → `SearchResponse`（camelCase JSON；`details=true` 附带 `agentTrace` / `agentMetrics`） |
-| `GET /search/stream?query=…&topK=10` | SSE：非搜索请求返回单帧 `reply`；搜索请求逐阶段推送，最后 `result` 帧返回完整结果 |
-| `POST /search/stream` | 同一 SSE 流的 JSON body 版本（查询不进 URL / 访问日志）；客户端断开即请求后端取消 |
-| `POST /conversations` | 创建一个空会话；通常无需手动调用，首次搜索也会自动创建 |
-| `GET /conversations?companyId=…&hrId=…&limit=…&offset=…` | 列出当前租户的最近会话摘要 |
-| `GET /conversations/{conversationId}?companyId=…&hrId=…` | 恢复完整轮次与可展示的候选人快照 |
-| `DELETE /conversations/{conversationId}?companyId=…&hrId=…` | 删除指定归属的历史会话 |
-| `PATCH /conversations/{conversationId}/candidates/{docId}` | 设置显式排除或恢复候选人；后续搜索会携带排除条件 |
-| `GET /sessions/{queryToken}?offset=5&limit=5` | 分页读取本次 Agent 结果池，不重新检索、不调用 LLM |
-| `DELETE /sessions/{queryToken}` | 主动删除分页会话；不调用也会按 1 小时 TTL 过期 |
-| `GET /healthz` | 健康检查：当前预设、LLM、当前后端，以及 `offlineBackend` / `onlineBackend` / `onlineConfigured` |
-| `POST /runtime/mode` | 同时切换后续搜索的 LLM 与 SearchTool：`{"mode":"offline"}`（快速演示）或 `{"mode":"online"}`（完整在线）；执行中或完整在线未配置时返回 `409` |
-
-SSE 事件协议：
-
-| `event` | 何时出现 | 载荷 | 是否终止 |
-|---|---|---|---|
-| `stage` | 搜索请求每完成一个阶段 | `stage` + `detail`；`understand` 额外含 `requestIntent` / `intentRule` | 否 |
-| `reply` | 问候 / 身份询问 / 帮助 / 明确无关任务 | `type` / `intent` / `message` / `suggestions` / `searchStarted=false` | 是，且为唯一一帧 |
-| `result` | 搜索完成（含协作取消终态） | 完整 `SearchResponse`；`debug` 含请求意图、检索策略与实际阶段 | 是 |
-| `error` | Harness 抛出未预期异常 | `message` | 是 |
-
-```bash
-curl -s http://127.0.0.1:8000/search -H "Content-Type: application/json" \
-  -d '{"query": "找有 3 年以上经验的后端工程师", "topK": 5}'
-```
-
-`create_app(tool=..., online_tool=..., dual_backend=True, llm_client=..., online_llm_client=...)`
-可以注入两个完整预设；不传 `dual_backend` 时仍保持原有单后端用法。
-
-Web 顶栏的「快速演示 / 完整在线」是可点击的预设按钮：快速演示固定使用脚本化 LLM + 16 人内存库；
-完整在线使用在线 LLM + Hybrid V2 + Elasticsearch 索引，二者不会混用。通过 `scripts/start-dev.cmd`
-启动时，脚本会读取仓库根目录 `.env`；检测到 `PRIMARY_LLM_API_KEY` / `FALLBACK_LLM_API_KEY` 后
-自动启动或复用本地网关，Web API 仍以快速演示启动。完整在线未配置时按钮会给出明确提示，不会静默
-降级。切换是进程内运行时状态，服务重启后回到启动参数决定的初始模式；搜索执行期间按钮和后端都会
-拒绝切换，避免同一次 trace 混用两个预设。从快速演示切入完整在线前，前端会提示真实模型费用与
-数据处理边界；切回快速演示不增加确认步骤。多 worker 部署需要另做共享控制。
-
-### 多轮会话与结果分页
-
-`SearchRequest` 额外支持 `conversationId` 与 `pageSize` 两个可选字段。会话记忆分为三层：
-
-- **L1 工作记忆**：`conversationId` 省略时由后端自动生成并在响应返回；后续请求带上它，理解
-  Prompt 只注入最近 3 轮结构化条件摘要，用于承接“最好有”“不要外包”等追问。
-- **L2 会话归档**：完整轮次写入 Redis（未配置时为进程内降级），默认保留 30 天、最多 50 轮，
-  可用 `SEARCH_AGENT_CONVERSATION_TTL_SEC` / `SEARCH_AGENT_CONVERSATION_MAX_TURNS` 覆盖。每轮保存
-  query、摘要、路由/状态、`queryToken`、候选人 ID 和最多 10 张精简卡片；左侧“最近会话”可恢复历史，
-  新建检索只切换活动会话，不会删除旧归档。所有会话按 `(companyId, hrId)` 精确校验归属。
-- 问候、身份询问、帮助和范围外说明也会以 `status=reply` 写入当前会话并立即出现在左侧；这些轮次不进入 L1
-  搜索上下文，仍保持 0 次 Agent LLM 与 0 次检索。若会话从“你好”开始，之后的首条检索需求会成为
-  左侧会话标题。
-- **L3 候选人记忆**：记录本会话看过的人和招聘者显式排除的人。只有显式排除项会传给
-  `SearchToolRequest.exclude_doc_ids`，并额外对最终结果做防御性过滤；看过但未排除的人不会自动消失。
-- `pageSize`：本次返回的首页大小；不传时保持旧行为，也不创建分页 Session。`topK=20, pageSize=5`
-  表示 Agent 最多交付 20 人，本次只返回前 5 人，并通过 `queryToken` 获取后续页。
-
-```bash
-# 第一轮：自动创建 conversationId，并返回 queryToken
-curl -s -X POST http://127.0.0.1:8000/search -H "Content-Type: application/json" \
-  -d '{"query": "找 Python 后端工程师，3 年以上", "topK": 20, "pageSize": 5}'
-
-# 第二轮：复制上一轮的 conversationId，当前输入会继承并细化前一轮条件
-curl -s -X POST http://127.0.0.1:8000/search -H "Content-Type: application/json" \
-  -d '{"query": "最好有大厂背景", "conversationId": "<上一步返回值>", "topK": 20, "pageSize": 5}'
-
-# 分页：复制 queryToken，不重新运行 Agent
-curl -s "http://127.0.0.1:8000/sessions/<queryToken>?offset=5&limit=5"
-```
-
-两种 Web 视图都已接入同一协议：同一标签页会复用 `conversationId`，Agent 体验的左侧“最近会话”列出服务端
-归档并支持恢复完整轮次与候选人快照；执行观测显示完整历史与当前轮次。点击“新检索”只开启新上下文，不删除
-旧会话。候选人卡片可“排除/恢复”，显式排除会持久化到当前会话并用于后续搜索。对话内候选人和执行观测中的
-列表都可翻页。未配置 Redis 时使用进程内降级，多进程部署请设置 `SEARCH_AGENT_REDIS_URL` 或 `REDIS_URL`。
-
-演示时可以先输入“找有 3 年以上经验的后端工程师”，随后在同一会话输入“最好有大厂背景”，
-观察 `understand` 阶段的“历史上下文 1 轮”和来源假设变化；离线脚本化 LLM 也会对
-“最好 / 优先 / 不要”等追问做规则合并。再点击“新对话”重复第二轮，确认不再携带历史。
-完整的三段式口播稿和验收点见 `docs/CASE_STUDY.md` 的“多轮会话 + 分页演示”。
-
-## Docker 全栈（API + Elasticsearch + LLM 网关）
-
-一条命令起「HTTP 服务 + Elasticsearch + LLM 网关」：
-
-```bash
-docker compose up -d --build            # 首次要构建镜像，之后可去掉 --build
-curl -s http://127.0.0.1:8000/healthz   # → mode=offline, backend=InMemorySearchTool；onlineConfigured 表示在线预置是否可用
-curl -s -X POST http://127.0.0.1:8000/search -H "Content-Type: application/json" -d '{"query": "找有 3 年以上经验的后端工程师", "topK": 5}'
-docker compose down                     # 停止（加 -v 一并清掉 ES 数据卷）
-```
-
-镜像为多阶段构建（build 阶段产出 wheel，runtime 阶段只装 wheel、以非 root 运行、内置
-`HEALTHCHECK`）；compose 里 `api` 服务等 ES 与 gateway 健康检查通过后才启动，先执行
-`hybrid-v2 index --recreate` 把 16 条演示语料写入 Hybrid V2 索引，再以快速演示预置启动。
-因此没有上游 key 时，完整 Agent 链路仍可零成本体验；在 `.env` 设置 `PRIMARY_LLM_API_KEY`
-（并建议设置 `FALLBACK_LLM_API_KEY`）后，compose 会同时把在线预置接到内部网关
-`http://gateway:4000/v1`，页面可直接切到真实模型 + Hybrid V2 + Elasticsearch。
-
-`gateway` 服务使用仓库内已跟踪的 `examples/gateway.docker.json`；本地
-`gateway.local.json` 继续用于命令行启动。上游 key 通过 `.env` 注入，不会进入仓库：
-
-```text
-SEARCH_AGENT_GATEWAY_API_KEY=local-gateway-key
-PRIMARY_LLM_API_KEY=...
-FALLBACK_LLM_API_KEY=...
-```
-
-本地不启动 Docker 时，可以用脚本后台启动网关和 API。首次使用只需把模板复制为仓库根目录的
-`.env`，填好上游 key；脚本以后每次启动都会自动读取它：
+Windows 也可以直接使用：
 
 ```powershell
+.\scripts\start-dev.cmd
+```
+
+启动器会读取 `.env`；发现 `PRIMARY_LLM_API_KEY` / `FALLBACK_LLM_API_KEY` 时自动启动或复用本地网关，但页面默认仍是快速演示，可在右上角切换完整在线。
+
+### 完整在线
+
+完整在线预设需要：
+
+- 任意 OpenAI-compatible 模型端点；
+- 可访问的 Elasticsearch 8；
+- 可选 Redis，用于跨进程会话与分页；未配置时使用进程内存储。
+
+```powershell
+pip install -e ".[api,openai,es,redis]"
+docker compose up -d elasticsearch
 Copy-Item .env.example .env
-# 填写 PRIMARY_LLM_API_KEY / FALLBACK_LLM_API_KEY
 
-.\scripts\start-dev.cmd              # gateway + API；Web API 默认离线启动
-.\scripts\start-dev.cmd -StartOnline # 可选：Web API 初始就在线
-.\scripts\start-dev.cmd -SkipApi     # 只启动 gateway
+# 在 .env 中填写模型地址、Key、模型名和 ES 配置
+$env:SEARCH_AGENT_HYBRID_V2_ES_URL = "http://127.0.0.1:9200"
+$env:SEARCH_AGENT_HYBRID_V2_ES_INDEX = "search-agent-demo"
+
+search-agent hybrid-v2 index --recreate
+search-agent hybrid-v2 doctor
+.\scripts\start-dev.cmd -StartOnline
 ```
 
-检测到上游 key 时，脚本会自动启动网关；4000 网关或 8000 API 已经健康时则直接复用。没有上游
-key 时会跳过网关，只启动纯离线演示。启动后需要在线模型时直接点页面按钮，不需要重新启动服务。
-健康检查通过后脚本会自动打开 `http://127.0.0.1:8000`；若浏览器未弹出，手动访问该地址即可。
-脚本会把日志写到 `logs/`。`.cmd` 包装器使用
-PowerShell 的 `-ExecutionPolicy Bypass`；如果直接运行 `.ps1`，请使用
-`powershell -ExecutionPolicy Bypass -File .\scripts\start-dev.ps1`。
-
-## 架构
-
-```mermaid
-flowchart TD
-    Q([自然语言查询]) --> G{"明确条件可直连？"}
-    G -->|是| DS["direct_search<br/>Hybrid V2 parser → CandidateSearchIR"]
-    DS --> DE["execute<br/>调用一次 SearchTool"]
-    DE --> DF["finalize<br/>直接收敛 topK"]
-    DF --> OUT
-    G -->|否| U["1 · understand<br/>岗位画像 + 人才画像 + 难度评估"]
-    U -->|需澄清| CL["返回澄清问题"]
-    U -->|难度路由| P["2 · plan<br/>多条不同召回意图的搜索路径"]
-    P --> E["3 · execute<br/>线程池并行调用 SearchTool"]
-    E --> J["4 · judge<br/>能力级判断（基于工具硬事实）"]
-    J --> V{"5 · evaluate<br/>达标？预算还有？"}
-    V -->|继续| R["6 · reflect<br/>共性 / 缺口 / 来源假设"]
-    R --> RV["7 · revise<br/>收紧 / 放宽 / 新增路径（签名防重）"]
-    RV --> E
-    V -->|终止| F["8 · finalize<br/>收敛再搜 + 全局重排"]
-    F --> OUT(["结果 + agentTrace + 指标"])
-    U -.->|LLM 失败| D1["降级：基线单趟检索"]
-    E -.->|全部路径失败| D1
-    J -.->|LLM 失败| D2["降级：跳过判断，用工具事实排序"]
-```
-
-- 一条 query 的完整走查（逐阶段真实中间产物 + 面试讲法）：见 `docs/CASE_STUDY.md`
-- 状态机、降级矩阵、预算与合并策略细节：见 `docs/ARCHITECTURE.md`
-- 关键设计取舍（ADR 风格）：见 `docs/DECISIONS.md`
-- 变更记录：见 `CHANGELOG.md`；贡献指南：见 `CONTRIBUTING.md`
-
-## 项目结构
-
-```text
-search-agent-harness/
-├── src/search_agent/
-│   ├── harness.py           # 外层循环：阶段调度、降级应用、trace 组装
-│   ├── service.py           # SearchRequest → SearchResponse 适配层
-│   ├── direct_search.py     # 保守直连门槛 + 本地回退 IR；Harness 前的三阶段直连链路
-│   ├── runner.py            # 可替换执行后端（默认 LoopRunner）
-│   ├── graph.py             # 可选：LangGraphRunner（同一批阶段 → StateGraph，行为等价）
-│   ├── server.py            # 可选：FastAPI HTTP 服务（SSE 阶段事件流）
-│   ├── intent_router.py     # Harness 之前的确定性请求路由（问候 / 身份 / 帮助 / 无关任务 / 搜索）
-│   ├── stages/              # 8 个阶段（每个都是纯函数，可独立单测）
-│   ├── core/                # 签名 / 合并 / 预算 / 降级 / 难度路由 / 指标 / trace / 策略记忆 / 消融开关
-│   ├── contract/tool.py     # SearchTool 协议 —— 与检索后端的唯一边界
-│   ├── tools/memory.py      # 参考实现：内存检索后端（离线演示用）
-│   ├── tools/sqlite_fts.py  # 零依赖 SQLite/FTS5 后端（SQL 编译 where 树）
-│   ├── tools/text.py        # 共享语义层：分词 / 匹配 / 打分（多后端同源）
-│   ├── tools/elasticsearch.py # 真实 ES 8 后端（DSL 编译 + docker compose）
-│   ├── hybrid_v2/          # V2 NL2IR parser + IR 编译 + 硬过滤 + BM25/kNN + 重排
-│   ├── llm/                 # LLM 客户端（OpenAI 协议）+ 各阶段 prompt
-│   ├── gateway/             # 可选 OpenAI-compatible LLM 网关：别名 / 降级 / 用量
-│   ├── models/              # 意图 IR / 推理工件 / API 模型（pydantic v2）
-│   ├── demo.py              # 离线脚本化 LLM + 合成候选人数据
-│   ├── eval.py              # 离线评测：单趟基线 vs 全循环（效果 / 成本对比）
-│   ├── corpus.py            # 合成语料生成器：种子化 + 生成器真值（oracle 标注）
-│   ├── oracle.py            # 去自证指标：交付列表打分 / 仅全循环发现增量
-│   ├── tools/embedding.py   # 确定性哈希向量（换真实模型只改这一个函数）
-│   ├── web/                 # 内置 Web 体验（HTML/CSS/JS，零构建；FastAPI 托管 GET /）
-│   └── cli.py               # 命令行入口：demo / corpus / search / eval / serve
-├── scripts/                 # Windows 本地开发：start-dev.ps1（gateway + API）
-├── tests/                   # pytest suite（离线 + 可选 ES 集成）
-├── examples/                # custom backend · ES 端到端 · 混合召回 · gateway*.json
-├── docs/                    # 架构 / Hybrid V2 / 决策 / 案例 / LLM 网关 / 评测基线
-├── Dockerfile               # 多阶段镜像：wheel 构建 → 非 root 运行 + HEALTHCHECK
-└── docker-compose.yml       # ES 8 + API + LLM gateway（docker compose up -d --build）
-```
-
-### 混合召回通道（BM25 + 向量 + RRF）
-
-真实系统的召回层通常做「关键词 + 向量」双通道再融合，这里把同一套漏斗也做进了 ES 后端：
+不使用 Windows 启动器时，可以直接运行：
 
 ```bash
-python examples/es_hybrid_recall.py        # BM25 / kNN / RRF 三列对比
+search-agent serve --backend hybrid_v2
 ```
 
-实测输出（同一个查询）：
+所有完整配置项见 [`.env.example`](.env.example) 和 [Hybrid V2 接入指南](docs/HYBRID_V2.md)。
 
-```text
-[BM25 关键词通道 (operator=and)] 0 条
-  （无命中）
+### Docker 全栈
 
-[kNN 向量通道 (dense_vector + cosine)] 5 条
-  张伟     c001  score=0.7024
-  许诺     c016  score=0.6833
-
-[RRF 混合召回 (rank_constant=60)] 5 条
-  张伟     c001  rrf=0.0164  bm25=-  knn=1
-  许诺     c016  rrf=0.0161  bm25=-  knn=2
+```bash
+cp .env.example .env   # 填写 PRIMARY_LLM_API_KEY / FALLBACK_LLM_API_KEY
+docker compose up -d --build
+curl http://127.0.0.1:8000/healthz
 ```
 
-长查询在 AND 语义的关键词通道下 0 命中、向量通道仍能召回——这正是混合召回存在的理由。
-向量由 `tools/embedding.py` 的确定性哈希向量生成（不下载模型、CI 里可复现）；换成真实
-embedding 模型只需替换 `embed_text` 并重建索引，索引映射 / kNN 检索 / RRF 融合都不用动。
-Agent 主循环默认仍走「引擎侧过滤 + 共享语义层打分」，所以三后端逐位一致的测试不受影响。
+Compose 会启动 API、Elasticsearch 8 和 LLM 网关；API 先灌入 16 条演示索引，再以快速演示模式启动，可从页面切换到完整在线。停止使用 `docker compose down`。
 
-## 接入你自己的检索后端
+## 界面
 
-Harness 与检索后端之间只有一个协议边界：
+默认界面是对话式 **Agent 体验**：左侧恢复最近会话，中间展示需求解析、实际执行路径和候选人证据，右侧/内联区域交付名单。顶部可以切换到 **执行观测**，查看三栏控制台、3/5/8 实际阶段、SearchTool 调用、指标和原始 Trace。
+
+两种视图共享同一条 SSE 运行；切换视图不会重新搜索。
+
+<details>
+<summary>查看完成后的候选人交付界面</summary>
+
+<img src="docs/console-run.png" alt="Search Agent 完成一次搜索后的候选人交付界面" width="100%">
+
+</details>
+
+<details>
+<summary>查看执行观测界面</summary>
+
+<img src="docs/console-observe.png" alt="Search Agent 执行观测界面" width="100%">
+
+</details>
+
+## 实测结果
+
+仓库只报告可复现的合成基准。以下两组结果分别回答“离线机制是否工作”和“换成真实 LLM + Hybrid V2 后结论是否还成立”：
+
+| 基准 | 单趟基线 | Agent 全循环 | 成本变化 |
+|---|---:|---:|---:|
+| 离线消融 · 池召回 | 0.70 | 0.76 | LLM 调用 ×2.4，tokens ×2.2 |
+| 离线消融 · 交付 top-10 召回 | 0.32 | **0.41** | 同上 |
+| 真实 LLM A/B · 池召回 | 0.735 | **0.937** | LLM 调用 ×3.0，tokens ×3.0 |
+| 真实 LLM A/B · recall@5 | 0.392 | **0.473** | p50 延迟 ×2.8 |
+
+关键结论：
+
+- 反思循环明显扩大了探索层；在“人为抬高目标数、强制循环迭代”的消融设置下，交付 top-10 召回从 `0.32` 提升到 `0.41`。默认目标下的结果更保守，详见评测页。
+- 真实模型 A/B 中，池召回提升的 bootstrap 区间不包含 0；top-5 召回区间跨过 0，因此 10 条合成查询不足以证明稳定的平均交付提升。
+- 代价约为 3 倍 LLM 调用、tokens 和延迟；有 2 条查询触发预算终止。
+- 并非每条查询都提升：`microservice_backend` 的 recall@5 反而从 `0.333` 降到 `0.133`，下一阶段应优先修 judge / rerank，而不是无限增加路径。
+
+完整的离线成本、oracle、消融、真实 LLM A/B、区间与失败分析见 **[Evaluation](docs/EVALUATION.md)**。
+
+## 接入自己的检索后端
+
+Agent 与检索层只有一个协议边界：
 
 ```python
 class SearchTool(Protocol):
@@ -627,209 +205,109 @@ class SearchTool(Protocol):
     def rerank_pool(self, req: RerankToolRequest) -> SearchToolResult: ...
 ```
 
-实现这两个方法（ES / 向量库 / 自有检索服务皆可），组装
-`SearchAgentService(tool=..., llm_client=...)` 即可。参考实现见
-`src/search_agent/tools/memory.py`，最小示例见 `examples/custom_backend.py`。
-此外仓库内置四个后端：内存（`tools/memory.py`）、SQLite/FTS5（`tools/sqlite_fts.py`，
-仅标准库）、Elasticsearch 8 简版（`tools/elasticsearch.py`）与独立的 Hybrid V2
-（`hybrid_v2/`，硬过滤 + BM25/kNN + 可解释重排）。前三个在同一演示语料上结果逐位一致
-（`tests/test_sqlite_fts.py`、`tests/test_elasticsearch_backend.py`）；Hybrid V2 使用
-自己的索引契约，见 `docs/HYBRID_V2.md`。
+实现两个方法后，组装 `SearchAgentService(tool=..., llm_client=...)` 即可。仓库内置：
 
-## Hybrid V2：可独立运行的混合检索引擎
+| 后端 | 依赖 | 用途 |
+|---|---|---|
+| `memory` | 无 | 离线演示与测试参考实现 |
+| `sqlite` | 标准库 | 本地持久化 / FTS5 示例 |
+| `es` | Elasticsearch 8 | 简版 ES 后端与 DSL 编译示例 |
+| `hybrid_v2` | Elasticsearch 8 | 独立 NL2IR、硬过滤、BM25 + kNN、可解释重排 |
 
-Hybrid V2 是仓库内可独立运行的检索引擎，可以直接连接你自己的 Elasticsearch 8：
+最小接入示例见 [`examples/custom_backend.py`](examples/custom_backend.py)；Hybrid V2 的索引配置、字段约定、embedding 和重排说明见 [`docs/HYBRID_V2.md`](docs/HYBRID_V2.md)。
 
-```powershell
-pip install -e ".[es]"
-docker compose up -d elasticsearch
-$env:SEARCH_AGENT_HYBRID_V2_ES_URL = "http://127.0.0.1:9200"
-$env:SEARCH_AGENT_HYBRID_V2_ES_INDEX = "candidate"
-search-agent hybrid-v2 index --recreate
-search-agent hybrid-v2 doctor
-search-agent search "找 3 年以上、做过高并发系统的后端工程师" `
-  --backend hybrid_v2 --offline --top-k 5
-python examples/hybrid_v2_end_to_end.py
-```
-
-`hybrid-v2 index` 会创建与查询编译器匹配的 ES 8 mapping（索引型 `dense_vector`、CJK 文本分析、
-keyword 子字段、`work_stats`、向量字段），并批量导入 demo 语料；`doctor` 检查集群、索引、
-字段、向量维度和文档数。配置了 ES 地址后，`hybrid_v2` 会成为默认检索后端；没有配置时仍
-默认 `memory`，公开 demo 不需要任何服务。它保留 NL2IR 硬条件编译、工作年限/空窗/司龄规则、
-O*NET 本地岗位别名、BM25 + 多字段 kNN 和可解释的 `hardMatches`；不包含图扩展、托管词典或
-外部存储适配器。索引字段、认证、embedding 与重排配置见 `docs/HYBRID_V2.md`。
-
-## 接入真实后端（Elasticsearch）
-
-仓库自带可直接运行的 Elasticsearch 8 后端（`tools/elasticsearch.py`），与内存参考后端在同一语料上结果逐位一致：
+## HTTP API
 
 ```bash
-docker compose up -d elasticsearch   # 单节点 ES 8.15：关闭安全认证，512m 堆
-pip install -e ".[es]"
-python examples/es_end_to_end.py     # 建索引 → 跑完整 Agent 循环 → 与内存后端逐位比对
+curl -s http://127.0.0.1:8000/search \
+  -H "Content-Type: application/json" \
+  -d '{"query":"找 3 年以上、做过高并发系统的后端工程师","topK":5}'
 ```
 
-`WhereNode` 树会先编译成真实的 ES DSL（`terms` / `range` / `bool.must_not` / `minimum_should_match`），`details=True` 时该 DSL 原样出现在 `es_query` 里；引擎侧过滤后用共享语义层复检与打分。集成测试未检测到 ES 时自动跳过（`SEARCH_AGENT_ES_URL` 可覆盖默认地址）：
+常用端点：
 
-```bash
-pytest -q -m es
-```
+| 端点 | 作用 |
+|---|---|
+| `GET /` | 零构建 Web 控制台 |
+| `POST /search` | 同步搜索，返回候选人、指标与可选 Trace |
+| `POST /search/stream` | SSE 阶段流；最后返回 `result` |
+| `GET /conversations` | 最近会话摘要 |
+| `GET /conversations/{id}` | 恢复历史轮次与候选人快照 |
+| `PATCH /conversations/{id}/candidates/{docId}` | 排除 / 恢复候选人 |
+| `GET /sessions/{queryToken}` | 分页读取结果池，不重新运行 Agent |
+| `POST /runtime/mode` | 快速演示 / 完整在线切换 |
+| `GET /healthz` | 当前模式、LLM、后端与在线配置状态 |
+
+会话记忆、分页和取消语义见 [架构说明](docs/ARCHITECTURE.md)。当前 API 结构定义在 [`src/search_agent/models/api.py`](src/search_agent/models/api.py)。
 
 ## 配置
 
 | 环境变量 | 默认 | 说明 |
 |---|---|---|
-| `SEARCH_AGENT_API_KEY` / `OPENAI_API_KEY` | — | 真实模式必需 |
+| `SEARCH_AGENT_API_KEY` / `OPENAI_API_KEY` | — | 模型 API Key |
 | `SEARCH_AGENT_BASE_URL` / `OPENAI_BASE_URL` | 官方端点 | 任意 OpenAI 兼容端点 |
 | `SEARCH_AGENT_MODEL` | `gpt-4o-mini` | 模型名 |
-| `SEARCH_AGENT_MAX_ITERATIONS` | `3` | 反思循环最大迭代数 |
-| `SEARCH_AGENT_MAX_PATHS_PER_ITERATION` | `4` | 每轮最大搜索路径数 |
-| `SEARCH_AGENT_TARGET_QUALIFIED` | `max(top_k*2, 20)` | 合格候选人目标数 |
-| `SEARCH_AGENT_TIME_BUDGET_SEC` | `12.0` | 单次请求墙钟预算（秒） |
+| `SEARCH_AGENT_TIME_BUDGET_SEC` | `12.0` | 单次请求墙钟预算 |
+| `SEARCH_AGENT_MAX_ITERATIONS` | `3` | 最大反思迭代数 |
 | `SEARCH_AGENT_LLM_CALL_BUDGET` | `40` | 单次请求 LLM 调用上限 |
-| `SEARCH_AGENT_TOKEN_BUDGET` | `0` | 单次请求 token 上限；`0` = 只记账不设限，命中即 `token_budget` 终止 |
-| `SEARCH_AGENT_RECALL_POOL_SIZE` | `max(top_k*3, 30)` | 每路径召回池大小（池内全量 judge，最终交付 top_k） |
-| `SEARCH_AGENT_LLM_RETRIES` | `2` | 瞬时错误重试次数（超时 / 429 / 5xx，指数退避 + 抖动） |
-| `SEARCH_AGENT_LLM_JSON_REPAIRS` | `1` | 非法 JSON 的修复重试轮数（回传模型输出要求重写） |
-| `SEARCH_AGENT_LLM_BACKOFF_SEC` | `0.5` | 退避基数（秒，逐次翻倍） |
-| `SEARCH_AGENT_LLM_TIMEOUT_SEC` | `60` | 单次 LLM 请求超时（秒） |
-| `SEARCH_AGENT_DISABLE_THINKING` | `0` | `1` 时发送 `enable_thinking=false`，适用于 Qwen 等思考型模型 |
-| `SEARCH_AGENT_REDIS_URL` / `REDIS_URL` | — | 可选：会话记忆 / 结果分页 / 策略记忆（跨进程共享） |
-| `SEARCH_AGENT_CONVERSATION_TTL_SEC` | `2592000` | 会话归档 TTL（秒），默认 30 天 |
-| `SEARCH_AGENT_CONVERSATION_MAX_TURNS` | `50` | 每个会话最多保留的轮次 |
-| `SEARCH_AGENT_ES_URL` | `http://127.0.0.1:9200` | Elasticsearch 地址；同时启用 Hybrid V2 默认选择 |
-| `SEARCH_AGENT_HYBRID_V2_ES_URL` / `_ES_INDEX` | — / `candidate` | Hybrid V2 专用地址与索引 |
-| `SEARCH_AGENT_HYBRID_V2_VECTOR_MODE` | `flat` | `flat`（默认兼容路径）或 `nested` 向量字段布局 |
-| `SEARCH_AGENT_HYBRID_V2_RERANK_PROVIDER` | `local` | 本地确定性重排，或 `openai` 兼容重排 |
-| `SEARCH_AGENT_HYBRID_V2_TAG_DICT` | — | 可选的本地标签 name→id JSON 文件 |
+| `SEARCH_AGENT_REDIS_URL` / `REDIS_URL` | — | 会话与分页的跨进程存储 |
+| `SEARCH_AGENT_HYBRID_V2_ES_URL` | — | Hybrid V2 Elasticsearch 地址 |
+| `SEARCH_AGENT_HYBRID_V2_ES_INDEX` | `candidate` | Hybrid V2 索引名 |
 
-`.env.example` 提供完整模板；默认值与 `config.py`、`hybrid_v2/config.py` 和
-`llm/client.py` 中的实现保持一致。
+完整变量、默认值与本地网关配置见 [`.env.example`](.env.example) 和 [`docs/LLM_GATEWAY.md`](docs/LLM_GATEWAY.md)。
 
-## LLM 网关（可选）
+## 项目结构
 
-仓库新增了一个薄的 OpenAI-compatible 网关，用于统一模型别名、主备降级、Bearer
-鉴权、超时控制和 token 使用统计：
-
-```powershell
-pip install -e ".[api]"
-Copy-Item examples/gateway.example.json gateway.local.json
-$env:SEARCH_AGENT_GATEWAY_API_KEY = "local-gateway-key"
-$env:PRIMARY_LLM_API_KEY = "sk-..."
-$env:FALLBACK_LLM_API_KEY = "..."
-search-agent gateway --config gateway.local.json --port 4000
+```text
+search-agent-harness/
+├── src/search_agent/
+│   ├── harness.py            # 自适应 3 / 5 / 8 阶段编排与预算约束
+│   ├── service.py            # 请求生命周期、会话、分页与取消
+│   ├── server.py             # FastAPI HTTP / SSE
+│   ├── intent_router.py      # 确定性请求路由
+│   ├── direct_search.py      # 结构化查询直连检索
+│   ├── stages/               # understand / plan / execute / judge / ...
+│   ├── hybrid_v2/            # NL2IR、ES 查询编译、BM25 + kNN、重排
+│   ├── tools/                # memory / sqlite / es / embedding
+│   ├── llm/                  # LLM 客户端与阶段 Prompt
+│   ├── gateway/              # OpenAI-compatible 模型网关
+│   ├── web/                  # 零构建 Web 控制台
+│   └── cli.py                # demo / search / eval / serve / gateway
+├── docs/                     # 架构、Hybrid V2、评测、网关、案例、ADR
+├── examples/                 # 自定义后端、ES、Hybrid V2、真实 A/B
+├── tests/                    # 离线单元 / 集成 / ES 可选测试
+├── scripts/                  # Windows 本地启动器
+├── Dockerfile
+└── docker-compose.yml
 ```
 
-网关是独立的长驻服务，不会随 `search-agent search` 自动拉起。希望少手动启动时，用
-`docker compose up -d gateway`（带 `restart: unless-stopped`），或在 Windows 本地执行
-`.\scripts\start-dev.cmd -SkipApi`。
+## 文档导航
 
-Agent 侧只需要把地址和模型别名指向网关：
+| 文档 | 内容 |
+|---|---|
+| [Architecture](docs/ARCHITECTURE.md) | 状态机、预算、降级矩阵、并行执行、合并与会话分层 |
+| [Evaluation](docs/EVALUATION.md) | 离线成本、oracle、消融、真实 LLM A/B 与解释边界 |
+| [Hybrid V2](docs/HYBRID_V2.md) | NL2IR parser、IR 编译、ES mapping、BM25/kNN、embedding 与重排 |
+| [LLM Gateway](docs/LLM_GATEWAY.md) | 模型别名、主备降级、鉴权、超时与 token 用量 |
+| [Case Study](docs/CASE_STUDY.md) | 一条完整查询的逐阶段走查与演示脚本 |
+| [Decisions](docs/DECISIONS.md) | ADR 风格的设计取舍与替代方案 |
+| [Contributing](CONTRIBUTING.md) | 开发环境、测试、提交与扩展方式 |
+| [Changelog](CHANGELOG.md) | 已实现能力与行为变化 |
 
-```powershell
-$env:SEARCH_AGENT_BASE_URL = "http://127.0.0.1:4000/v1"
-$env:SEARCH_AGENT_API_KEY = "local-gateway-key"
-$env:SEARCH_AGENT_MODEL = "search-agent-primary"
-```
+## 质量与边界
 
-网关只负责 provider 层路由和失败降级；Agent 的 per-request token 预算、取消和
-阶段级降级仍然保留。完整配置、接口和限制见 `docs/LLM_GATEWAY.md`。
+- 测试集共 `484` 项；本地无 Elasticsearch 时运行结果为 `460 passed, 24 skipped`，CI 会通过独立的 ES 作业执行跳过的集成用例。覆盖阶段行为、预算、降级、取消、会话、分页、路由、后端一致性和 Web 资源。
+- CI 包含 Ruff、pytest、wheel 资源校验、离线 Demo 冒烟、消融门禁和 ES 集成测试。
+- OpenAI / Qwen / DeepSeek / vLLM 等 OpenAI-compatible 端点可直接接入；Claude 需经过提供 OpenAI-compatible 兼容层的服务或网关。不同模型的质量和延迟需要自行验证。
+- 本仓库未部署到生产环境，也不包含真实简历、内部主机或凭据。公开演示数据均为虚构。
+- 所有公开指标都来自仓库内可复现的合成基准；不要把合成结果当作生产 SLA、招聘准确率或公司数据结论。
 
 ## Roadmap
 
-- [x] 3 / 5 / 8 阶段自适应执行 + 预算 + 降级矩阵 + 并行执行
-- [x] 离线演示（脚本化 LLM + 内存后端），零 API key 可跑
-- [x] 475 个测试（451 个默认离线 + 24 个可选 ES 集成测试，ES 不可达时跳过）；ruff 全绿；GitHub Actions CI（ruff + pytest + ES + wheel 资源校验）
-- [x] LangGraphRunner：把同一批阶段编译成 StateGraph，与默认循环行为等价（可选 extra，见 `graph.py`）
-- [x] FastAPI 服务（HTTP + SSE 阶段事件流）：`search-agent serve`（`server.py`，可选 extra）
-- [x] Web 体验：零构建双模式单页——默认 Agent 工作区（左侧会话栏 / 需求解析 / 自然语言进度 /
-      内联候选人 / 可展开执行详情），可切换三栏执行观测（实际执行阶段摘要 3/5/8 / SearchTool / metrics / raw trace），
-      视图状态同步到 URL；`GET /` 直接托管；
-      截图 `docs/console.png`、`docs/console-run.png`；SSE 支持 `POST /search/stream`（查询不进 URL），
-      客户端断开触发阶段边界取消。
-- [x] L1/L2/L3 会话记忆（最近 3 轮工作记忆、服务端历史归档、显式候选人排除）、历史会话恢复与租户隔离；
-      结果池分页（`/sessions/{queryToken}`）翻页不重新运行 Agent；两种 Web 视图都支持续接、历史恢复、
-      新检索和上一页 / 下一页。
-- [x] 评测脚本：Agent 全循环 vs 单趟 baseline 的效果 / 成本对比（`search-agent eval`）
-- [x] SQLite/FTS5 后端（`tools/sqlite_fts.py`，标准库）：where 树编译 SQL + 跨后端一致性测试。
-- [x] Elasticsearch 真实后端 + `docker compose` 端到端示例（ES DSL 编译，`examples/es_end_to_end.py`）。
-- [x] 独立 Hybrid V2 引擎：IR 硬条件编译、BM25 + 多字段 kNN、可解释 hardMatches、
-      本地/可选 LLM 分片重排；使用用户自己的 ES 与环境变量，无内部依赖（`docs/HYBRID_V2.md`）。
-- [x] Hybrid V2 索引生命周期：内置 mapping、JSONL/JSON 批量导入、`doctor` 自检和真实 ES 端到端示例。
-- [x] 向量通道：`dense_vector` + kNN，与 BM25 做 RRF 混合召回（`examples/es_hybrid_recall.py`）。
-- [x] Docker 全栈：多阶段镜像 + compose（`api` 等待 ES 与 gateway 健康后启动，自动灌入
-      Hybrid V2 演示索引，并支持页面切换到网关 + 真实模型）。
-- [x] Oracle 基准：种子化合成语料 + 生成器真值，去自证评测（`search-agent eval --generated / --oracle`）。
-- [x] 100 人真实模型 A/B 复核：Qwen + Hybrid V2 + ES、10 条复杂 query、逐 query trace / 成本 /
-      bootstrap 区间与失败分析（`examples/bench100/`、`docs/real_llm_ab_results_100.md`）。
-- [x] 宽召回池语义：每路径召回 `max(top_k*3, 30)`（`SEARCH_AGENT_RECALL_POOL_SIZE`），judge 全量池、交付 top_k。
-- [x] 策略记忆：按查询族累计「哪一类策略有效」，并作为先验注入 plan / reflect（`core/experience.py`，Redis 可选）。
-- [x] 消融实验 + 评测门禁：`eval --ablate` 单开关对照表；`docs/eval_baseline.json` 作为 CI 基线，回归即红。
-- [x] 能力感知请求路由：问候 / 身份询问 / 帮助 / 明确无关任务在 Harness 之前返回单帧 `reply`（零 LLM、零检索），
-      模糊输入默认走搜索；前端展示能力卡片与可填入的推荐需求。
-- [x] Hybrid V2 直连简单搜索：明确技能 / 岗位 / 年限 / 城市先由 V2 parser 生成
-      `CandidateSearchIR`，再调用一次 `SearchTool`；SSE 为
-      `direct_search → execute → finalize`，不启动 Agent 阶段且 Agent LLM 调用为 0。
-- [ ] 真实 embedding 接入：跨越「项目语言 ↔ 能力词」表述差，修掉 Oracle 基准量出的天花板。
-- [ ] 演示 GIF：录制脚本 `docs/demo.tape` 已就绪——装 [vhs](https://github.com/charmbracelet/vhs) 后跑 `vhs docs/demo.tape`（约 40 秒：demo 时间线 + 消融表），产物 `docs/demo.gif`
-- [ ] 完整英文 README（现为 README 内折叠版）
-
-## 诚实声明
-
-- 仓库内所有公开演示数据均为虚构：16 人离线 demo（`c001`–`c016`）与 100 人真实模型基准
-  （`g001`–`g100`）。其中的公司 / 院校名仅作为行业背景，与真实个人或真实简历库无关。
-- 仓库内置内存 / SQLite / Elasticsearch 简版 / Hybrid V2 四条检索路径；前两条零依赖，后两条需要使用者自己的 Elasticsearch 8。
-- 未在生产环境部署过；离线 demo 的耗时来自本机纯 CPU 单进程，真实模型 A/B 的延迟来自本机到模型网关
-  与 Elasticsearch 的观测，均不代表生产 SLA。
-- 简历 / 汇报口径里的「平均每条 Query 新增 13.4 个相关候选、独有候选相关率 79.8%」来自一次
-  **非公开评测**，不在本仓库复现；仓库不包含该评测数据或执行环境。该对照是一次**消融实验**：基线 = 同一套
-  understand → plan → execute → judge 的单趟链路，唯一变量是关掉 reflect + revise，因此新增收益可归因到
-  反思闭环；指标口径为 `A_only = A − B`、新增相关候选 = `|A_only ∩ R|` 的均值、独有候选相关率 =
-  `|A_only ∩ R| / |A_only|`（R = 人工标注相关集）。
-- 本仓库用**同一套消融设计、同一对指标定义**做了两级公开复核：离线规则替身基准给出 9.0 人 / 7.4%，
-  100 人真实模型基准给出 1.7 人/query（合计 17 人）/ 70.8%。两组数字都来自合成语料：前者用于量出实现
-  天花板，后者用于验证真实 LLM + Hybrid V2 下的链路行为；它们都不是公司数据复现，也不能与 13.4 / 79.8%
-  直接对比。
-
-<details>
-<summary>English</summary>
-
-An eight-stage reflective retrieval agent harness for talent search:
-`understand → plan → execute → judge → evaluate → reflect → revise → finalize`.
-
-Offline runnable without any API key:
-
-```bash
-pip install -e ".[dev]"
-search-agent demo     # offline showcase: scripted LLM + synthetic candidates
-search-agent demo --repeat 3   # strategy memory: same query x3, then priors
-search-agent eval     # single-pass baseline vs the full loop (effect vs cost)
-search-agent eval --generated 120 --seed 7   # oracle-labeled benchmark (no self-grading)
-search-agent serve --offline   # HTTP API + zero-build web console on :8000
-```
-
-The streaming endpoints route greetings, help questions and clearly unrelated
-tasks to a single terminal `reply` frame before the Harness starts: zero LLM
-calls, zero retrieval calls. Ambiguous inputs deliberately fall through to the
-search Agent so an unusual recruiting query is never rejected by keyword rules.
-
-See `docs/ARCHITECTURE.md` for the state machine, budget and degradation
-design, and `docs/DECISIONS.md` for the ADR-style trade-offs.
-
-Design rationale: the missing piece is not retrieval — Elasticsearch is already
-strong — but the search-policy layer that decides what to search, where, whether
-it is enough, and when to change direction. This harness adds a budget-governed
-reflective loop on top of a deterministic hybrid retrieval backend, behind a
-two-method `SearchTool` protocol. A standalone Hybrid V2 retrieval engine is
-included and connects to an operator-provided Elasticsearch 8 cluster.
-
-> Honesty note: no production data or credentials are included; the demo
-> ships 16 fictional candidates and runs without any API key.
-> An optional reproducible real-LLM benchmark ships 100 synthetic candidates
-> and 10 complex queries; its `synthetic_oracle` results are reported separately
-> and must not be compared with company metrics.
-
-</details>
+- [ ] 接入真实 embedding，验证“项目语言 ↔ 能力词”的语义召回收益
+- [ ] 提升 judge / rerank 的证据粒度，修复“探索有货、排序丢货”
+- [ ] 按查询族分配收敛再搜预算，降低真实模型链路约 3 倍的成本
+- [ ] 录制 README 演示 GIF；`docs/demo.tape` 已就绪
 
 ## License
 
