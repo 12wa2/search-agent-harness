@@ -323,7 +323,10 @@ def test_search_writes_restorable_conversation_snapshot() -> None:
         assert turn["status"] == "completed"
         assert turn["queryToken"] == body["queryToken"]
         assert turn["resultItems"]
-        assert turn["resultItems"][0]["docId"] == body["items"][0]["docId"]
+        snapshot = turn["resultItems"][0]
+        assert snapshot["docId"] == body["items"][0]["docId"]
+        assert snapshot["workExperiences"]
+        assert snapshot["educations"]
 
 
 def test_search_rejects_empty_query(client: TestClient) -> None:
@@ -448,6 +451,11 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "toggleCandidateExclusion" in script.text
     assert "localStorage" in script.text
     assert "excludedCandidateIds" in script.text
+    assert "candidateResumeUrl" in script.text
+    assert 'RESUME_PAGE = "/resume.html"' in script.text
+    assert "RESUME_CACHE_PREFIX" in script.text
+    assert "cand-resume" in script.text
+    assert "resumeToken: turn.queryToken" in script.text
     assert 'url.searchParams.set("view", next)' in script.text
     assert "clarification-options" in script.text
     assert "为什么继续搜索" in script.text
@@ -503,6 +511,56 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert ".agent-sidebar" in styles.text
     assert ".agent-session-list" in styles.text
     assert ".intro-grid" in styles.text
+    assert ".candidate-name-link" in styles.text
+    assert ".cand-resume" in styles.text
+
+
+def test_resume_page_and_assets_are_served(client: TestClient) -> None:
+    page = client.get("/resume.html")
+    assert page.status_code == 200
+    assert page.headers["content-type"].startswith("text/html")
+    assert page.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+    assert "候选人简历" in page.text
+    assert 'id="resume-sheet"' in page.text
+    assert 'id="resume-work-list"' in page.text
+    assert 'id="resume-projects-list"' in page.text
+    assert 'id="resume-education-list"' in page.text
+    assert 'id="resume-detail-notice"' in page.text
+    assert "工作经历" in page.text
+    assert "项目经历" in page.text
+    assert "教育经历" in page.text
+    assert "返回检索结果" in page.text
+    assert "/resume.css?v=1" in page.text
+    assert "/resume.js?v=1" in page.text
+
+    script = client.get("/resume.js")
+    assert script.status_code == 200
+    assert script.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+    assert "javascript" in script.headers["content-type"]
+    assert "search-agent:candidate:" in script.text
+    assert "function renderResume" in script.text
+    assert "function normalizeWorkRow" in script.text
+    assert "function normalizeEducationRow" in script.text
+    assert "school_name" in script.text
+    assert "start_date" in script.text
+    assert "/sessions/" in script.text
+    assert "function fetchSessionCandidate" in script.text
+    assert "function hasResumeDetails" in script.text
+    assert "fallback?.token" in script.text
+    assert "function rememberCandidate" in script.text
+    assert "简历详情已过期" in script.text
+    assert "window.print()" in script.text
+
+    styles = client.get("/resume.css")
+    assert styles.status_code == 200
+    assert styles.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+    assert "text/css" in styles.headers["content-type"]
+    assert ".resume-columns" in styles.text
+    assert ".resume-history" in styles.text
+    assert ".resume-skill-list" in styles.text
+    assert ".resume-detail-notice" in styles.text
+    assert "@media print" in styles.text
+    assert "[hidden]" in styles.text
 
 
 def test_search_response_exposes_delivery_target_and_end_reason(client: TestClient) -> None:
@@ -515,7 +573,14 @@ def test_search_response_exposes_delivery_target_and_end_reason(client: TestClie
 
 def test_web_assets_are_present_in_the_package() -> None:
     web = files("search_agent").joinpath("web")
-    for name in ("index.html", "styles.css", "app.js"):
+    for name in (
+        "index.html",
+        "styles.css",
+        "app.js",
+        "resume.html",
+        "resume.css",
+        "resume.js",
+    ):
         assert web.joinpath(name).is_file(), name
 
 

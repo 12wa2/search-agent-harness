@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f5f9f7">
+<title>候选人简历 · Search Agent Harness</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%2317232a'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='%23fbfaf6' stroke-width='1.4'/%3E%3Ccircle cx='16' cy='8' r='2' fill='%23a23a2c'/%3E%3Ccircle cx='16' cy='24' r='2' fill='%23a23a2c'/%3E%3Ccircle cx='8' cy='16' r='2' fill='%23a23a2c'/%3E%3Ccircle cx='24' cy='16' r='2' fill='%23a23a2c'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/resume.css?v=1">
+</head>
+<body>
+<a class="skip-link" href="#resume-main">跳到简历正文</a>
+
+<header class="resume-bar">
+  <a class="resume-brand" href="/" data-back-link aria-label="返回 Search Agent Harness 检索页">
+    <svg viewBox="0 0 40 40" aria-hidden="true">
+      <circle cx="20" cy="20" r="12" fill="none" stroke="currentColor" stroke-opacity=".32"></circle>
+      <circle cx="20" cy="6" r="2.2" fill="currentColor"></circle>
+      <circle cx="29.9" cy="10.1" r="2.2" fill="currentColor"></circle>
+      <circle cx="34" cy="20" r="2.2" fill="currentColor"></circle>
+      <circle cx="29.9" cy="29.9" r="2.2" fill="currentColor"></circle>
+      <circle cx="20" cy="34" r="2.2" fill="currentColor"></circle>
+      <circle cx="10.1" cy="29.9" r="2.2" fill="currentColor"></circle>
+      <circle cx="6" cy="20" r="2.2" fill="currentColor"></circle>
+      <circle cx="10.1" cy="10.1" r="2.2" fill="currentColor"></circle>
+    </svg>
+    <span class="resume-brand-copy">
+      <strong>Search Agent <em>Harness</em></strong>
+      <small>候选人简历</small>
+    </span>
+  </a>
+  <div class="resume-actions">
+    <button class="resume-print" id="print-resume" type="button" hidden>打印 / 保存 PDF</button>
+    <a class="resume-back" href="/" data-back-link>
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.5 8h-9M7 3.5 2.5 8 7 12.5"></path></svg>
+      <span>返回检索结果</span>
+    </a>
+  </div>
+</header>
+
+<main class="resume-main" id="resume-main">
+  <section class="resume-state" id="resume-loading" aria-live="polite">
+    <span class="resume-state-mark" aria-hidden="true"></span>
+    <h1>正在读取候选人简历</h1>
+    <p>从本次检索会话中加载完整履历，请稍候。</p>
+  </section>
+
+  <section class="resume-state resume-state-error" id="resume-error" hidden aria-live="polite">
+    <span class="resume-state-mark" aria-hidden="true">!</span>
+    <h1 id="resume-error-title">简历暂时无法加载</h1>
+    <p id="resume-error-copy">请返回检索结果后重新打开这份简历。</p>
+    <div class="resume-state-actions">
+      <a class="resume-state-back" href="/" data-back-link>返回检索结果</a>
+      <button class="resume-retry" id="resume-retry" type="button" hidden>重新加载</button>
+    </div>
+  </section>
+
+  <article class="resume-sheet" id="resume-sheet" hidden aria-labelledby="resume-name">
+    <header class="resume-hero">
+      <div class="resume-hero-top">
+        <div class="resume-person">
+          <div class="resume-initial" id="resume-initial" aria-hidden="true"></div>
+          <div class="resume-person-copy">
+            <h1 id="resume-name">候选人</h1>
+            <p class="resume-current-role" id="resume-current-role" hidden></p>
+          </div>
+        </div>
+        <dl class="resume-quick-facts" id="resume-quick-facts" aria-label="候选人概要"></dl>
+      </div>
+      <p class="resume-summary" id="resume-summary" hidden></p>
+    </header>
+
+    <p class="resume-detail-notice" id="resume-detail-notice" role="status" hidden></p>
+
+    <div class="resume-columns">
+      <aside class="resume-aside" aria-label="候选人基本信息">
+        <section class="resume-section resume-basics" id="resume-basics-section" hidden>
+          <h2>基本信息</h2>
+          <dl class="resume-fact-list" id="resume-basics"></dl>
+        </section>
+
+        <section class="resume-section" id="resume-intention-section" hidden>
+          <h2>求职意向</h2>
+          <dl class="resume-fact-list" id="resume-intention"></dl>
+        </section>
+
+        <section class="resume-section" id="resume-skills-section" hidden>
+          <h2>专业技能</h2>
+          <ul class="resume-skill-list" id="resume-skills"></ul>
+        </section>
+
+        <section class="resume-section" id="resume-credentials-section" hidden>
+          <h2>证书与语言</h2>
+          <div id="resume-credentials"></div>
+        </section>
+
+        <p class="resume-source-note">内容直接来自本次检索结果，未做补全或推断。会话过期后，请从检索页重新打开简历。</p>
+      </aside>
+
+      <div class="resume-body">
+        <section class="resume-section resume-history-section" id="resume-work-section" hidden>
+          <div class="resume-section-head">
+            <h2>工作经历</h2>
+            <span id="resume-work-count"></span>
+          </div>
+          <ol class="resume-history" id="resume-work-list"></ol>
+        </section>
+
+        <section class="resume-section resume-history-section" id="resume-projects-section" hidden>
+          <div class="resume-section-head">
+            <h2>项目经历</h2>
+            <span id="resume-projects-count"></span>
+          </div>
+          <ol class="resume-history" id="resume-projects-list"></ol>
+        </section>
+
+        <section class="resume-section resume-history-section" id="resume-education-section" hidden>
+          <div class="resume-section-head">
+            <h2>教育经历</h2>
+            <span id="resume-education-count"></span>
+          </div>
+          <ol class="resume-history" id="resume-education-list"></ol>
+        </section>
+
+        <section class="resume-section resume-history-section" id="resume-internships-section" hidden>
+          <div class="resume-section-head">
+            <h2>实习经历</h2>
+            <span id="resume-internships-count"></span>
+          </div>
+          <ol class="resume-history" id="resume-internships-list"></ol>
+        </section>
+
+        <p class="resume-empty" id="resume-body-empty" hidden>本次检索结果未包含工作、项目或教育明细。</p>
+      </div>
+    </div>
+  </article>
+</main>
+
+<footer class="resume-footer">
+  <span>Search Agent Harness</span>
+  <span>候选人资料仅用于本次招聘检索</span>
+</footer>
+
+<noscript><div class="resume-state">查看简历需要启用 JavaScript。</div></noscript>
+<script src="/resume.js?v=1"></script>
+</body>
+</html>

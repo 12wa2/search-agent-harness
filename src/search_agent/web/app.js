@@ -38,6 +38,8 @@ const STAGE_META = {
 const PAGE_SIZE = 5;
 const CONVERSATION_KEY = "search-agent:conversation";
 const VIEW_KEY = "search-agent:view";
+const RESUME_PAGE = "/resume.html";
+const RESUME_CACHE_PREFIX = "search-agent:candidate:";
 const FINALIZE_REASON_COPY = Object.freeze({
   target_reached: "达到目标人数，搜索提前收敛。",
   max_iterations: "达到迭代轮数上限，交付当前最优结果。",
@@ -1456,7 +1458,9 @@ function renderRestoredConversation(memory) {
     if (items.length) {
       const list = el("ul", "chat-candidates");
       items.forEach((item, index) => {
-        const card = renderCandidate(item, index + 1);
+        const card = renderCandidate(item, index + 1, {
+          resumeToken: turn.queryToken || null,
+        });
         card.classList.add("chat-candidate");
         list.append(card);
       });
@@ -1946,6 +1950,49 @@ function formatCandidateRank(rank) {
   return String(Math.trunc(value)).padStart(2, "0");
 }
 
+function resumeCacheKey(docId) {
+  return `${RESUME_CACHE_PREFIX}${docId}`;
+}
+
+function candidateResumeUrl(item, rank, token = state.queryToken) {
+  const url = new URL(RESUME_PAGE, location.origin);
+  if (item.docId) url.searchParams.set("docId", String(item.docId));
+  if (token) url.searchParams.set("token", token);
+  if (rank != null) url.searchParams.set("rank", String(rank));
+  const returnTo = `${location.pathname}${location.search}${location.hash}`;
+  if (returnTo.startsWith("/") && !returnTo.startsWith("//")) {
+    url.searchParams.set("returnTo", returnTo);
+  }
+  return `${url.pathname}${url.search}`;
+}
+
+function rememberCandidateForResume(item, rank, token = state.queryToken) {
+  if (!item?.docId) return;
+  try {
+    localStorage.setItem(
+      resumeCacheKey(item.docId),
+      JSON.stringify({
+        version: 2,
+        item,
+        rank,
+        token: token || null,
+        cachedAt: Date.now(),
+      }),
+    );
+  } catch (err) {
+    // The session token fallback still resolves the resume when storage is unavailable.
+  }
+}
+
+function bindCandidateResumeLink(link, item, rank, token = state.queryToken) {
+  const remember = () => rememberCandidateForResume(item, rank, token);
+  link.addEventListener("pointerdown", remember);
+  link.addEventListener("click", remember);
+  link.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") remember();
+  });
+}
+
 const candidateTooltipContent = new WeakMap();
 let candidateTooltipNode = null;
 let candidateTooltipTrigger = null;
@@ -2181,15 +2228,33 @@ function buildCandidateTooltip(item, rank, explanation, groups, showRawMatchExpl
   return { content, description: description.join("。") };
 }
 
-function renderCandidate(item, rank, { showRawMatchExplanation = false } = {}) {
+function renderCandidate(
+  item,
+  rank,
+  { showRawMatchExplanation = false, resumeToken = state.queryToken } = {},
+) {
   const li = el("li", "candidate");
   const docId = String(item.docId || "");
+  const resumeUrl = docId ? candidateResumeUrl(item, rank, resumeToken) : "";
   const excluded = state.excludedCandidateIds.has(docId);
   li.dataset.candidateId = docId;
   li.classList.toggle("is-excluded", excluded);
   const top = el("div", "cand-top");
   const who = el("div", "cand-id");
-  who.append(el("h3", "", item.name || item.docId));
+  const name = el("h3");
+  if (resumeUrl) {
+    const nameLink = el("a", "candidate-name-link", item.name || item.docId);
+    nameLink.href = resumeUrl;
+    nameLink.target = "_blank";
+    nameLink.rel = "noopener noreferrer";
+    nameLink.title = "在新页面查看完整简历";
+    nameLink.setAttribute("aria-label", `查看 ${item.name || item.docId} 的完整简历（新标签页）`);
+    bindCandidateResumeLink(nameLink, item, rank, resumeToken);
+    name.append(nameLink);
+  } else {
+    name.textContent = item.name || item.docId;
+  }
+  who.append(name);
   const meta = el("p", "cand-meta");
   if (item.docId) meta.append(el("span", "cand-meta-id", item.docId));
   if (item.workYears != null) meta.append(el("span", "", `${item.workYears} 年经验`));
@@ -2202,6 +2267,16 @@ function renderCandidate(item, rank, { showRawMatchExplanation = false } = {}) {
   score.append(el("span", "score-label", "排序分"), el("span", "score", scoreText));
   const control = el("div", "cand-control");
   control.append(score);
+  if (resumeUrl) {
+    const resumeLink = el("a", "cand-resume", "简历");
+    resumeLink.href = resumeUrl;
+    resumeLink.target = "_blank";
+    resumeLink.rel = "noopener noreferrer";
+    resumeLink.title = "查看完整简历";
+    resumeLink.setAttribute("aria-label", `查看 ${item.name || item.docId} 的完整简历（新标签页）`);
+    bindCandidateResumeLink(resumeLink, item, rank, resumeToken);
+    control.append(resumeLink);
+  }
   if (state.conversationId && docId) {
     const excludeButton = el("button", "cand-exclude", excluded ? "恢复" : "排除");
     excludeButton.type = "button";

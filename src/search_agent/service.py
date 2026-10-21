@@ -553,21 +553,39 @@ class SearchAgentService:
 
     @staticmethod
     def _snapshot_candidate(tc: ToolCandidate) -> dict[str, Any]:
-        """Keep only the fields needed to restore a candidate card."""
+        """Keep the fields needed to restore both the result card and resume."""
         item = SearchAgentService._to_candidate_item(tc)
         fields = {
+            "id",
             "docId",
             "candidateProfileId",
             "userId",
+            "newestAppId",
             "score",
+            "matchRate",
             "name",
             "workYears",
+            "summaryEn",
+            "avatar",
             "summary",
+            "gender",
+            "age",
             "currentResidence",
             "tags",
             "skills",
+            "certificates",
+            "languages",
+            "workExperiences",
+            "internshipExperiences",
+            "projectExperiences",
+            "educations",
             "expectedPositions",
+            "expectedIndustries",
             "expectedCities",
+            "expectedSalary",
+            "expectedWorkType",
+            "workState",
+            "profileSnapshot",
             "matchExplanation",
         }
         return item.model_dump(
