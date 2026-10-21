@@ -1,10 +1,12 @@
 {
-  "description": "Synthetic-oracle complex-query benchmark over a seeded 100-candidate corpus. relevant is derived from generator ground truth (ability set + minimum years), not from human review.",
+  "description": "Synthetic-oracle complex-query benchmark over a seeded 100-candidate V2-native resume corpus. relevant is derived from generator ground truth (ability set + minimum years), not from human review.",
   "label_kind": "synthetic_oracle",
+  "schemaVersion": 2,
+  "generator": "v2_resume_corpus",
   "seed": 2026,
   "size": 100,
-  "candidates": "examples/bench100/candidates.jsonl",
-  "oracle": "examples/bench100/oracle.json",
+  "candidates": "examples/bench_v2_100/candidates.jsonl",
+  "oracle": "examples/bench_v2_100/oracle.json",
   "queries": [
     {
       "id": "backend_concurrency",
@@ -26,14 +28,13 @@
       "minYears": 3,
       "roleTitle": "后端工程师",
       "relevant": [
-        "g001",
-        "g015",
-        "g029",
-        "g043",
-        "g057",
-        "g071",
-        "g085",
-        "g099"
+        "v015",
+        "v029",
+        "v043",
+        "v057",
+        "v071",
+        "v085",
+        "v099"
       ]
     },
     {
@@ -57,13 +58,12 @@
       "minYears": 5,
       "roleTitle": "推荐算法工程师",
       "relevant": [
-        "g003",
-        "g017",
-        "g031",
-        "g045",
-        "g059",
-        "g073",
-        "g087"
+        "v017",
+        "v031",
+        "v045",
+        "v059",
+        "v073",
+        "v087"
       ]
     },
     {
@@ -85,20 +85,22 @@
       "minYears": 3,
       "roleTitle": "数据工程师",
       "relevant": [
-        "g004",
-        "g012",
-        "g018",
-        "g026",
-        "g032",
-        "g040",
-        "g046",
-        "g054",
-        "g060",
-        "g068",
-        "g074",
-        "g082",
-        "g088",
-        "g096"
+        "v004",
+        "v012",
+        "v018",
+        "v022",
+        "v026",
+        "v032",
+        "v040",
+        "v046",
+        "v054",
+        "v060",
+        "v068",
+        "v074",
+        "v075",
+        "v082",
+        "v088",
+        "v096"
       ]
     },
     {
@@ -121,13 +123,14 @@
       "minYears": 3,
       "roleTitle": "系统架构师",
       "relevant": [
-        "g005",
-        "g019",
-        "g033",
-        "g047",
-        "g061",
-        "g075",
-        "g089"
+        "v005",
+        "v019",
+        "v027",
+        "v033",
+        "v047",
+        "v061",
+        "v075",
+        "v089"
       ]
     },
     {
@@ -150,21 +153,22 @@
       "minYears": 3,
       "roleTitle": "后端工程师",
       "relevant": [
-        "g002",
-        "g014",
-        "g016",
-        "g028",
-        "g030",
-        "g042",
-        "g044",
-        "g056",
-        "g058",
-        "g070",
-        "g072",
-        "g084",
-        "g086",
-        "g098",
-        "g100"
+        "v002",
+        "v014",
+        "v016",
+        "v028",
+        "v030",
+        "v042",
+        "v044",
+        "v056",
+        "v058",
+        "v062",
+        "v070",
+        "v072",
+        "v084",
+        "v086",
+        "v098",
+        "v100"
       ]
     },
     {
@@ -187,21 +191,22 @@
       "minYears": 5,
       "roleTitle": "后端工程师",
       "relevant": [
-        "g002",
-        "g006",
-        "g016",
-        "g020",
-        "g030",
-        "g034",
-        "g044",
-        "g048",
-        "g052",
-        "g058",
-        "g062",
-        "g072",
-        "g086",
-        "g090",
-        "g091"
+        "v002",
+        "v015",
+        "v016",
+        "v020",
+        "v030",
+        "v034",
+        "v044",
+        "v048",
+        "v058",
+        "v062",
+        "v066",
+        "v072",
+        "v076",
+        "v086",
+        "v090",
+        "v100"
       ]
     },
     {
@@ -223,24 +228,21 @@
       "minYears": 3,
       "roleTitle": "机器学习工程师",
       "relevant": [
-        "g003",
-        "g009",
-        "g011",
-        "g012",
-        "g014",
-        "g017",
-        "g023",
-        "g031",
-        "g037",
-        "g045",
-        "g051",
-        "g059",
-        "g065",
-        "g071",
-        "g073",
-        "g079",
-        "g087",
-        "g093"
+        "v003",
+        "v009",
+        "v010",
+        "v017",
+        "v023",
+        "v031",
+        "v037",
+        "v045",
+        "v051",
+        "v059",
+        "v065",
+        "v073",
+        "v079",
+        "v087",
+        "v093"
       ]
     },
     {
@@ -263,12 +265,14 @@
       "minYears": 5,
       "roleTitle": "数据平台架构师",
       "relevant": [
-        "g004",
-        "g018",
-        "g032",
-        "g060",
-        "g074",
-        "g088"
+        "v004",
+        "v018",
+        "v032",
+        "v046",
+        "v060",
+        "v074",
+        "v075",
+        "v088"
       ]
     },
     {
@@ -291,18 +295,20 @@
       "minYears": 5,
       "roleTitle": "基础设施工程师",
       "relevant": [
-        "g005",
-        "g011",
-        "g019",
-        "g025",
-        "g033",
-        "g039",
-        "g047",
-        "g053",
-        "g061",
-        "g067",
-        "g075",
-        "g089"
+        "v005",
+        "v011",
+        "v019",
+        "v025",
+        "v033",
+        "v039",
+        "v047",
+        "v053",
+        "v061",
+        "v067",
+        "v075",
+        "v081",
+        "v089",
+        "v095"
       ]
     },
     {
@@ -325,11 +331,11 @@
       "minYears": 8,
       "roleTitle": "系统架构师",
       "relevant": [
-        "g041",
-        "g055",
-        "g069",
-        "g083",
-        "g097"
+        "v041",
+        "v055",
+        "v069",
+        "v083",
+        "v097"
       ]
     }
   ]

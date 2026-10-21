@@ -79,9 +79,15 @@
   缺口反思与策略改写，完成后追加交付闭环；非搜索请求由意图路由直接回复，不展示虚假的
   检索任务或候选人结果。接口、SSE 事件、会话记忆、停止语义与分页行为不变。
   同步更新 `docs/console.png`。
-- **真实模型 A/B 实验（100 人合成基准）**（`examples/real_ab_experiment.py`、
-  `examples/build_real_ab_bench.py`、`examples/bench100/`、`examples/real_ab_queries_100.json`）：
-  新增可复现的 100 人种子化语料、10 条复杂 query 和 `synthetic_oracle` 标签，固定同一 Qwen 网关、
+- **V2 原生字段简历基准**（`examples/bench_v2_100/`、`src/search_agent/v2_resume_corpus.py`、
+  `tests/test_v2_resume_corpus.py`）：替换早期轻量字段语料，新增 100 份可复现简历，完整覆盖
+  工作职责、项目经历、自我评价、技能、教育、求职意向和基础画像；导入 ES 时继续由现有索引器
+  派生 `work_stats`、最高学历和 5 类文本向量。新数据保持 10 条复杂 query，并逐条重新生成
+  `relevant` oracle；旧版 `examples/bench100/` 已删除。
+- **早期真实模型 A/B 实验（旧版轻量字段基准）**（`examples/real_ab_experiment.py`、
+  `examples/build_real_ab_bench.py`、`examples/real_ab_queries_100.json`）：
+  历史结果保留在 `docs/real_llm_ab_results_100.*`。该实验使用 100 人种子化语料、10 条复杂 query
+  和 `synthetic_oracle` 标签，固定同一 Qwen 网关、
   Elasticsearch 索引与 `top-k=5`，比较单趟基线和完整反思循环。正式复核（`qwen3.8-flash`）记录
   recall@5 `0.392 → 0.473`、precision `0.740 → 0.840`、池召回 `0.735 → 0.937`、
   新增相关候选 `17` 个（相关率 `0.708`）、LLM 调用 `20 → 59`、tokens

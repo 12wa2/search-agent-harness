@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from search_agent.corpus import QuerySpec, generate_corpus, write_corpus
+from search_agent.corpus import QuerySpec
+from search_agent.v2_resume_corpus import (
+    generate_v2_resume_corpus,
+    write_v2_resume_corpus,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT_DIR = ROOT / "examples" / "bench100"
+OUT_DIR = ROOT / "examples" / "bench_v2_100"
 BENCHMARK_PATH = ROOT / "examples" / "real_ab_queries_100.json"
 SEED = 2026
 SIZE = 100
@@ -153,8 +157,8 @@ QUERY_META: dict[str, dict[str, list[str]]] = {
 
 def main() -> int:
     specs = tuple(spec for _query_id, spec in BENCH_SPECS)
-    corpus = generate_corpus(size=SIZE, seed=SEED, queries=specs)
-    candidates_path, oracle_path = write_corpus(corpus, OUT_DIR)
+    corpus = generate_v2_resume_corpus(size=SIZE, seed=SEED, queries=specs)
+    candidates_path, oracle_path = write_v2_resume_corpus(corpus, OUT_DIR)
 
     rows = []
     for query_id, spec in BENCH_SPECS:
@@ -177,15 +181,17 @@ def main() -> int:
 
     payload = {
         "description": (
-            "Synthetic-oracle complex-query benchmark over a seeded 100-candidate corpus. "
-            "relevant is derived from generator ground truth (ability set + minimum years), "
-            "not from human review."
+            "Synthetic-oracle complex-query benchmark over a seeded 100-candidate "
+            "V2-native resume corpus. relevant is derived from generator ground truth "
+            "(ability set + minimum years), not from human review."
         ),
         "label_kind": "synthetic_oracle",
+        "schemaVersion": 2,
+        "generator": "v2_resume_corpus",
         "seed": SEED,
         "size": corpus.size,
-        "candidates": "examples/bench100/candidates.jsonl",
-        "oracle": "examples/bench100/oracle.json",
+        "candidates": "examples/bench_v2_100/candidates.jsonl",
+        "oracle": "examples/bench_v2_100/oracle.json",
         "queries": rows,
     }
     BENCHMARK_PATH.write_text(

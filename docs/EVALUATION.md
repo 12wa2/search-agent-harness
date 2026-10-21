@@ -80,7 +80,9 @@ search-agent eval --generated 120 --seed 7 --ablate --baseline docs/eval_baselin
 
 ## 4. 真实 LLM + Hybrid V2 的 A/B 复核
 
-**设置**：100 个种子化候选人、10 条复杂查询、Elasticsearch 索引 `search-agent-hybrid-v2-bench100`、`qwen3.8-flash`、交付 top-5。基线为 `understand → 单路径 → judge → finalize`；实验组为 Agent 反思链路。两条链路共享语料、模型、检索工具和标注集；基线并非零 LLM，唯一结构变量是反思循环。
+> 下表是旧版轻量字段语料的已记录结果，保留作历史对照。仓库当前使用的复现基准已切换为 V2 原生字段语料 `examples/bench_v2_100`；使用新语料重跑后，应更新本节指标。
+
+**历史设置**：旧版 100 个轻量字段候选人、10 条复杂查询、Elasticsearch 索引 `search-agent-hybrid-v2-bench100`、`qwen3.8-flash`、交付 top-5。基线为 `understand → 单路径 → judge → finalize`；实验组为 Agent 反思链路。两条链路共享语料、模型、检索工具和标注集；基线并非零 LLM，唯一结构变量是反思循环。
 
 | 指标 | 单趟基线 | Agent 反思循环 | 变化 |
 |---|---:|---:|---:|
@@ -109,7 +111,7 @@ search-agent eval --generated 120 --seed 7 --ablate --baseline docs/eval_baselin
 
 - [完整报告](real_llm_ab_results_100.md)
 - [原始结果](real_llm_ab_results_100.json)
-- [基准数据与复现说明](../examples/bench100/README.md)
+- [当前 V2 原生字段基准与复现说明](../examples/bench_v2_100/README.md)
 
 ## 5. 解释边界
 
