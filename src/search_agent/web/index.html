@@ -163,10 +163,17 @@
       <textarea id="chat-query" rows="2" placeholder="描述目标岗位、必备能力、城市与排除条件…"></textarea>
       <div class="composer-toolbar">
         <div class="composer-settings">
-          <label for="chat-top-k">交付人数</label>
-          <input id="chat-top-k" type="number" min="1" max="50" value="20" inputmode="numeric">
-          <span class="composer-separator" aria-hidden="true"></span>
-          <span class="composer-mode" id="composer-mode">快速演示</span>
+          <label class="composer-count" for="chat-top-k">
+            <span class="composer-setting-label">交付人数</span>
+            <span class="composer-number-control">
+              <input id="chat-top-k" type="number" min="1" max="50" value="20" inputmode="numeric">
+              <span class="composer-number-unit" aria-hidden="true">人</span>
+            </span>
+          </label>
+          <span class="composer-mode">
+            <span class="composer-mode-prefix">模式</span>
+            <span id="composer-mode">快速演示</span>
+          </span>
           <button id="chat-new" class="chat-new" type="button">新对话</button>
         </div>
         <div class="composer-actions">

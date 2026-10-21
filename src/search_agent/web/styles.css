@@ -4149,7 +4149,7 @@ body[data-view="agent"] #version-chip {
 .composer-settings label {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
 }
 
 .composer-settings input {
@@ -4162,12 +4162,6 @@ body[data-view="agent"] #version-chip {
   color: #40534d;
   font: 10px/1 var(--mono);
   text-align: center;
-}
-
-.composer-separator {
-  width: 1px;
-  height: 12px;
-  background: var(--rule);
 }
 
 .composer-mode {
@@ -4622,13 +4616,8 @@ body[data-view="agent"] #version-chip {
     gap: 5px;
   }
 
-  .composer-separator,
   .composer-mode {
     display: none;
-  }
-
-  .chat-new {
-    padding-left: 4px;
   }
 }
 
@@ -5525,31 +5514,123 @@ p {
   line-height: 1.55;
 }
 
-.composer-toolbar {
-  padding: 3px 9px 8px 14px;
+.chat-composer textarea::placeholder {
+  color: var(--muted);
+  opacity: 1;
 }
 
-.composer-settings label,
-.composer-mode,
-.chat-new {
+.composer-toolbar {
+  min-height: 48px;
+  padding: 5px 10px 9px 15px;
+}
+
+.composer-settings {
+  gap: 14px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
+}
+
+.composer-setting-label {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.composer-number-control {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding-right: 8px;
+  border: 1px solid var(--rule);
+  border-radius: 9px;
+  background: var(--surface-tint);
+  transition: border-color 140ms ease-out, box-shadow 140ms ease-out;
+}
+
+.composer-number-control:hover {
+  border-color: var(--accent-line);
+}
+
+.composer-number-control:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(18, 102, 83, 0.1);
 }
 
 .composer-settings input {
-  border-color: var(--rule);
-  background: var(--surface-tint);
+  width: 34px;
+  height: 30px;
+  padding: 0 0 0 5px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--ink);
+  font: 11px/1 var(--mono);
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
+.composer-settings input:focus {
+  outline: 0;
+}
+
+.composer-number-unit {
+  color: var(--quiet);
+  font-size: 9.5px;
+  line-height: 1;
+}
+
+.composer-mode {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--surface-tint);
+  color: var(--muted);
+  font: 500 11px/1 var(--sans);
+  white-space: nowrap;
+}
+
+.composer-mode::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(18, 117, 100, 0.1);
+}
+
+.composer-mode-prefix {
+  color: var(--quiet);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.chat-new {
+  display: none;
+  min-height: 32px;
+  align-items: center;
+  padding: 0 11px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
 .chat-new:hover {
-  color: var(--ink);
+  border-color: var(--accent-line);
+  background: var(--accent-wash);
+  color: var(--accent-strong);
 }
 
 .chat-send {
-  width: 39px;
-  height: 39px;
+  width: 42px;
+  height: 42px;
   background: var(--forest);
   color: #f8fbf9;
   box-shadow: 0 6px 16px rgba(12, 47, 39, 0.22);
@@ -5566,8 +5647,8 @@ p {
 }
 
 .composer-note {
-  color: var(--quiet);
-  font-size: 9px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -6640,6 +6721,10 @@ p {
     display: none;
   }
 
+  .chat-new {
+    display: inline-flex;
+  }
+
   .agent-main {
     height: 100%;
   }
@@ -6961,8 +7046,11 @@ p {
     padding: 2px 7px 7px 11px;
   }
 
-  .composer-mode,
-  .composer-separator {
+  .composer-settings {
+    gap: 8px;
+  }
+
+  .composer-mode {
     display: none;
   }
 
@@ -6972,8 +7060,8 @@ p {
   }
 
   .chat-send {
-    width: 36px;
-    height: 36px;
+    width: 42px;
+    height: 42px;
   }
 
   .console-heading h1 {
