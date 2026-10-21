@@ -23,6 +23,7 @@ from search_agent.corpus import (
     IMPLICIT_PROJECTS,
     QuerySpec,
 )
+from search_agent.school_tiers import school_tiers_for
 
 SCHEMA_VERSION = 2
 _CORPUS_END_DATE = date(2026, 10, 1)
@@ -547,15 +548,18 @@ def _education_rows(rng: random.Random, *, years: float, degree: str) -> list[di
                 "school": school,
                 "major": major,
                 "degree": "本科",
+                "schoolTier": list(school_tiers_for(school)),
                 "startDate": f"{graduation - 6}-09-01",
                 "endDate": f"{graduation - 3}-06-30",
             }
         )
+        master_school = rng.choice(_SCHOOLS)
         rows.append(
             {
-                "school": rng.choice(_SCHOOLS),
+                "school": master_school,
                 "major": major,
                 "degree": "硕士",
+                "schoolTier": list(school_tiers_for(master_school)),
                 "startDate": f"{graduation - 3}-09-01",
                 "endDate": f"{graduation}-06-30",
             }
@@ -566,6 +570,7 @@ def _education_rows(rng: random.Random, *, years: float, degree: str) -> list[di
                 "school": school,
                 "major": major,
                 "degree": "本科",
+                "schoolTier": list(school_tiers_for(school)),
                 "startDate": f"{graduation - 4}-09-01",
                 "endDate": f"{graduation}-06-30",
             }

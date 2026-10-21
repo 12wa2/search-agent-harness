@@ -9,6 +9,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from search_agent.school_tiers import school_tiers_for
+
 from .catalogs import get_work_state_catalog, resolve_salary_codes_range_overlap
 from .config import HybridV2Config
 from .embedding import Embedder, build_embedder
@@ -170,6 +172,7 @@ def build_candidate_index_mapping(
                         "name": _text_with_keyword(),
                     }
                 },
+                "school_tier": _keyword(),
                 "start_time": {"type": "date"},
                 "end_time": {"type": "date"},
             }
@@ -264,6 +267,7 @@ def build_candidate_index_mapping(
                 "school": _text_with_keyword(),
                 "major": _text_with_keyword(),
                 "degree": _text_with_keyword(),
+                "school_tier": _keyword(),
                 "vector": _dense_vector(embedding_dims),
             }
         )
@@ -419,6 +423,22 @@ def _degree_code(name: str) -> int | None:
     return None
 
 
+def _school_tiers(value: Any, *, school: str = "") -> list[str]:
+    raw_values = value if isinstance(value, list) else [value]
+    found: set[str] = set()
+    for raw in raw_values:
+        text = _label(raw) or _text(raw)
+        if "985" in text:
+            found.add("985")
+        if "211" in text:
+            found.add("211")
+    if "985" in found:
+        found.add("211")
+    if found:
+        return [tier for tier in ("985", "211") if tier in found]
+    return list(school_tiers_for(school))
+
+
 def _gender(value: Any) -> dict[str, Any] | None:
     if value is None or value == "":
         return None
@@ -439,6 +459,18 @@ def _work_state(value: Any) -> dict[str, Any] | None:
         if text in {code, name} or text.casefold() == name.casefold():
             return {"code": code, "name": name}
     return {"name": text}
+
+
+def _work_type(value: Any) -> dict[str, Any] | None:
+    text = _label(value) or _text(value)
+    if not text:
+        return None
+    row: dict[str, Any] = {"name": text}
+    if isinstance(value, dict):
+        code = _first_text(value.get("code"))
+        if code:
+            row["code"] = code
+    return row
 
 
 def _salary_code(value: str) -> int | None:
@@ -545,11 +577,14 @@ def _education_row(raw: dict[str, Any], *, current_time: datetime) -> dict[str, 
     school = _first_text(_get(raw, "school", "school_name", "schoolName"))
     major = _first_text(_get(raw, "major", "major_name", "majorName"))
     degree = _first_text(_get(raw, "degree", "degree_name", "degreeName"))
+    tiers = _school_tiers(_get(raw, "schoolTier", "school_tier"), school=school)
     row: dict[str, Any] = {
         "college": {"name": school},
         "major": {"name": major},
         "degree": {"name": degree, "code": _degree_code(degree)},
     }
+    if tiers:
+        row["school_tier"] = tiers
     start = _normalise_date(
         _get(raw, "start_time", "startTime", "start_date", "startDate"),
         current_time=current_time,
@@ -651,8 +686,10 @@ def _build_draft(
         ),
         "expected_salary": expected_salary,
         "expected_salary_code": _salary_code(expected_salary),
-        "work_type": _label(_get(record, "expectedWorkType", "expected_work_type"))
-        or _label(_get(intention_raw, "work_type", "workType")),
+        "work_type": _work_type(
+            _get(record, "expectedWorkType", "expected_work_type")
+            or _get(intention_raw, "work_type", "workType")
+        ),
         "work_state": _work_state(
             _get(record, "workState", "work_state")
             or _get(intention_raw, "work_state", "workState")
@@ -825,6 +862,7 @@ def convert_candidates_to_documents(
                     "school": _get(_get(row, "college"), "name"),
                     "major": _get(_get(row, "major"), "name"),
                     "degree": _get(_get(row, "degree"), "name"),
+                    "school_tier": _get(row, "school_tier"),
                     "vector": vectors[text],
                 }
                 for index, (row, text) in enumerate(

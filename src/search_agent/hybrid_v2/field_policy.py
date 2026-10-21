@@ -124,6 +124,14 @@ FIELD_POLICIES: dict[StructuredField, FieldPolicy] = {
         precise=True,
         add_soft_by_default=False,
     ),
+    "school_tier": FieldPolicy(
+        field="school_tier",
+        hard_strategy="term",
+        es_field="educations.school_tier",
+        nested_path="educations",
+        precise=True,
+        add_soft_by_default=False,
+    ),
     "city": FieldPolicy(
         field="city",
         hard_strategy="term",

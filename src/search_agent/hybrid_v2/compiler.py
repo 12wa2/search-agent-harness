@@ -68,7 +68,9 @@ _BIRTH_YEAR_QUERY_RE = re.compile(r"(\d{4})\s*年(?:出生|的)?")
 _EXPLICIT_AGE_QUERY_RE = re.compile(r"\d+\s*[-~～至到]\s*\d+\s*岁|\d+\s*岁")
 
 
-_EDUCATION_FIELDS: frozenset[StructuredField] = frozenset({"school", "major", "degree"})
+_EDUCATION_FIELDS: frozenset[StructuredField] = frozenset(
+    {"school", "major", "degree", "school_tier"}
+)
 _WORK_STATS_FIELDS: frozenset[StructuredField] = frozenset(
     {
         "work_segment_count",

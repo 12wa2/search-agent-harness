@@ -68,7 +68,7 @@ Harness 会把这些状态保留在进程内。
 | 技能 | `skills.name` | 兼容 nested 结构 |
 | 工作经历 | `work_experiences.company`、`work_experiences.job`、`work_experiences.description`、开始/结束时间 | 硬文本过滤和 BM25 |
 | 项目经历 | `project_experiences.project_name`、`project_experiences.description` | BM25 和项目向量 |
-| 教育经历 | `educations.college.name`、`educations.major.name`、`educations.degree.name`、`educations.degree.code` | 学历门槛使用 code |
+| 教育经历 | `educations.college.name`、`educations.major.name`、`educations.degree.name`、`educations.degree.code`、`educations.school_tier` | 学历门槛使用 code；`school_tier` 表示单段教育经历的 985/211 层次 |
 | 求职意向 | `intention.positions`、`intention.industries`、`intention.cities`、`intention.expected_salary`、`intention.work_state` | 接受 nested name/code 对象 |
 | 工作统计 | `work_stats.*` | 任职时长、空档、分段数量、岗位任期 |
 | 标签 | `talent_tags.tag_id`、`tags` | 标签词表可选且仅保存在本地 |

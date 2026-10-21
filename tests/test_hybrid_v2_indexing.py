@@ -80,6 +80,7 @@ def _record() -> dict[str, Any]:
                 "school": "Example University",
                 "major": "Computer Science",
                 "degree": "本科",
+                "schoolTier": ["985", "211"],
             }
         ],
         "certificates": [{"name": "Cloud Architect"}],
@@ -87,6 +88,7 @@ def _record() -> dict[str, Any]:
         "expectedPositions": ["Backend Engineer"],
         "expectedCities": ["Shanghai"],
         "expectedSalary": "25k-35k",
+        "expectedWorkType": "全职",
     }
 
 
@@ -112,6 +114,10 @@ def test_mapping_contains_indexed_vectors_and_mode_specific_fields() -> None:
         nested["mappings"]["properties"]["work_segments"]["properties"]["vector"]["index"] is True
     )
     assert nested["mappings"]["properties"]["work_segments"]["type"] == "nested"
+    assert (
+        nested["mappings"]["properties"]["educations"]["properties"]["school_tier"]["type"]
+        == "keyword"
+    )
     assert "work_vector" in flat["mappings"]["properties"]
     assert "work_segments" not in flat["mappings"]["properties"]
 
@@ -136,6 +142,9 @@ def test_nested_conversion_builds_segments_and_work_stats() -> None:
     assert len(document["work_segments"][0]["vector"]) == 8
     assert len(document["skills_vector"]) == 8
     assert document["educations"][0]["degree"]["code"] == 5
+    assert document["educations"][0]["school_tier"] == ["985", "211"]
+    assert document["education_segments"][0]["school_tier"] == ["985", "211"]
+    assert document["intention"]["work_type"] == {"name": "全职"}
 
     item = hit_to_candidate(
         {"_id": document["_id"], "_score": 1.0, "_source": document},

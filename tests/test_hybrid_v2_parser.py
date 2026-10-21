@@ -87,6 +87,107 @@ def test_parser_prompt_includes_system_time_and_tenant_tags() -> None:
     assert HYBRID_V2_IR_JSON_SCHEMA["required"] == ["where", "semantic", "meta"]
 
 
+def test_parser_rewrites_undergraduate_tier_to_school_tier() -> None:
+    payload = {
+        "where": {
+            "type": "and",
+            "children": [
+                {
+                    "type": "leaf",
+                    "condition": {
+                        "field": "degree",
+                        "operator": "eq",
+                        "values": ["本科"],
+                        "required": True,
+                        "weight": 1.0,
+                    },
+                },
+                {
+                    "type": "leaf",
+                    "condition": {
+                        "field": "talent_tag",
+                        "operator": "eq",
+                        "values": ["211"],
+                        "required": True,
+                        "weight": 1.0,
+                    },
+                },
+            ],
+        },
+        "semantic": [],
+        "meta": {"needClarification": False, "clarifyQuestions": [], "notes": []},
+    }
+    llm = FakeLlmClient(responses={"hybrid_search_v2_ir": payload})
+
+    result = parse_query_to_ir("本科是211", llm_client=llm)
+
+    assert result.intent is not None
+    conditions = [
+        child.condition for child in result.intent.where.children if child.condition is not None
+    ]
+    fields = {condition.field: condition for condition in conditions}
+    assert fields["degree"].values == ["本科"]
+    assert fields["school_tier"].values == ["211"]
+    assert "talent_tag" not in fields
+    assert "rewrite_talent_tag_to_school_tier" in result.intent.meta.notes
+    assert "auto_add_school_tier_from_query" in result.intent.meta.notes
+
+
+def test_parser_keeps_plain_985_211_as_talent_tag_without_education_scope() -> None:
+    payload = {
+        "where": {
+            "type": "leaf",
+            "condition": {
+                "field": "talent_tag",
+                "operator": "eq",
+                "values": ["211"],
+                "required": True,
+                "weight": 1.0,
+            },
+        },
+        "semantic": [],
+        "meta": {"needClarification": False, "clarifyQuestions": [], "notes": []},
+    }
+    llm = FakeLlmClient(responses={"hybrid_search_v2_ir": payload})
+
+    result = parse_query_to_ir("找211人才", llm_client=llm)
+
+    assert result.intent is not None
+    assert result.intent.where.condition is not None
+    assert result.intent.where.condition.field == "talent_tag"
+    assert result.intent.where.condition.values == ["211"]
+
+
+def test_parser_does_not_convert_negated_undergraduate_tier() -> None:
+    payload = {
+        "where": {
+            "type": "leaf",
+            "condition": {
+                "field": "talent_tag",
+                "operator": "eq",
+                "values": ["211"],
+                "required": True,
+                "weight": 1.0,
+            },
+        },
+        "semantic": [],
+        "meta": {"needClarification": False, "clarifyQuestions": [], "notes": []},
+    }
+    llm = FakeLlmClient(responses={"hybrid_search_v2_ir": payload})
+
+    result = parse_query_to_ir("本科不是211", llm_client=llm)
+
+    assert result.intent is not None
+    assert result.intent.where.type == "and"
+    fields = {
+        child.condition.field
+        for child in result.intent.where.children
+        if child.condition is not None
+    }
+    assert "talent_tag" in fields
+    assert "school_tier" not in fields
+
+
 def test_parser_retries_once_when_where_is_missing() -> None:
     calls = {"n": 0}
 

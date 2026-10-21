@@ -46,6 +46,17 @@ _DEGREE_QUERY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"博士"), "博士"),
     (re.compile(r"mba", re.I), "MBA"),
 )
+_UNDERGRAD_STAGE_PATTERN = r"(?:第一学历|统招本科|全日制本科|本科)"
+_EDUCATION_TIER_TOKEN_PATTERN = r"(?:985|211)(?:\s*[/、和或,，]\s*(?:985|211))*"
+_EDUCATION_TIER_AFTER_STAGE_RE = re.compile(
+    rf"{_UNDERGRAD_STAGE_PATTERN}(?:学历|阶段|期间)?[^，。；,;\n]{{0,8}}?"
+    rf"({_EDUCATION_TIER_TOKEN_PATTERN})"
+)
+_EDUCATION_TIER_BEFORE_STAGE_RE = re.compile(
+    rf"({_EDUCATION_TIER_TOKEN_PATTERN})(?:院校|大学)?[^，。；,;\n]{{0,6}}?"
+    rf"{_UNDERGRAD_STAGE_PATTERN}"
+)
+_EDUCATION_TIER_NEGATION = ("不要", "排除", "不是", "非", "不考虑", "不要求")
 
 IR_FIELD_ENUM = [
     "name",
@@ -58,6 +69,7 @@ IR_FIELD_ENUM = [
     "school",
     "major",
     "degree",
+    "school_tier",
     "city",
     "intention_city",
     "live_city",
@@ -230,6 +242,7 @@ structured.field 只能取：
 - school：明确学校，如 北京大学、北大、清华
 - major：明确就读/所学专业，如 市场营销、计算机科学；与 position 区分，不要把专业名放进 position
 - degree：学历，values 使用 学历名或代码，如 本科、硕士、5、6
+- school_tier：教育经历级院校层次，values 使用 985 或 211；仅当 985/211 明确修饰「本科/第一学历/统招本科/全日制本科」时使用，必须与 degree 条件并列；禁止写成候选人级 talent_tag
 - city：城市（兼容旧字段，优先改用 intention_city / live_city）
 - intention_city：期望/意向工作城市
 - live_city：现居/常驻城市
@@ -250,7 +263,7 @@ structured.field 只能取：
 - gender：性别
 - work_state：求职状态（values 写简称或字典全称，如 离职、离职正在找工作、在职急寻新工作；compiler 会映射到 intention.work_state.code）
 - expected_salary：期望薪资
-- talent_tag：人才标签，如 985、211、25QS200
+- talent_tag：候选人级人才标签，如 名企背景、25QS200；单独出现的 985/211 人才标签仍可用，但明确修饰本科/第一学历院校层次时必须改用 school_tier
 - certificate：证书/资格证（含语言类证书与专业技能证书），如 IELTS、雅思、CET-4、CPA、PMP、注册会计师、驾驶证
 - language：外语/语言能力（简历「语言能力」区块），如 英语、法语、雅思、IELTS、英语四级、熟练英语
 
@@ -544,6 +557,7 @@ def _build_tag_prompt_fragment(
 {mapping}
 
 规则（必须遵守）：
+- 例外：985/211 明确修饰「本科/第一学历/统招本科/全日制本科」时，必须写 degree + school_tier，禁止写 talent_tag。
 - 用户 query 命中上表标签名（如「名企背景」「985」）时，必须写 where.talent_tag，values 用**完整标签名**，禁止截断（「名企背景」不可写成「名企」）。
 - 若上表含「名企背景」，query 出现「大厂/互联网大厂/头部公司/知名公司/大公司」→ talent_tag values=["名企背景"] required=true，可与 position 等 and；不受「最好/优先」影响；semantic=[]。
 - 标签筛选时 semantic 应为空数组 []，禁止用 work_vector 扩写「大厂/500强/名企」等同义词。
@@ -745,6 +759,138 @@ def _ensure_degree_condition(
     return where
 
 
+def _education_tier_values_from_query(query: str) -> list[str]:
+    text = str(query or "").strip()
+    if not text:
+        return []
+    matches = [
+        *list(_EDUCATION_TIER_AFTER_STAGE_RE.finditer(text)),
+        *list(_EDUCATION_TIER_BEFORE_STAGE_RE.finditer(text)),
+    ]
+    values: list[str] = []
+    for match in matches:
+        prefix = text[max(0, match.start() - 8) : match.start()]
+        matched_text = match.group(0)
+        if any(token in prefix or token in matched_text for token in _EDUCATION_TIER_NEGATION):
+            continue
+        for tier in re.findall(r"985|211", matched_text):
+            if tier not in values:
+                values.append(tier)
+    return values
+
+
+def _drop_positive_talent_tag_tiers(
+    node: dict[str, Any] | None,
+    tiers: list[str],
+    *,
+    negated: bool = False,
+) -> tuple[dict[str, Any] | None, bool]:
+    if not isinstance(node, dict):
+        return node, False
+    ntype = node.get("type")
+    if ntype == "leaf":
+        cond = node.get("condition")
+        if negated or not isinstance(cond, dict) or cond.get("field") != "talent_tag":
+            return node, False
+        values = cond.get("values")
+        if not isinstance(values, list):
+            return node, False
+        remaining = [value for value in values if str(value).strip() not in tiers]
+        if len(remaining) == len(values):
+            return node, False
+        if not remaining:
+            return None, True
+        updated = dict(node)
+        updated["condition"] = {**cond, "values": remaining}
+        return updated, True
+    if ntype == "and":
+        children = node.get("children")
+        if not isinstance(children, list):
+            return node, False
+        changed = False
+        updated_children: list[dict[str, Any]] = []
+        for child in children:
+            updated, child_changed = _drop_positive_talent_tag_tiers(child, tiers, negated=negated)
+            changed = changed or child_changed
+            if updated is not None:
+                updated_children.append(updated)
+        if not changed:
+            return node, False
+        if not updated_children:
+            return None, True
+        updated_node = dict(node)
+        updated_node["children"] = updated_children
+        return updated_node, True
+    return node, False
+
+
+def _append_and_leaves(
+    where: dict[str, Any] | None,
+    leaves: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not leaves:
+        if where is None:
+            return _default_fallback_where("")
+        return where
+    if where is None:
+        children: list[dict[str, Any]] = []
+    elif where.get("type") == "and" and isinstance(where.get("children"), list):
+        children = list(where["children"])
+    else:
+        children = [where]
+    children.extend(leaves)
+    if len(children) == 1:
+        return children[0]
+    return {"type": "and", "children": children}
+
+
+def _ensure_school_tier_condition(
+    where: dict[str, Any] | None,
+    *,
+    query: str,
+    notes: list[str],
+) -> dict[str, Any] | None:
+    tiers = _education_tier_values_from_query(query)
+    if not tiers:
+        return where
+
+    updated_where, removed_talent_tag = _drop_positive_talent_tag_tiers(where, tiers)
+    if removed_talent_tag:
+        notes.append("rewrite_talent_tag_to_school_tier")
+
+    leaves: list[dict[str, Any]] = []
+    if not _has_field_leaf(updated_where, "degree") and re.search(_UNDERGRAD_STAGE_PATTERN, query):
+        leaves.append(
+            {
+                "type": "leaf",
+                "condition": {
+                    "field": "degree",
+                    "operator": "eq",
+                    "values": ["本科"],
+                    "required": True,
+                    "weight": 1.0,
+                },
+            }
+        )
+        if "auto_add_degree_from_query" not in notes:
+            notes.append("auto_add_degree_from_query")
+    if not _has_field_leaf(updated_where, "school_tier"):
+        leaves.append(
+            {
+                "type": "leaf",
+                "condition": {
+                    "field": "school_tier",
+                    "operator": "eq" if len(tiers) == 1 else "any",
+                    "values": tiers,
+                    "required": True,
+                    "weight": 1.0,
+                },
+            }
+        )
+        notes.append("auto_add_school_tier_from_query")
+    return _append_and_leaves(updated_where, leaves)
+
+
 def _repair_ir_payload(payload: Any, *, query: str) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
@@ -800,6 +946,13 @@ def _repair_ir_payload(payload: Any, *, query: str) -> dict[str, Any] | None:
     if "tenureIntent" not in meta:
         meta["tenureIntent"] = classify_work_tenure_intent(query)
     where = _ensure_degree_condition(where, query=query, notes=meta["notes"])
+    school_tier_where = _ensure_school_tier_condition(
+        where,
+        query=query,
+        notes=meta["notes"],
+    )
+    if school_tier_where is not None:
+        where = school_tier_where
 
     repaired = {"where": where, "semantic": semantic, "meta": meta}
     if isinstance(payload.get("sort"), list):

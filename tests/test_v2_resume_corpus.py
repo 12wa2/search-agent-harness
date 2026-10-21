@@ -11,6 +11,7 @@ from search_agent.corpus import DEFAULT_QUERIES, EVIDENCE_HINTS
 from search_agent.hybrid_v2.config import HybridV2Config
 from search_agent.hybrid_v2.embedding import HashEmbedder
 from search_agent.hybrid_v2.indexing import convert_candidates_to_documents
+from search_agent.school_tiers import school_tiers_for
 from search_agent.v2_resume_corpus import (
     generate_v2_resume_corpus,
     write_v2_resume_corpus,
@@ -44,6 +45,23 @@ def test_every_resume_fills_v2_text_channels() -> None:
         assert row["expectedSalary"]
         assert row["workState"]
         assert row["languages"]
+
+
+def test_every_education_row_has_school_tier() -> None:
+    corpus = generate_v2_resume_corpus(size=100, seed=2026)
+    rows = [education for candidate in corpus.records() for education in candidate["educations"]]
+
+    assert rows
+    assert all("schoolTier" in education for education in rows)
+    assert school_tiers_for("同济大学") == ("985", "211")
+    assert school_tiers_for("北京邮电大学") == ("211",)
+    assert school_tiers_for("深圳大学") == ()
+    assert any("985" in education["schoolTier"] for education in rows)
+    assert all(
+        "211" not in education["schoolTier"]
+        for education in rows
+        if education["school"] == "深圳大学"
+    )
 
 
 def test_implicit_abilities_have_no_keyword_evidence() -> None:

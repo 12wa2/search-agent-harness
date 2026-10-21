@@ -34,6 +34,7 @@ StructuredField = Literal[
     "school",
     "major",
     "degree",
+    "school_tier",
     "city",
     "intention_city",
     "live_city",
