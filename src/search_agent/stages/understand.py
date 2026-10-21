@@ -30,6 +30,10 @@ from search_agent.models.ir import (
     SemanticConditionIR,
     StructuredConditionIR,
 )
+from search_agent.school_tiers import (
+    education_tier_values_from_query,
+    query_mentions_undergraduate,
+)
 from search_agent.stages.base import Deps
 
 logger = logging.getLogger(__name__)
@@ -105,6 +109,46 @@ def _relax_unstated_entity_filters(
     return kept, relaxed
 
 
+def _repair_education_tier_constraints(
+    query: str,
+    constraints: list[StructuredConditionIR],
+) -> list[StructuredConditionIR]:
+    """Keep undergraduate 985/211 on education rows instead of candidate tags."""
+
+    tiers = education_tier_values_from_query(query)
+    if not tiers:
+        return constraints
+
+    repaired: list[StructuredConditionIR] = []
+    for condition in constraints:
+        if condition.field == "talent_tag" and condition.operator != "not":
+            remaining = [value for value in condition.values if str(value).strip() not in tiers]
+            if len(remaining) != len(condition.values):
+                if not remaining:
+                    continue
+                condition = condition.model_copy(update={"values": remaining})
+        repaired.append(condition)
+
+    fields = {condition.field for condition in repaired}
+    if "degree" not in fields and query_mentions_undergraduate(query):
+        repaired.append(
+            StructuredConditionIR(
+                field="degree",
+                operator="eq",
+                values=["本科"],
+            )
+        )
+    if "school_tier" not in fields:
+        repaired.append(
+            StructuredConditionIR(
+                field="school_tier",
+                operator="eq" if len(tiers) == 1 else "any",
+                values=tiers,
+            )
+        )
+    return repaired
+
+
 def _coerce_soft_signals(raw: Any) -> list[SemanticConditionIR]:
     out: list[SemanticConditionIR] = []
     for s in raw or []:
@@ -150,6 +194,7 @@ def run_understand(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     tp = data.get("talent_profile") or data.get("initial_talent_profile") or {}
 
     hard_constraints = _coerce_hard_constraints(data.get("hard_constraints"))
+    hard_constraints = _repair_education_tier_constraints(state["query"], hard_constraints)
     hard_constraints, relaxed_terms = _relax_unstated_entity_filters(
         state["query"], hard_constraints
     )

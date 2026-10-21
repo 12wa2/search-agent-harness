@@ -12,6 +12,7 @@ import json
 import logging
 from typing import Any
 
+from search_agent.core.education_constraints import preserve_required_education_constraints
 from search_agent.core.experience import query_family
 from search_agent.core.signature import intent_signature
 from search_agent.llm.prompts import (
@@ -85,6 +86,11 @@ def run_plan(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
                     if isinstance(_s, dict) and "text" not in _s and "query" in _s:
                         _s["text"] = _s.pop("query")
             intent = CandidateSearchIR.model_validate(intent_raw)
+            job = state.get("job_profile")
+            intent = preserve_required_education_constraints(
+                intent,
+                job.hard_constraints if job else [],
+            )
             sig = intent_signature(intent)
         except Exception:  # noqa: BLE001 - skip path with invalid intent
             logger.debug("plan: skip path with invalid intent: %s", raw)

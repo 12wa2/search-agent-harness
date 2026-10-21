@@ -19,6 +19,10 @@ from typing import Any
 from search_agent.core.cancellation import SearchCancelled
 from search_agent.llm.client import LlmClient
 from search_agent.models.ir import SOFT_VECTOR_FIELDS, CandidateSearchIR
+from search_agent.school_tiers import (
+    education_tier_values_from_query,
+    query_mentions_undergraduate,
+)
 
 from .work_tenure_intent import classify_work_tenure_intent
 
@@ -46,18 +50,6 @@ _DEGREE_QUERY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"博士"), "博士"),
     (re.compile(r"mba", re.I), "MBA"),
 )
-_UNDERGRAD_STAGE_PATTERN = r"(?:第一学历|统招本科|全日制本科|本科)"
-_EDUCATION_TIER_TOKEN_PATTERN = r"(?:985|211)(?:\s*[/、和或,，]\s*(?:985|211))*"
-_EDUCATION_TIER_AFTER_STAGE_RE = re.compile(
-    rf"{_UNDERGRAD_STAGE_PATTERN}(?:学历|阶段|期间)?[^，。；,;\n]{{0,8}}?"
-    rf"({_EDUCATION_TIER_TOKEN_PATTERN})"
-)
-_EDUCATION_TIER_BEFORE_STAGE_RE = re.compile(
-    rf"({_EDUCATION_TIER_TOKEN_PATTERN})(?:院校|大学)?[^，。；,;\n]{{0,6}}?"
-    rf"{_UNDERGRAD_STAGE_PATTERN}"
-)
-_EDUCATION_TIER_NEGATION = ("不要", "排除", "不是", "非", "不考虑", "不要求")
-
 IR_FIELD_ENUM = [
     "name",
     "skill",
@@ -759,26 +751,6 @@ def _ensure_degree_condition(
     return where
 
 
-def _education_tier_values_from_query(query: str) -> list[str]:
-    text = str(query or "").strip()
-    if not text:
-        return []
-    matches = [
-        *list(_EDUCATION_TIER_AFTER_STAGE_RE.finditer(text)),
-        *list(_EDUCATION_TIER_BEFORE_STAGE_RE.finditer(text)),
-    ]
-    values: list[str] = []
-    for match in matches:
-        prefix = text[max(0, match.start() - 8) : match.start()]
-        matched_text = match.group(0)
-        if any(token in prefix or token in matched_text for token in _EDUCATION_TIER_NEGATION):
-            continue
-        for tier in re.findall(r"985|211", matched_text):
-            if tier not in values:
-                values.append(tier)
-    return values
-
-
 def _drop_positive_talent_tag_tiers(
     node: dict[str, Any] | None,
     tiers: list[str],
@@ -850,7 +822,7 @@ def _ensure_school_tier_condition(
     query: str,
     notes: list[str],
 ) -> dict[str, Any] | None:
-    tiers = _education_tier_values_from_query(query)
+    tiers = education_tier_values_from_query(query)
     if not tiers:
         return where
 
@@ -859,7 +831,7 @@ def _ensure_school_tier_condition(
         notes.append("rewrite_talent_tag_to_school_tier")
 
     leaves: list[dict[str, Any]] = []
-    if not _has_field_leaf(updated_where, "degree") and re.search(_UNDERGRAD_STAGE_PATTERN, query):
+    if not _has_field_leaf(updated_where, "degree") and query_mentions_undergraduate(query):
         leaves.append(
             {
                 "type": "leaf",

@@ -4,6 +4,18 @@ from __future__ import annotations
 
 import re
 
+_UNDERGRAD_STAGE_PATTERN = r"(?:第一学历|统招本科|全日制本科|本科)"
+_EDUCATION_TIER_TOKEN_PATTERN = r"(?:985|211)(?:\s*[/、和或,，]\s*(?:985|211))*"
+_EDUCATION_TIER_AFTER_STAGE_RE = re.compile(
+    rf"{_UNDERGRAD_STAGE_PATTERN}(?:学历|阶段|期间)?[^，。；,;\n]{{0,8}}?"
+    rf"({_EDUCATION_TIER_TOKEN_PATTERN})"
+)
+_EDUCATION_TIER_BEFORE_STAGE_RE = re.compile(
+    rf"({_EDUCATION_TIER_TOKEN_PATTERN})(?:院校|大学)?[^，。；,;\n]{{0,6}}?"
+    rf"{_UNDERGRAD_STAGE_PATTERN}"
+)
+_EDUCATION_TIER_NEGATION = ("不要", "排除", "不是", "非", "不考虑", "不要求")
+
 _SCHOOL_TIERS: dict[str, tuple[str, ...]] = {
     "清华大学": ("985", "211"),
     "北京大学": ("985", "211"),
@@ -60,4 +72,36 @@ def school_tiers_for(school: str) -> tuple[str, ...]:
     return _SCHOOL_TIERS.get(canonical, ())
 
 
-__all__ = ["school_tiers_for"]
+def query_mentions_undergraduate(query: str) -> bool:
+    """Return True when the query explicitly refers to an undergraduate degree."""
+
+    return bool(re.search(_UNDERGRAD_STAGE_PATTERN, str(query or "")))
+
+
+def education_tier_values_from_query(query: str) -> list[str]:
+    """Extract affirmative 985/211 values tied to an undergraduate education stage."""
+
+    text = str(query or "").strip()
+    if not text:
+        return []
+    matches = [
+        *list(_EDUCATION_TIER_AFTER_STAGE_RE.finditer(text)),
+        *list(_EDUCATION_TIER_BEFORE_STAGE_RE.finditer(text)),
+    ]
+    values: list[str] = []
+    for match in matches:
+        prefix = text[max(0, match.start() - 8) : match.start()]
+        matched_text = match.group(0)
+        if any(token in prefix or token in matched_text for token in _EDUCATION_TIER_NEGATION):
+            continue
+        for tier in re.findall(r"985|211", matched_text):
+            if tier not in values:
+                values.append(tier)
+    return values
+
+
+__all__ = [
+    "education_tier_values_from_query",
+    "query_mentions_undergraduate",
+    "school_tiers_for",
+]

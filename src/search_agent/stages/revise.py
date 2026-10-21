@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from search_agent.core.education_constraints import preserve_required_education_constraints
 from search_agent.core.signature import intent_signature
 from search_agent.models.artifacts import (
     PathAction,
@@ -79,6 +80,16 @@ def run_revise(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     executable = False
     need_clarify = False
     for action in actions:
+        job = state.get("job_profile")
+        if action.intent is not None and job is not None:
+            action = action.model_copy(
+                update={
+                    "intent": preserve_required_education_constraints(
+                        action.intent,
+                        job.hard_constraints,
+                    )
+                }
+            )
         if action.kind == "clarify":
             need_clarify = True
             executable = True

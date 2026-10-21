@@ -66,3 +66,34 @@ def test_explicit_position_filter_is_kept() -> None:
         "work_years",
         "position",
     ]
+
+
+def test_undergraduate_tier_is_repaired_to_education_scope() -> None:
+    response = _response(position_filter=False)
+    response["hard_constraints"].append(
+        {
+            "field": "talent_tag",
+            "operator": "eq",
+            "values": ["211"],
+        }
+    )
+    state = {"query": "找本科是211、3年以上经验的后端工程师", "conversation_history": []}
+
+    updates = run_understand(state, _deps(response))
+
+    conditions = updates["job_profile"].hard_constraints
+    by_field = {condition.field: condition for condition in conditions}
+    assert by_field["degree"].values == ["本科"]
+    assert by_field["school_tier"].values == ["211"]
+    assert "talent_tag" not in by_field
+
+
+def test_plain_talent_tier_is_not_rewritten_without_education_scope() -> None:
+    response = _response(position_filter=False)
+    response["hard_constraints"] = [{"field": "talent_tag", "operator": "eq", "values": ["211"]}]
+    state = {"query": "找211人才", "conversation_history": []}
+
+    updates = run_understand(state, _deps(response))
+
+    conditions = updates["job_profile"].hard_constraints
+    assert [condition.field for condition in conditions] == ["talent_tag"]

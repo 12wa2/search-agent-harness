@@ -24,6 +24,7 @@ _UNDERSTAND_GUARD = """
 3. “最好/优先/加分/有则更好”一律是 nice_ability，不得进入 hard_constraints，也不得进入 must_abilities。
 4. 抽象能力（高并发、稳定性、架构、可迁移）通常应作为 must_abilities；具体技术实现栈只有在原文明确“必须/只要/仅限/硬性要求”时才是 must。
 5. low 仅限所有条件都是明确结构化字段且单一路径即可完成；只要含抽象能力、能力组合、偏好或需要换向搜索，至少为 mid；存在能力可迁移或明显漏召风险时为 high。
+6. 985/211 明确修饰“本科/第一学历/统招本科/全日制本科”时，hard_constraints 必须同时写 degree=本科 与 school_tier=985/211，禁止写 talent_tag；单独出现的 985/211 人才标签才使用 talent_tag。
 """
 
 
@@ -53,7 +54,11 @@ _PLAN_RULES = '你的角色：搜索路径规划。根据岗位画像 + 人才�
 
 
 def plan_prompt() -> tuple[str, dict[str, Any]]:
-    sys = _AGENT_BASE + _PLAN_RULES
+    sys = (
+        _AGENT_BASE
+        + _PLAN_RULES
+        + "\n- 若 job.hard_constraints 含 degree/school_tier，受其约束的每条路径都必须保留这两个教育硬条件，不能因放宽召回而丢弃。"
+    )
     schema = {"type": "object", "properties": {"paths": {"type": "array"}}, "required": ["paths"]}
     return sys, schema
 

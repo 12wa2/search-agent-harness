@@ -5,6 +5,7 @@ from __future__ import annotations
 from search_agent.core.budget import BudgetState
 from search_agent.models.artifacts import (
     Budget,
+    JobProfile,
     PathAction,
     Reflection,
     SearchPath,
@@ -128,3 +129,47 @@ def test_revise_add_path_continues_with_a_new_pending_path() -> None:
     assert updates["phase"] == "execute"
     assert updates["iteration"] == 1
     assert any(path.status == "pending" for path in updates["paths"])
+
+
+def test_revise_preserves_required_education_scope_in_new_path() -> None:
+    job = JobProfile(
+        raw_query="本科211",
+        hard_constraints=[
+            StructuredConditionIR(field="degree", operator="eq", values=["本科"]),
+            StructuredConditionIR(field="school_tier", operator="eq", values=["211"]),
+        ],
+    )
+    updates = run_revise(
+        {
+            "reflections": [
+                Reflection(
+                    path_actions=[
+                        PathAction(
+                            kind="add_path",
+                            rationale="cover Kafka",
+                            intent=_intent("Kafka"),
+                        )
+                    ]
+                )
+            ],
+            "job_profile": job,
+            "paths": [_pending_path()],
+            "tried_signatures": set(),
+            "iteration": 0,
+        },
+        _deps(),
+    )
+
+    new_path = next(path for path in updates["paths"] if path.origin == "add_path")
+
+    def fields(node):
+        if node.type == "leaf":
+            return {node.condition.field} if node.condition else set()
+        if node.type == "not":
+            return fields(node.child) if node.child else set()
+        result = set()
+        for child in node.children:
+            result |= fields(child)
+        return result
+
+    assert {"skill", "degree", "school_tier"} <= fields(new_path.intent.where)
