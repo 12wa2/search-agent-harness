@@ -1,29 +1,26 @@
-# Hybrid V2: standalone Elasticsearch retrieval engine
+# Hybrid V2：独立的 Elasticsearch 检索引擎
 
-Hybrid V2 is the production-style retrieval backend bundled with this
-repository. It is selected automatically when an Elasticsearch endpoint is
-configured, or explicitly with `--backend hybrid_v2`.
+Hybrid V2 是本仓库内置、按生产实践设计的检索后端。配置 Elasticsearch
+地址后会自动启用，也可以通过 `--backend hybrid_v2` 显式选择。
 
-The engine owns five steps:
+该引擎负责五个步骤：
 
-1. parse natural language into `CandidateSearchIR` through an injected
-   `LlmClient` (prompt, JSON schema, IR repair, and one bounded retry);
-2. normalize the IR (work-history facts and position aliases);
-3. compile hard conditions to Elasticsearch filters;
-4. recall with BM25 plus multi-field kNN;
-5. rerank locally, or with bounded OpenAI-compatible shards.
+1. 通过注入的 `LlmClient` 将自然语言解析为 `CandidateSearchIR`
+   （提示词、JSON schema、IR 修复，以及一次有界重试）；
+2. 归一化 IR（工作经历事实和岗位别名）；
+3. 将硬条件编译为 Elasticsearch filter；
+4. 使用 BM25 与多字段 kNN 召回；
+5. 本地重排，或使用有界并发的 OpenAI-compatible 分片重排。
 
-The parser lives in `hybrid_v2/parser.py`. It is provider-agnostic: the agent
-supplies the active runtime client, so the full online mode uses the configured
-gateway while the fast demo uses a scripted client that returns the same IR
-contract. The normal agent path may instead obtain the IR from its `understand`
-stage; both paths converge on the same normalize/compile/recall/rerank engine.
+parser 位于 `hybrid_v2/parser.py`，不绑定具体模型供应商：Agent 会注入当前运行时
+客户端，因此完整在线模式使用配置好的网关，快速演示则使用同一 IR 契约下的脚本化
+客户端。常规 Agent 路径也可以从 `understand` 阶段获得 IR；两条路径最终都会汇合到
+同一套 normalize / compile / recall / rerank 引擎。
 
-All credentials, field names, catalogs, and service endpoints are supplied by
-the operator through environment variables. The repository contains no
-credentials, host-specific defaults, or real candidate records.
+所有凭据、字段名、词表和服务地址都由使用者在环境变量中提供。仓库不包含凭据、
+主机相关的默认配置或真实候选人记录。
 
-## Quick start
+## 快速开始
 
 ```powershell
 pip install -e ".[es,api]"
@@ -40,68 +37,62 @@ search-agent search "找 3 年以上、做过高并发系统的后端工程师" 
 search-agent serve --backend hybrid_v2
 ```
 
-`hybrid-v2 index` creates the bundled mapping and loads `src/search_agent/data/demo_candidates.jsonl`
-by default. Use `--data <jsonl-or-json>`, `--company-id`, `--vector-mode`, and
-`--embedding-dims` for your own corpus. Keep the embedding provider and dimensions
-identical between indexing and query time. The bundled path is validated
-against Elasticsearch 8.15.0.
+`hybrid-v2 index` 会创建内置 mapping，并默认导入
+`src/search_agent/data/demo_candidates.jsonl`。使用自己的语料时，可以传入
+`--data <jsonl-or-json>`、`--company-id`、`--vector-mode` 和
+`--embedding-dims`。索引与查询时使用的 embedding provider 和维度必须保持一致。
+仓库内置路径已使用 Elasticsearch 8.15.0 验证。
 
-`SEARCH_AGENT_HYBRID_V2_ES_URL` takes precedence over `SEARCH_AGENT_ES_URL`.
-When neither variable is set, the default remains the zero-dependency
-`memory` backend, so the public demo still runs without infrastructure.
+`SEARCH_AGENT_HYBRID_V2_ES_URL` 的优先级高于 `SEARCH_AGENT_ES_URL`。两者都
+未设置时，默认仍使用零依赖的 `memory` 后端，因此公开演示不需要任何基础设施即可
+运行。
 
-Redis is not required by the retrieval engine. To share conversation or
-strategy memory across processes, point `SEARCH_AGENT_REDIS_URL` (or
-`REDIS_URL`) at your own Redis instance; without it the harness keeps that
-state in-process.
+检索引擎本身不依赖 Redis。如果需要跨进程共享会话或策略记忆，可将
+`SEARCH_AGENT_REDIS_URL`（或 `REDIS_URL`）指向自己的 Redis 实例；未配置时，
+Harness 会把这些状态保留在进程内。
 
-## Index contract
+## 索引契约
 
-`search-agent hybrid-v2 init-index` generates the Elasticsearch 8 mapping below,
-including indexed `dense_vector` fields, CJK text analysis, lower-cased keyword sub-fields, work
-statistics, and the selected vector layout. `search-agent hybrid-v2 index`
-performs the same setup before bulk loading. The query builder expects these
-fields; use `search-agent hybrid-v2 doctor` after any manual mapping change.
+`search-agent hybrid-v2 init-index` 会生成下面的 Elasticsearch 8 mapping，包含
+可索引的 `dense_vector` 字段、CJK 文本分析、小写 keyword 子字段、工作统计和所选
+向量布局。`search-agent hybrid-v2 index` 会在批量导入前执行同样的初始化。查询
+构造器依赖这些字段；手动修改 mapping 后，请运行
+`search-agent hybrid-v2 doctor` 检查。
 
-| Area | Expected fields | Notes |
+| 区域 | 期望字段 | 说明 |
 |---|---|---|
-| identity | `_id`, `candidate_profile_id` | `_id` is returned as `docId` |
-| tenant | `company_id`, `entity_join` | configurable; set a field name to empty to disable that filter |
-| visibility | `deleted`, `profile_pool_id`, `collaborator_id` | soft-delete and optional permission filters |
-| profile | `overview.name`, `overview.work_years`, `overview.age`, `overview.city.name` | candidate summary fields |
-| skills | `skills.name` | nested-friendly |
-| work | `work_experiences.company`, `work_experiences.job`, `work_experiences.description`, start/end times | hard text filters and BM25 |
-| projects | `project_experiences.project_name`, `project_experiences.description` | BM25 and project vectors |
-| education | `educations.college.name`, `educations.major.name`, `educations.degree.name`, `educations.degree.code` | degree thresholds use codes |
-| intention | `intention.positions`, `intention.industries`, `intention.cities`, `intention.expected_salary`, `intention.work_state` | nested name/code objects are accepted |
-| work stats | `work_stats.*` | tenure, gaps, segment counts, role tenure |
-| tags | `talent_tags.tag_id`, `tags` | tag dictionary is optional and local |
-| sorting | `candidate_authority_time`, `candidate_profile_id` | used when a query has no semantic channel |
+| 身份 | `_id`、`candidate_profile_id` | `_id` 会作为 `docId` 返回 |
+| 租户 | `company_id`、`entity_join` | 可配置；将字段名设为空可关闭对应过滤 |
+| 可见性 | `deleted`、`profile_pool_id`、`collaborator_id` | 软删除和可选权限过滤 |
+| 画像 | `overview.name`、`overview.work_years`、`overview.age`、`overview.city.name` | 候选人摘要字段 |
+| 技能 | `skills.name` | 兼容 nested 结构 |
+| 工作经历 | `work_experiences.company`、`work_experiences.job`、`work_experiences.description`、开始/结束时间 | 硬文本过滤和 BM25 |
+| 项目经历 | `project_experiences.project_name`、`project_experiences.description` | BM25 和项目向量 |
+| 教育经历 | `educations.college.name`、`educations.major.name`、`educations.degree.name`、`educations.degree.code` | 学历门槛使用 code |
+| 求职意向 | `intention.positions`、`intention.industries`、`intention.cities`、`intention.expected_salary`、`intention.work_state` | 接受 nested name/code 对象 |
+| 工作统计 | `work_stats.*` | 任职时长、空档、分段数量、岗位任期 |
+| 标签 | `talent_tags.tag_id`、`tags` | 标签词表可选且仅保存在本地 |
+| 排序 | `candidate_authority_time`、`candidate_profile_id` | 用于没有语义通道的查询排序 |
 
-A hit may also store the profile as a JSON object or JSON string under
-`_source.payload`; the converter merges it into the document before mapping
-the public `CandidateItem`.
+命中文档也可以把画像以 JSON 对象或 JSON 字符串的形式存放在 `_source.payload` 下；
+转换器会在映射公开的 `CandidateItem` 之前将它合并进文档。
 
-## Vector modes
+## 向量模式
 
-Set `SEARCH_AGENT_HYBRID_V2_VECTOR_MODE` to match the index mapping:
+设置 `SEARCH_AGENT_HYBRID_V2_VECTOR_MODE`，使其与索引 mapping 一致：
 
-- `flat` (default): vectors live at `work_vector`, `project_vector`, and
-  `education_vector` on the document. This is the broad-compatibility path used
-  by the bundled end-to-end example.
-- `nested`: vectors live at `work_segments.vector`,
-  `project_segments.vector`, and `education_segments.vector`. Use this only when
-  the target ES 8 deployment and query path have been verified with nested kNN;
-  `doctor` validates mapping shape and dimensions but cannot prove cluster-level
-  nested-kNN support.
+- `flat`（默认）：向量位于文档的 `work_vector`、`project_vector` 和
+  `education_vector`。这是仓库端到端示例使用的广泛兼容路径。
+- `nested`：向量位于 `work_segments.vector`、`project_segments.vector` 和
+  `education_segments.vector`。仅当目标 ES 8 部署和查询路径已经验证支持 nested
+  kNN 时使用；`doctor` 会校验 mapping 形态和维度，但不能证明集群级 nested-kNN
+  支持。
 
-`self_evaluation_vector` and `skills_vector` are document-level fields in both
-modes. All dense vectors must have the same dimension as the configured
-embedding provider.
+无论使用哪种模式，`self_evaluation_vector` 和 `skills_vector` 都是文档级字段。
+所有 dense vector 的维度必须与所配置的 embedding provider 一致。
 
-The default `hash` embedder is deterministic and offline. It is intended for
-demos and tests, not for comparing against an index built with a hosted model.
-For a real index, set the provider and dimensions that produced the vectors:
+默认 `hash` embedder 是确定性且离线的，仅用于演示和测试，不适合与使用托管模型
+构建的索引进行比较。对于真实索引，请设置生成这些向量时所用的 provider 和维度：
 
 ```powershell
 $env:SEARCH_AGENT_EMBEDDING_PROVIDER = "openai"
@@ -111,71 +102,65 @@ $env:SEARCH_AGENT_EMBEDDING_API_KEY = "..."
 $env:SEARCH_AGENT_EMBEDDING_BASE_URL = "https://api.openai.com/v1"
 ```
 
-Any OpenAI-compatible embedding endpoint can be used. The API key is read
-from the environment and is never written into a trace or response.
+可以使用任何 OpenAI-compatible embedding 端点。API Key 只从环境变量读取，
+不会写入 Trace 或响应。
 
-## Reranking and safety
+## 重排与安全
 
-The default reranker is local and deterministic:
+默认 reranker 是本地且确定性的：
 
 ```text
-0.45 * normalized ES score + 0.35 * lexical coverage + 0.20 * hard-match ratio
+0.45 * 归一化 ES 分数 + 0.35 * 词法覆盖率 + 0.20 * 硬条件匹配率
 ```
 
-`SEARCH_AGENT_HYBRID_V2_RERANK_PROVIDER=openai` enables sharded LLM reranking.
-Shards have a fixed size, a wall-clock timeout, a worker limit, and a
-local-score fallback on timeout, invalid JSON, missing candidates, or provider
-errors. The model is told to treat candidate profile fields as untrusted data,
-not instructions. Full profiles are not written to logs; trace output only
-contains counts, timings, and status.
+设置 `SEARCH_AGENT_HYBRID_V2_RERANK_PROVIDER=openai` 可启用分片式 LLM 重排。
+每个分片都有固定大小、墙钟超时、worker 并发上限，并在超时、JSON 无效、候选缺失
+或供应商报错时回退到本地分数。提示词要求模型把候选人画像字段视为不可信数据，而
+不是指令。日志不会写入完整画像；Trace 只包含计数、耗时和状态。
 
-The LLM reranker is optional. It does not change the hard-filter semantics of
-the Elasticsearch query.
+LLM reranker 是可选项，不会改变 Elasticsearch 查询的硬过滤语义。
 
-## Configuration groups
+## 配置分组
 
-See `.env.example` for the complete list. The most useful knobs are:
+完整变量列表见 `.env.example`。最常用的配置项如下：
 
-| Variable | Default | Purpose |
+| 变量 | 默认值 | 用途 |
 |---|---|---|
-| `SEARCH_AGENT_HYBRID_V2_ES_URL` | unset | enables Hybrid V2 |
-| `SEARCH_AGENT_HYBRID_V2_ES_INDEX` | `candidate` | candidate index |
-| `SEARCH_AGENT_ES_USERNAME` / `SEARCH_AGENT_ES_PASSWORD` | unset | basic auth |
-| `SEARCH_AGENT_ES_API_KEY` | unset | API-key auth |
-| `SEARCH_AGENT_ES_VERIFY_CERTS` | `true` | TLS verification |
-| `SEARCH_AGENT_ES_REQUEST_TIMEOUT` | `30` | Elasticsearch request timeout in seconds |
-| `SEARCH_AGENT_HYBRID_V2_TENANT_FIELD` | `company_id` | tenant filter field |
-| `SEARCH_AGENT_HYBRID_V2_VECTOR_MODE` | `flat` | vector mapping shape |
-| `SEARCH_AGENT_HYBRID_V2_BM25_ENABLED` | `true` | enable the BM25 recall branch |
-| `SEARCH_AGENT_HYBRID_V2_KNN_K` | `100` | kNN neighbours requested per semantic query |
-| `SEARCH_AGENT_HYBRID_V2_KNN_NUM_CANDIDATES` | `500` | kNN candidate window |
-| `SEARCH_AGENT_HYBRID_V2_CHEAP_POOL_SIZE` | `100` | candidates retained before expensive reranking |
-| `SEARCH_AGENT_HYBRID_V2_MATCH_RATE_BASELINE` | `40` | minimum displayed match rate before score scaling |
-| `SEARCH_AGENT_EMBEDDING_PROVIDER` | `hash` | `hash` for local determinism or `openai` |
-| `SEARCH_AGENT_EMBEDDING_MODEL` | `text-embedding-3-small` | embedding model name |
-| `SEARCH_AGENT_EMBEDDING_DIMS` | `256` | must match the indexed vectors |
-| `SEARCH_AGENT_EMBEDDING_BATCH_SIZE` | `16` | query/index embedding batch size |
-| `SEARCH_AGENT_HYBRID_V2_RERANK_PROVIDER` | `local` | local or OpenAI-compatible rerank |
-| `SEARCH_AGENT_HYBRID_V2_RERANK_SCAN_CAP` | `100` | maximum pool passed to rerank |
-| `SEARCH_AGENT_HYBRID_V2_RERANK_TARGET_N` | `20` | minimum scan target before delivery |
-| `SEARCH_AGENT_HYBRID_V2_RERANK_SHARD_SIZE` | `20` | candidates per rerank request |
-| `SEARCH_AGENT_HYBRID_V2_RERANK_MIN_CONFIDENCE` | `0.5` | confidence threshold used for quality accounting |
-| `SEARCH_AGENT_HYBRID_V2_RERANK_TIMEOUT_SEC` | `30` | per-shard rerank timeout |
-| `SEARCH_AGENT_HYBRID_V2_RERANK_WORKERS` | `4` | bounded parallel rerank workers |
-| `SEARCH_AGENT_HYBRID_V2_TAG_DICT` | unset | local JSON name-to-id tag map |
+| `SEARCH_AGENT_HYBRID_V2_ES_URL` | 未设置 | 启用 Hybrid V2 |
+| `SEARCH_AGENT_HYBRID_V2_ES_INDEX` | `candidate` | 候选人索引 |
+| `SEARCH_AGENT_ES_USERNAME` / `SEARCH_AGENT_ES_PASSWORD` | 未设置 | Basic Auth |
+| `SEARCH_AGENT_ES_API_KEY` | 未设置 | API Key 认证 |
+| `SEARCH_AGENT_ES_VERIFY_CERTS` | `true` | 校验 TLS 证书 |
+| `SEARCH_AGENT_ES_REQUEST_TIMEOUT` | `30` | Elasticsearch 请求超时（秒） |
+| `SEARCH_AGENT_HYBRID_V2_TENANT_FIELD` | `company_id` | 租户过滤字段 |
+| `SEARCH_AGENT_HYBRID_V2_VECTOR_MODE` | `flat` | 向量 mapping 布局 |
+| `SEARCH_AGENT_HYBRID_V2_BM25_ENABLED` | `true` | 启用 BM25 召回通道 |
+| `SEARCH_AGENT_HYBRID_V2_KNN_K` | `100` | 每个语义查询请求的 kNN 邻居数 |
+| `SEARCH_AGENT_HYBRID_V2_KNN_NUM_CANDIDATES` | `500` | kNN 候选窗口 |
+| `SEARCH_AGENT_HYBRID_V2_CHEAP_POOL_SIZE` | `100` | 进入高成本重排前保留的候选数 |
+| `SEARCH_AGENT_HYBRID_V2_MATCH_RATE_BASELINE` | `40` | 分数缩放前的最低展示匹配率基线 |
+| `SEARCH_AGENT_EMBEDDING_PROVIDER` | `hash` | `hash` 用于本地确定性向量，`openai` 使用外部模型 |
+| `SEARCH_AGENT_EMBEDDING_MODEL` | `text-embedding-3-small` | embedding 模型名 |
+| `SEARCH_AGENT_EMBEDDING_DIMS` | `256` | 必须与索引中的向量维度一致 |
+| `SEARCH_AGENT_EMBEDDING_BATCH_SIZE` | `16` | 查询/索引 embedding 的批大小 |
+| `SEARCH_AGENT_HYBRID_V2_RERANK_PROVIDER` | `local` | 本地或 OpenAI-compatible 重排 |
+| `SEARCH_AGENT_HYBRID_V2_RERANK_SCAN_CAP` | `100` | 送入重排的最大候选池 |
+| `SEARCH_AGENT_HYBRID_V2_RERANK_TARGET_N` | `20` | 重排目标数量 |
+| `SEARCH_AGENT_HYBRID_V2_RERANK_SHARD_SIZE` | `20` | 每个重排请求的候选数 |
+| `SEARCH_AGENT_HYBRID_V2_RERANK_MIN_CONFIDENCE` | `0.5` | 质量统计使用的置信度阈值 |
+| `SEARCH_AGENT_HYBRID_V2_RERANK_TIMEOUT_SEC` | `30` | 每个重排分片的超时时间（秒） |
+| `SEARCH_AGENT_HYBRID_V2_RERANK_WORKERS` | `4` | 有界并行的重排 worker 数 |
+| `SEARCH_AGENT_HYBRID_V2_TAG_DICT` | 未设置 | 本地 JSON 标签名到 ID 的映射 |
 
-The defaults in this table match `hybrid_v2/config.py`; `.env.example` lists the
-same runtime knobs alongside the agent-level LLM, budget, Redis, and container
-settings.
+表中的默认值与 `hybrid_v2/config.py` 一致；`.env.example` 同时列出了这些运行时
+配置，以及 Agent 级 LLM、预算、Redis 和容器设置。
 
-## Scope and limitations
+## 范围与限制
 
-- The engine intentionally excludes graph expansion and vendor-managed catalog
-  or storage adapters.
-- The public tests use deterministic fake ES responses and the hash embedder;
-  they do not claim benchmark performance against a real recruiting corpus.
-- A production deployment should put Elasticsearch behind network controls,
-  use per-tenant credentials or filters, and add index-level monitoring. The
-  engine exposes `health()` for a non-secret cluster check.
-- `hybrid-v2 init-index` and `hybrid-v2 index` are operator commands. They can
-  create or replace indexes and must not be exposed as public HTTP endpoints.
+- 该引擎有意不包含图扩展、供应商托管词表或存储适配器。
+- 公开测试使用确定性的假 ES 响应和 hash embedder，不声称针对真实招聘语料取得了
+  基准性能。
+- 生产部署应将 Elasticsearch 放在网络控制之后，使用按租户隔离的凭据或过滤条件，
+  并增加索引级监控。引擎提供 `health()`，用于执行不返回敏感信息的集群检查。
+- `hybrid-v2 init-index` 和 `hybrid-v2 index` 是运维命令。它们可以创建或替换
+  索引，不能作为公开 HTTP 端点暴露。
