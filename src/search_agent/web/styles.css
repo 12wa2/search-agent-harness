@@ -5122,6 +5122,17 @@ p {
   scrollbar-color: rgba(234, 242, 237, 0.22) transparent;
 }
 
+.agent-session-row {
+  position: relative;
+  border-radius: 7px;
+  transition: background-color 140ms ease-out;
+}
+
+.agent-session-row:hover,
+.agent-session-row:focus-within {
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .agent-session-item {
   display: grid;
   width: 100%;
@@ -5135,11 +5146,6 @@ p {
   color: var(--forest-ink);
   text-align: left;
   cursor: pointer;
-}
-
-.agent-session-item:hover,
-.agent-session-item:focus-visible {
-  background: rgba(255, 255, 255, 0.08);
 }
 
 .agent-session-item.is-active {
@@ -5167,6 +5173,84 @@ p {
   color: rgba(234, 242, 237, 0.55);
   font: 500 9px/1.5 var(--mono);
   white-space: nowrap;
+  transition: opacity 120ms ease-out;
+}
+
+.agent-session-delete {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(234, 242, 237, 0.78);
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition:
+    color 140ms ease-out,
+    background-color 140ms ease-out,
+    opacity 120ms ease-out;
+}
+
+.agent-session-delete svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.agent-session-row:hover .agent-session-delete,
+.agent-session-row:focus-within .agent-session-delete,
+.agent-session-row.is-deleting .agent-session-delete {
+  background: rgba(255, 255, 255, 0.07);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.agent-session-row:hover .agent-session-item small,
+.agent-session-row:focus-within .agent-session-item small,
+.agent-session-row.is-deleting .agent-session-item small {
+  opacity: 0;
+}
+
+.agent-session-delete:hover:not(:disabled),
+.agent-session-delete:focus-visible {
+  background: rgba(255, 132, 112, 0.14);
+  color: #ffd0c7;
+}
+
+.agent-session-delete:active:not(:disabled) {
+  transform: translateY(-50%) scale(0.94);
+}
+
+.agent-session-delete:disabled {
+  color: rgba(234, 242, 237, 0.32);
+  cursor: wait;
+}
+
+.agent-session-row.is-deleting .agent-session-item {
+  opacity: 0.55;
+}
+
+@media (hover: none) {
+  .agent-session-delete {
+    opacity: 0.72;
+    pointer-events: auto;
+  }
+
+  .agent-session-item small {
+    opacity: 0;
+  }
 }
 
 .sidebar-empty {

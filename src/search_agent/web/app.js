@@ -1242,6 +1242,65 @@ async function loadConversations() {
   }
 }
 
+function createTrashIcon() {
+  const namespace = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(namespace, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(namespace, "path");
+  path.setAttribute(
+    "d",
+    "M3.5 4.5h9M6 4.5V3h4v1.5M4.8 4.5l.5 8h5.4l.5-8M6.5 6.5v4M9.5 6.5v4",
+  );
+  svg.append(path);
+  return svg;
+}
+
+async function deleteConversation(conversation, button, row) {
+  const conversationId = conversation?.conversationId;
+  if (!conversationId) return;
+  const title = conversation.title || conversation.lastQuery || "未命名会话";
+  const isActive = state.conversationId === conversationId;
+  if (isActive && state.running) {
+    setComposerNote("当前会话正在执行搜索，请先停止或等待完成后再删除。", { error: true });
+    return;
+  }
+  const confirmed = window.confirm(
+    `删除会话「${title}」？\n\n该会话的检索记录和候选人上下文将被移除，此操作无法撤销。`,
+  );
+  if (!confirmed) return;
+
+  button.disabled = true;
+  row.classList.add("is-deleting");
+  row.setAttribute("aria-busy", "true");
+  try {
+    const resp = await fetch(
+      `/conversations/${encodeURIComponent(conversationId)}?companyId=1`,
+      { method: "DELETE" },
+    );
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const result = await resp.json().catch(() => ({}));
+    state.conversations = state.conversations.filter(
+      (item) => item.conversationId !== conversationId,
+    );
+    if (isActive) {
+      startNewConversation();
+    } else {
+      renderConversation();
+    }
+    setComposerNote(
+      result.deleted === false
+        ? "该会话已不存在，列表已同步。"
+        : `已删除会话「${title}」。`,
+    );
+  } catch (err) {
+    button.disabled = false;
+    row.classList.remove("is-deleting");
+    row.removeAttribute("aria-busy");
+    setComposerNote(`删除会话失败：${err.message}`, { error: true });
+  }
+}
+
 function renderConversation() {
   const round = Math.max(1, state.conversationTurns || 1);
   conversationLabel.textContent = state.conversationId
@@ -1270,18 +1329,28 @@ function renderConversation() {
   if (agentSessionList) {
     agentSessionList.replaceChildren();
     state.conversations.forEach((conversation, index) => {
-      const item = el("li");
+      const item = el("li", "agent-session-row");
       const button = el("button", "agent-session-item");
+      const title = conversation.title || conversation.lastQuery || "未命名会话";
       button.type = "button";
-      button.title = conversation.title || conversation.lastQuery || "历史会话";
+      button.title = title;
       button.classList.toggle("is-active", conversation.conversationId === state.conversationId);
       button.append(
         el("span", "agent-session-index", String(index + 1).padStart(2, "0")),
-        el("span", "agent-session-query", conversation.title || conversation.lastQuery || "未命名会话"),
+        el("span", "agent-session-query", title),
         el("small", "", `${Number(conversation.turnCount || 0)} 轮`),
       );
       button.addEventListener("click", () => restoreConversation(conversation.conversationId));
-      item.append(button);
+      const deleteButton = el("button", "agent-session-delete");
+      deleteButton.type = "button";
+      deleteButton.title = `删除会话：${title}`;
+      deleteButton.setAttribute("aria-label", `删除会话：${title}`);
+      deleteButton.append(createTrashIcon());
+      deleteButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void deleteConversation(conversation, deleteButton, item);
+      });
+      item.append(button, deleteButton);
       agentSessionList.append(item);
     });
   }
