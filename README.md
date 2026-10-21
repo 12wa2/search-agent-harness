@@ -136,7 +136,7 @@ search-agent hybrid-v2 doctor
 
 ## 评测摘要
 
-仓库内公开评测使用合成候选人、固定数据集和生成器 oracle 标签，不使用企业真实简历。离线脚本化实验可确定性复现；真实 LLM 实验受模型版本、服务实现和生成随机性影响。指标仅用于分析工程机制与效果成本权衡，不代表生产环境表现。
+仓库内公开评测使用 100 个合成候选人、10 条复杂查询和生成器自动标签，不使用企业真实简历。真实 LLM 实验受模型版本、服务实现和生成随机性影响；指标仅用于分析工程机制与效果成本权衡，不代表生产环境表现。
 
 真实 LLM + Hybrid V2 A/B（100 个 V2 原生字段合成候选人、10 条复杂查询、top-5）：基线与 Agent 共用 `qwen3.8-flash`、Hybrid V2 和 Elasticsearch，唯一结构变量是反思循环。以下为 2026-10-21 的最新一次复核结果。
 
@@ -152,9 +152,7 @@ search-agent hybrid-v2 doctor
 - 池召回提升的 bootstrap 95% CI 为 `+0.004 ~ +0.170`，不包含 0；Recall@5 提升为 `+0.092`，区间 `-0.001 ~ +0.194` 跨过 0，因此 10 条查询只能说明观察到提升，不能声称统计显著。
 - Agent 新增交付候选人 21 个，其中 14 个相关（0.667）；LLM 调用约为基线的 3.25 倍、tokens 约为 3.64 倍，p95 延迟 32.2 → 116.0 s，本次 10 条查询均未触发预算终止。
 - 并非每条查询都提升：`stability_capacity` 从 0.500 降到 0.375，`microservice_backend` 从 0.250 降到 0.188；`payment_distributed_tx` 最终 Recall 从 0.062 升到 0.250，但池召回反而从 0.562 降到 0.438。
-- 默认 Oracle 另有一个诚实验证：池召回 0.70 → 0.76，但交付 Recall@10 0.32 → 0.30，说明当前瓶颈在 judge / rerank，而不是“完全没找到人”。
-
-完整表格、强制消融、置信区间与逐 Query 失败分析见 **[评测报告](docs/EVALUATION.md)**。
+完整表格、置信区间与逐 Query 失败分析见 **[评测报告](docs/EVALUATION.md)**。
 
 ## 核心设计
 
@@ -180,7 +178,7 @@ class SearchTool(Protocol):
 | [HTTP API](docs/API.md) | 搜索、SSE、会话、候选人排除与分页协议 |
 | [部署指南](docs/DEPLOYMENT.md) | 快速演示、本地完整在线、Docker Compose 与排障 |
 | [配置参考](docs/CONFIGURATION.md) | 模型、网关、Redis、预算、ES 与 Hybrid V2 变量 |
-| [评测报告](docs/EVALUATION.md) | 离线消融、真实 LLM A/B、区间与结果边界 |
+| [评测报告](docs/EVALUATION.md) | 真实 LLM top-5 A/B、区间与结果边界 |
 | [Hybrid V2](docs/HYBRID_V2.md) | NL2IR、ES mapping、BM25/kNN、embedding 与重排 |
 | [LLM Gateway](docs/LLM_GATEWAY.md) | 模型别名、主备降级、鉴权与用量 |
 | [案例走查](docs/CASE_STUDY.md) | 一次完整查询的逐阶段演示 |
@@ -191,7 +189,7 @@ class SearchTool(Protocol):
 ## 质量与边界
 
 - 测试集共 `508` 项；本地完整环境为 `508 passed`，CI 会在独立作业中执行 ES 集成用例。
-- CI 包含 Ruff、pytest、Web 资源校验、离线 Demo 冒烟、消融门禁与 Elasticsearch 集成测试。
+- CI 包含 Ruff、pytest、Web 资源校验、Demo 冒烟、评测门禁与 Elasticsearch 集成测试。
 - 仓库未部署到生产环境，不包含真实简历、企业数据、内部主机或凭据；演示数据均为虚构。
 - 不同模型提供方的质量、成本和延迟差异很大，接入真实数据前应重新评测。
 

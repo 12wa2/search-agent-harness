@@ -136,7 +136,7 @@ The default view is a conversational agent workspace: recent conversations on th
 
 ## Evaluation snapshot
 
-The repository's public evaluation uses synthetic candidates, fixed datasets, and generator-oracle labels; no real company resumes are used. Scripted offline experiments are deterministic to rerun, while real-LLM experiments vary with model version, serving implementation, and generation randomness. The numbers are engineering measurements only, not production-environment claims.
+The repository's public evaluation uses 100 synthetic candidates, 10 complex queries, and automatically generated labels; no real company resumes are used. Real-LLM experiments vary with model version, serving implementation, and generation randomness. The numbers are engineering measurements only, not production-environment claims.
 
 Real LLM + Hybrid V2 A/B (100 V2-native synthetic candidates, 10 complex queries, top-5): the baseline and Agent share `qwen3.8-flash`, Hybrid V2, and Elasticsearch; the only structural variable is the reflection loop. The figures below are the latest run on 2026-10-21.
 
@@ -152,9 +152,7 @@ Real LLM + Hybrid V2 A/B (100 V2-native synthetic candidates, 10 complex queries
 - The bootstrap 95% CI for pool recall is `+0.004 to +0.170` and excludes zero; Recall@5 improves by `+0.092`, but its interval `-0.001 to +0.194` crosses zero, so 10 queries show an observed gain rather than a statistically established one.
 - The Agent delivered 21 new candidates, 14 of them relevant (0.667); LLM calls are about 3.25x and tokens about 3.64x the baseline, p95 latency moves from 32.2 to 116.0 s, and none of the 10 queries hit a budget stop.
 - Not every query improves: `stability_capacity` drops from 0.500 to 0.375 and `microservice_backend` from 0.250 to 0.188; `payment_distributed_tx` raises final Recall from 0.062 to 0.250 even though its pool recall falls from 0.562 to 0.438.
-- A separate default-Oracle check is equally important: pool recall moves from 0.70 to 0.76, but delivered Recall@10 moves from 0.32 to 0.30, so the current bottleneck is judge/rerank rather than 'nothing was found.'
-
-Full tables, forced-iteration ablations, confidence intervals, and per-query failure analysis are in **[Evaluation](docs/EVALUATION.md)**.
+Full tables, confidence intervals, and per-query failure analysis are in **[Evaluation](docs/EVALUATION.md)**.
 
 ## Core design
 
@@ -180,7 +178,7 @@ See [`examples/custom_backend.py`](examples/custom_backend.py) for a minimal imp
 | [HTTP API](docs/API.md) | Search, SSE, conversations, candidate exclusion, and pagination |
 | [Deployment](docs/DEPLOYMENT.md) | Quick demo, full local online mode, Docker Compose, and troubleshooting |
 | [Configuration](docs/CONFIGURATION.md) | Model, gateway, Redis, budgets, ES, and Hybrid V2 variables |
-| [Evaluation](docs/EVALUATION.md) | Offline ablation, real LLM A/B, intervals, and limitations |
+| [Evaluation](docs/EVALUATION.md) | Real-LLM top-5 A/B, intervals, and limitations |
 | [Hybrid V2](docs/HYBRID_V2.md) | NL2IR, ES mapping, BM25/kNN, embeddings, and reranking |
 | [LLM Gateway](docs/LLM_GATEWAY.md) | Model aliases, fallback routing, authentication, and usage |
 | [Case Study](docs/CASE_STUDY.md) | Stage-by-stage walkthrough of a complete query |
@@ -191,7 +189,7 @@ See [`examples/custom_backend.py`](examples/custom_backend.py) for a minimal imp
 ## Quality and scope
 
 - The suite contains 508 tests; a local run with Elasticsearch reports `508 passed`, and CI runs the integration cases in a dedicated job.
-- CI covers Ruff, pytest, Web asset validation, an offline demo smoke test, an evaluation gate, and Elasticsearch integration tests.
+- CI covers Ruff, pytest, Web asset validation, a demo smoke test, an evaluation gate, and Elasticsearch integration tests.
 - The repository is not deployed to production and contains no real resumes, company data, internal hosts, or credentials. Demo data is synthetic.
 - Model quality, cost, and latency vary by provider; rerun the evaluation before connecting real data.
 
