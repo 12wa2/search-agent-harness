@@ -138,19 +138,19 @@ The default view is a conversational agent workspace: recent conversations on th
 
 Public evaluation uses synthetic candidates, fixed datasets, and explicit experiment configurations; no real company resumes are used. Scripted offline experiments are deterministic to rerun, while real-LLM experiments vary with model version, serving implementation, and generation randomness. The numbers are only engineering measurements of mechanism and cost/quality trade-offs, not production-environment claims.
 
-| Benchmark | Single pass | Full agent loop | Cost |
-|---|---:|---:|---:|
-| Offline ablation · pool recall | 0.70 | 0.76 | LLM calls 12 → 29; tokens 49.7k → 109.5k |
-| Offline ablation · delivered top-10 recall | 0.32 | **0.41** | Same as above |
-| Real LLM A/B · pool recall | 0.735 | **0.937** | 20 → 59 calls; 148,428 → 446,704 tokens |
-| Real LLM A/B · recall@5 | 0.392 | **0.473** | p50 latency 50.7s → 139.9s |
-| Real LLM A/B · precision@5 | 0.740 | **0.840** | Same as above |
+| Experiment | Metric | Single pass | Full agent loop |
+|---|---|---:|---:|
+| Oracle benchmark (120 candidates, 6 queries) | Pool recall | 0.70 | 0.76 |
+| Same benchmark, default target | Delivered Recall@10 | 0.32 | 0.30 |
+| Real LLM + Hybrid V2 (100 candidates, 10 queries, synthetic) | Pool recall | 0.735 | 0.937 |
+| Same A/B experiment | Delivered Recall@5 | 0.392 | 0.473 |
+| Same A/B experiment | Precision@5 | 0.740 | 0.840 |
 
 Key findings:
 
-- The loop clearly widens exploration. The `0.32 → 0.41` delivered top-10 result comes from a forced-iteration ablation; the default target is more conservative.
-- In the real-model A/B, the pool-recall interval excludes zero; the recall@5 bootstrap interval crosses zero, so 10 queries do not establish a stable average delivered-recall gain.
-- Cost is roughly 3x and not every query improves. The next priority is judge/rerank precision, not adding more paths.
+- The loop widens exploration, but a larger candidate pool does not guarantee better delivered ranking: on the default Oracle target, delivered Recall@10 moves from `0.32` to `0.30`. A forced-iteration ablation reaches `0.32 → 0.41`; that setup deliberately raises the target and forces further search, so it must not be mixed with the default result.
+- In the real-LLM A/B, the pool-recall interval excludes zero; the Recall@5 bootstrap interval crosses zero, so 10 queries do not establish a stable average delivered-recall gain.
+- In the real A/B, the full loop uses roughly 3x the model calls and tokens and 2.8x the p50 latency; not every query improves, so judge/rerank precision is the next priority.
 
 Full tables, confidence intervals, per-query failure analysis, and reproduction commands are in **[Evaluation](docs/EVALUATION.md)**.
 
