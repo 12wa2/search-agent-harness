@@ -80,37 +80,35 @@ search-agent eval --generated 120 --seed 7 --ablate --baseline docs/eval_baselin
 
 ## 4. 真实 LLM + Hybrid V2 的 A/B 复核
 
-> 下表是旧版轻量字段语料的已记录结果，保留作历史对照。仓库当前使用的复现基准已切换为 V2 原生字段语料 `examples/bench_v2_100`；使用新语料重跑后，应更新本节指标。
-
-**历史设置**：旧版 100 个轻量字段候选人、10 条复杂查询、Elasticsearch 索引 `search-agent-hybrid-v2-bench100`、`qwen3.8-flash`、交付 top-5。基线为 `understand → 单路径 → judge → finalize`；实验组为 Agent 反思链路。两条链路共享语料、模型、检索工具和标注集；基线并非零 LLM，唯一结构变量是反思循环。
+**最新设置**：2026-10-21 使用 V2 原生字段语料 `examples/bench_v2_100` 重跑，100 个合成候选人、10 条复杂查询、Elasticsearch 索引 `search-agent-hybrid-v2-bench100`、`qwen3.8-flash`、`final_selection_policy=current`、交付 top-5。基线为 `understand → 单路径 → judge → finalize`；实验组为 Agent 反思链路。两条链路共享语料、模型、检索工具和标注集；基线并非零 LLM，唯一结构变量是反思循环。
 
 | 指标 | 单趟基线 | Agent 反思循环 | 变化 |
 |---|---:|---:|---:|
-| 平均 recall@5 | 0.392 | 0.473 | +0.081（bootstrap 95% CI -0.031 ~ +0.201） |
-| 平均池召回 | 0.735 | 0.937 | +0.202（CI +0.065 ~ +0.351） |
-| 平均 precision@5 | 0.740 | 0.840 | +0.100（描述性） |
-| Agent 独有交付候选人 | — | 24 人 | — |
-| 其中相关 | — | 17 人（1.7 / query） | — |
-| 新增候选相关率 | — | 0.708 | — |
-| LLM 调用 | 20 | 59 | ×3.0 |
-| tokens | 148,428 | 446,704 | ×3.0 |
-| p50 延迟 | 50.7 s | 139.9 s | ×2.8 |
-| p95 延迟 | 57.0 s | 185.3 s | ×3.3 |
-| 降级次数 | 0 | 2 | — |
+| 平均 recall@5 | 0.334 | 0.425 | +0.092（bootstrap 95% CI -0.001 ~ +0.194） |
+| 平均池召回 | 0.788 | 0.875 | +0.087（CI +0.004 ~ +0.170） |
+| 平均 precision@5 | 0.660 | 0.820 | +0.160（描述性） |
+| Agent 独有交付候选人 | — | 21 人 | — |
+| 其中相关 | — | 14 人（1.4 / query） | — |
+| 新增候选相关率 | — | 0.667 | — |
+| LLM 调用 | 20 | 65 | ×3.25 |
+| tokens | 113,495 | 412,812 | ×3.64 |
+| p50 延迟 | 25.5 s | 86.7 s | ×3.40 |
+| p95 延迟 | 32.2 s | 116.0 s | ×3.60 |
+| 降级次数 | 0 | 0 | — |
 
 ### 结果边界
 
-- 池召回提升明显，且配对 bootstrap 区间不包含 0。
-- top-5 召回提升的平均区间跨过 0；这 10 条合成查询不足以证明稳定的平均交付提升。
-- 精确率没有因扩大召回而下降；24 个 Agent 独有交付候选人中 17 个相关（0.708）。Precision@5 的提升没有配对 CI，只作描述性报告。
-- 成本约为 3 倍；两条查询触发 `budget_exceeded`。
-- 并非每条查询都提升：`microservice_backend` 的 recall@5 从 0.333 降到 0.133；`data_realtime` 扩大了池但没有提升交付。
+- 池召回提升的配对 bootstrap 区间不包含 0。
+- top-5 召回虽然从 0.334 提升到 0.425，但区间 `-0.001 ~ +0.194` 跨过 0；这 10 条合成查询不足以证明稳定的平均交付提升。
+- 精确率没有因扩大召回而下降；21 个 Agent 独有交付候选人中 14 个相关（0.667）。Precision@5 的提升没有配对 CI，只作描述性报告。
+- LLM 调用约为基线的 3.25 倍、tokens 约为 3.64 倍，p95 延迟从 32.2 s 升到 116.0 s；本次 10 条查询均未触发 `budget_exceeded`。
+- 并非每条查询都提升：`stability_capacity` 的 recall@5 从 0.500 降到 0.375，`microservice_backend` 从 0.250 降到 0.188。`payment_distributed_tx` 的最终 recall@5 从 0.062 升到 0.250，但池召回从 0.562 降到 0.438，说明更小的候选池也可能因排序改善而交付更好。
 - 下一轮应优先修 judge / rerank 精度、收敛再搜的预算分配，以及落后查询族的失败分析。
 
 逐查询结果、bootstrap 区间与原始 JSON：
 
-- [完整报告](real_llm_ab_results_100.md)
-- [原始结果](real_llm_ab_results_100.json)
+- [top-5 完整报告](real_llm_ab_results_100.md)
+- [top-5 原始 JSON](real_llm_ab_results_100.json)
 - [当前 V2 原生字段基准与复现说明](../examples/bench_v2_100/README.md)
 
 ## 5. 解释边界

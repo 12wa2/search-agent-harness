@@ -146,14 +146,16 @@ search-agent demo "找有 3 年以上经验、做过高并发系统的后端工�
 是否仍成立」。仓库中的 `examples/real_ab_experiment.py` 因此固定同一 Qwen 网关、Hybrid V2 索引、
 `top-k=5` 和同一套 `synthetic_oracle` 标签，只切换 `reflect + revise`。
 
-**成功案例 `backend_concurrency`**：基线交付 5 人、相关 0 人；Agent 交付 5 人、相关 4 人，
-池召回从 `0.250` 升到 `0.875`，并带回 `g015`、`g029`、`g085`、`g099` 四个基线没有交付的相关候选人。
+**成功案例 `backend_concurrency`**：基线交付 5 人、相关 2 人；Agent 交付 5 人、相关 3 人，
+池召回从 `0.857` 升到 `1.000`，并带回 1 个基线没有交付的相关候选人。
 这条 query 能说明反思的价值：第一次搜索没有找到足够的“高并发 + 后端”证据时，系统会换搜索方向，
 而不是在原查询上反复调参。
 
-**回退案例 `microservice_backend`**：基线 recall@5 为 `0.333`，Agent 反而降到 `0.133`；另有
-`backend_concurrency`、`payment_distributed_tx` 在预算上限触发 `budget_exceeded`。这说明“探索得更宽”
-不等于“最终排序更准”：候选进入池以后，judge / rerank 和预算分配仍可能把正确的人挤下去。
+**回退案例 `microservice_backend`**：基线 recall@5 为 `0.250`，Agent 反而降到 `0.188`；
+`stability_capacity` 也从 `0.500` 降到 `0.375`。本次两条链路均未触发 `budget_exceeded`，说明“探索得更宽”
+不等于“最终排序更准”：候选进入池以后，judge / rerank 仍可能把正确的人挤出交付名单。
+另一个值得讲的反例是 `payment_distributed_tx`：池召回从 `0.562` 降到 `0.438`，最终 recall@5 却从 `0.062`
+升到 `0.250`，说明收敛后的排序质量同样会改变交付结果。
 面试时不应隐藏这条回退；它恰好能引出下一阶段优化方向。
 
 完整 10 条 query 的逐条结果、成本、bootstrap 区间与边界见

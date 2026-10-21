@@ -11,7 +11,7 @@ Controlled direct search · Adaptive reflection for harder requests · Evidence-
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![Pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-484-brightgreen)
+![Tests](https://img.shields.io/badge/tests-508-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 <img src="docs/console.png" alt="Search Agent conversational talent-search UI" width="100%">
@@ -42,7 +42,7 @@ Search Agent Harness adds a controlled policy loop on top of deterministic retri
 - **Evidence first**: the judge consumes candidate facts returned by the search tool; cards expose matched abilities, gaps, hard constraints, and source paths.
 - **Governed loop**: explicit state machine, iteration/path/LLM/token/wall-clock budgets, signature deduplication, and stage-level degradation.
 - **Observable and conversational**: SSE stage events, actual executed stages, raw trace, L1 recent context, L2 conversation archive, and L3 candidate exclusion.
-- **Pluggable and reproducible**: in-memory, SQLite/FTS5, Elasticsearch, and Hybrid V2 share one contract; 484 tests and a zero-key demo run locally.
+- **Pluggable and reproducible**: in-memory, SQLite/FTS5, Elasticsearch, and Hybrid V2 share one contract; 508 tests and a zero-key demo run locally.
 
 ## Execution model
 
@@ -138,19 +138,20 @@ The default view is a conversational agent workspace: recent conversations on th
 
 The repository's public evaluation uses synthetic candidates, fixed datasets, and generator-oracle labels; no real company resumes are used. Scripted offline experiments are deterministic to rerun, while real-LLM experiments vary with model version, serving implementation, and generation randomness. The numbers are engineering measurements only, not production-environment claims.
 
-Real LLM + Hybrid V2 A/B (100 synthetic candidates, 10 complex queries, top-5): the baseline and Agent share `qwen3.8-flash`, Hybrid V2, and Elasticsearch; the only structural variable is the reflection loop.
+Real LLM + Hybrid V2 A/B (100 V2-native synthetic candidates, 10 complex queries, top-5): the baseline and Agent share `qwen3.8-flash`, Hybrid V2, and Elasticsearch; the only structural variable is the reflection loop. The figures below are the latest run on 2026-10-21.
 
 | Metric | Single pass | Agent reflection |
 |---|---:|---:|
-| Mean pool recall | 0.735 | 0.937 |
-| Mean Recall@5 | 0.392 | 0.473 |
-| Mean Precision@5 | 0.740 | 0.840 |
-| LLM calls | 20 | 59 |
-| Tokens | 148,428 | 446,704 |
-| p50 latency | 50.7 s | 139.9 s |
+| Mean pool recall | 0.788 | 0.875 |
+| Mean Recall@5 | 0.334 | 0.425 |
+| Mean Precision@5 | 0.660 | 0.820 |
+| LLM calls | 20 | 65 |
+| Tokens | 113,495 | 412,812 |
+| p50 latency | 25.5 s | 86.7 s |
 
-- The bootstrap 95% CI for pool recall excludes zero; the Recall@5 interval crosses zero, so 10 queries do not establish a stable average delivered-recall gain.
-- The Agent delivered 24 new candidates, 17 of them relevant (0.708); cost is about 3x, p95 latency moves from 57.0 to 185.3 s, and 2/10 queries hit `budget_exceeded`.
+- The bootstrap 95% CI for pool recall is `+0.004 to +0.170` and excludes zero; Recall@5 improves by `+0.092`, but its interval `-0.001 to +0.194` crosses zero, so 10 queries show an observed gain rather than a statistically established one.
+- The Agent delivered 21 new candidates, 14 of them relevant (0.667); LLM calls are about 3.25x and tokens about 3.64x the baseline, p95 latency moves from 32.2 to 116.0 s, and none of the 10 queries hit a budget stop.
+- Not every query improves: `stability_capacity` drops from 0.500 to 0.375 and `microservice_backend` from 0.250 to 0.188; `payment_distributed_tx` raises final Recall from 0.062 to 0.250 even though its pool recall falls from 0.562 to 0.438.
 - A separate default-Oracle check is equally important: pool recall moves from 0.70 to 0.76, but delivered Recall@10 moves from 0.32 to 0.30, so the current bottleneck is judge/rerank rather than 'nothing was found.'
 
 Full tables, forced-iteration ablations, confidence intervals, and per-query failure analysis are in **[Evaluation](docs/EVALUATION.md)**.
@@ -189,7 +190,7 @@ See [`examples/custom_backend.py`](examples/custom_backend.py) for a minimal imp
 
 ## Quality and scope
 
-- The suite contains 484 tests. A local run without Elasticsearch reports `460 passed, 24 skipped`; CI runs the skipped integration cases in a dedicated job.
+- The suite contains 508 tests; a local run with Elasticsearch reports `508 passed`, and CI runs the integration cases in a dedicated job.
 - CI covers Ruff, pytest, Web asset validation, an offline demo smoke test, an evaluation gate, and Elasticsearch integration tests.
 - The repository is not deployed to production and contains no real resumes, company data, internal hosts, or credentials. Demo data is synthetic.
 - Model quality, cost, and latency vary by provider; rerun the evaluation before connecting real data.

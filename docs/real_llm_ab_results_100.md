@@ -2,42 +2,41 @@
 
 > Public synthetic corpus. Label provenance is recorded in benchmark metadata; this is an observed engineering run, not a company-data reproduction.
 
-- Model: `search-agent-primary` -> upstream `qwen3.8-flash`
+- Model: `search-agent-primary`
 - Index: `search-agent-hybrid-v2-bench100`
 - Corpus: `100` candidates (synthetic_oracle)
 - Top-k: `5`
 - Queries: `10`
-- Query workers: `4`
-- Wall clock: `586.5s`
+- Wall clock: `308.67s`
 
 | Query | Baseline pool recall | Agent pool recall | Baseline recall@k | Agent recall@k | New relevant | New candidates |
 |---|---:|---:|---:|---:|---:|---:|
-| `backend_concurrency` | 0.250 | 0.875 | 0.000 | 0.500 | 4 | 5 |
-| `recommendation_ranking` | 0.857 | 1.000 | 0.286 | 0.571 | 2 | 3 |
-| `data_realtime` | 0.929 | 0.857 | 0.357 | 0.357 | 1 | 1 |
-| `stability_capacity` | 1.000 | 1.000 | 0.429 | 0.571 | 2 | 2 |
-| `payment_distributed_tx` | 0.333 | 0.867 | 0.267 | 0.267 | 1 | 2 |
-| `microservice_backend` | 0.533 | 0.933 | 0.333 | 0.133 | 0 | 3 |
-| `ml_platform` | 0.778 | 1.000 | 0.278 | 0.278 | 3 | 3 |
-| `data_architect` | 1.000 | 1.000 | 0.833 | 0.833 | 1 | 1 |
-| `distributed_infra` | 0.667 | 0.833 | 0.333 | 0.417 | 3 | 3 |
-| `architecture_transferable` | 1.000 | 1.000 | 0.800 | 0.800 | 0 | 1 |
+| `backend_concurrency` | 0.857 | 1.000 | 0.286 | 0.714 | 3 | 3 |
+| `recommendation_ranking` | 0.667 | 1.000 | 0.333 | 0.500 | 1 | 3 |
+| `data_realtime` | 1.000 | 1.000 | 0.312 | 0.312 | 1 | 1 |
+| `stability_capacity` | 0.750 | 1.000 | 0.500 | 0.375 | 0 | 2 |
+| `payment_distributed_tx` | 0.562 | 0.438 | 0.062 | 0.250 | 3 | 3 |
+| `microservice_backend` | 0.312 | 0.312 | 0.250 | 0.188 | 0 | 1 |
+| `ml_platform` | 1.000 | 1.000 | 0.333 | 0.333 | 2 | 2 |
+| `data_architect` | 0.875 | 1.000 | 0.375 | 0.625 | 2 | 2 |
+| `distributed_infra` | 0.857 | 1.000 | 0.286 | 0.357 | 1 | 1 |
+| `architecture_transferable` | 1.000 | 1.000 | 0.600 | 0.600 | 1 | 3 |
 
 | Aggregate | Baseline | Agent |
 |---|---:|---:|
-| Mean recall@5 | 0.392 | 0.473 |
-| Mean pool recall | 0.735 | 0.937 |
-| Mean precision | 0.740 | 0.840 |
-| LLM calls | 20 | 59 |
-| Tokens | 148428 | 446704 |
-| p50 latency | 50694.3 ms | 139887.9 ms |
-| p95 latency | 57039.6 ms | 185296.1 ms |
+| Mean recall@5 | 0.334 | 0.425 |
+| Mean pool recall | 0.788 | 0.875 |
+| Mean precision | 0.660 | 0.820 |
+| LLM calls | 20 | 65 |
+| Tokens | 113495 | 412812 |
+| p50 latency | 25481.0 ms | 86679.0 ms |
+| p95 latency | 32242.3 ms | 115984.7 ms |
 
-Paired mean recall delta = **+0.081** (bootstrap 95% CI -0.031 to +0.201); pool-recall delta = **+0.202** (CI +0.065 to +0.351).
+Paired mean recall delta = **+0.092** (bootstrap 95% CI -0.001 to +0.194); pool-recall delta = **+0.087** (CI +0.004 to +0.170).
 
-Cost multipliers: LLM calls ×3.0, tokens ×3.0, p50 latency ×2.8.
+Cost multipliers: LLM calls ×3.2, tokens ×3.6, p50 latency ×3.4.
 
-Agent found **17** relevant candidates absent from the baseline across 10 queries; novel-candidate precision = **0.708**.
+Agent found **14** relevant candidates absent from the baseline across 10 queries; novel-candidate precision = **0.667**.
 
 ## Per-query Results
 
@@ -45,59 +44,59 @@ Agent found **17** relevant candidates absent from the baseline across 10 querie
 
 Query: 找有3年以上后端经验的工程师，必须做过高并发系统；熟悉Java和微服务者优先，大厂背景优先
 
-- Relevant labels: `g001, g015, g029, g043, g057, g071, g085, g099`
-- Baseline delivered: `g091, g090, g034, g062, g076`
-- Agent delivered: `g055, g015, g099, g029, g085`
-- Agent-only relevant: `g015, g029, g085, g099`
-- Agent degraded: `budget_exceeded`
+- Relevant labels: `v015, v029, v043, v057, v071, v085, v099`
+- Baseline delivered: `v085, v071, v086, v020, v035`
+- Agent delivered: `v071, v085, v043, v099, v029`
+- Agent-only relevant: `v029, v043, v099`
+- Agent degraded: `none`
 
 ### `recommendation_ranking`
 
 Query: 招推荐算法工程师，必须有5年以上机器学习和推荐系统经验；有召回、排序、CTR或线上A/B实验经验者优先
 
-- Relevant labels: `g003, g017, g031, g045, g059, g073, g087`
-- Baseline delivered: `g045, g003, g050, g038, g092`
-- Agent delivered: `g045, g003, g017, g031, g023`
-- Agent-only relevant: `g017, g031`
+- Relevant labels: `v017, v031, v045, v059, v073, v087`
+- Baseline delivered: `v059, v087, v037, v051, v079`
+- Agent delivered: `v059, v087, v073, v060, v022`
+- Agent-only relevant: `v073`
 - Agent degraded: `none`
 
 ### `data_realtime`
 
 Query: 找有3年以上数据工程经验的工程师；做过实时数仓、熟悉Spark和Flink者优先
 
-- Relevant labels: `g004, g012, g018, g026, g032, g040, g046, g054, g060, g068, g074, g082, g088, g096`
-- Baseline delivered: `g096, g060, g032, g074, g082`
-- Agent delivered: `g060, g032, g074, g040, g096`
-- Agent-only relevant: `g040`
+- Relevant labels: `v004, v012, v018, v022, v026, v032, v040, v046, v054, v060, v068, v074, v075, v082, v088, v096`
+- Baseline delivered: `v068, v088, v018, v074, v004`
+- Agent delivered: `v088, v068, v004, v040, v018`
+- Agent-only relevant: `v040`
 - Agent degraded: `none`
 
 ### `stability_capacity`
 
 Query: 找有3年以上经验的系统架构工程师，必须同时具备高并发系统设计和系统架构设计经验；做过稳定性治理或容量规划者优先
 
-- Relevant labels: `g005, g019, g033, g047, g061, g075, g089`
-- Baseline delivered: `g089, g019, g055, g047, g041`
-- Agent delivered: `g089, g019, g061, g005, g055`
-- Agent-only relevant: `g005, g061`
+- Relevant labels: `v005, v019, v027, v033, v047, v061, v075, v089`
+- Baseline delivered: `v061, v047, v019, v011, v089`
+- Agent delivered: `v047, v061, v089, v097, v083`
+- Agent-only relevant: `(none)`
 - Agent degraded: `none`
 
 ### `payment_distributed_tx`
 
 Query: 找有3年以上后端经验的工程师，必须同时具备服务端开发和分布式系统经验；有支付、交易或分布式事务经验者优先
 
-- Relevant labels: `g002, g014, g016, g028, g030, g042, g044, g056, g058, g070, g072, g084, g086, g098, g100`
-- Baseline delivered: `g016, g028, g100, g084, g099`
-- Agent delivered: `g011, g044, g028, g016, g100`
-- Agent-only relevant: `g044`
-- Agent degraded: `budget_exceeded`
+- Relevant labels: `v002, v014, v016, v028, v030, v042, v044, v056, v058, v062, v070, v072, v084, v086, v098, v100`
+- Baseline delivered: `v020, v086, v099, v035, v085`
+- Agent delivered: `v100, v044, v098, v086, v020`
+- Agent-only relevant: `v044, v098, v100`
+- Agent degraded: `none`
 
 ### `microservice_backend`
 
 Query: 招5年以上后端工程师，必须同时具备服务端开发和微服务架构经验；熟悉服务治理、高可用或Spring Cloud者优先
 
-- Relevant labels: `g002, g006, g016, g020, g030, g034, g044, g048, g052, g058, g062, g072, g086, g090, g091`
-- Baseline delivered: `g090, g091, g016, g034, g048`
-- Agent delivered: `g055, g091, g013, g097, g090`
+- Relevant labels: `v002, v015, v016, v020, v030, v034, v044, v048, v058, v062, v066, v072, v076, v086, v090, v100`
+- Baseline delivered: `v020, v044, v066, v056, v086`
+- Agent delivered: `v020, v097, v044, v066, v056`
 - Agent-only relevant: `(none)`
 - Agent degraded: `none`
 
@@ -105,51 +104,43 @@ Query: 招5年以上后端工程师，必须同时具备服务端开发和微服
 
 Query: 找有3年以上机器学习经验的工程师；有模型训练、PyTorch、特征工程或在线推理经验者优先
 
-- Relevant labels: `g003, g009, g011, g012, g014, g017, g023, g031, g037, g045, g051, g059, g065, g071, g073, g079, g087, g093`
-- Baseline delivered: `g087, g079, g009, g023, g065`
-- Agent delivered: `g079, g065, g051, g017, g031`
-- Agent-only relevant: `g017, g031, g051`
+- Relevant labels: `v003, v009, v010, v017, v023, v031, v037, v045, v051, v059, v065, v073, v079, v087, v093`
+- Baseline delivered: `v087, v051, v037, v023, v065`
+- Agent delivered: `v087, v051, v065, v059, v079`
+- Agent-only relevant: `v059, v079`
 - Agent degraded: `none`
 
 ### `data_architect`
 
 Query: 找有5年以上经验的数据平台架构师，必须同时具备数据工程和系统架构设计经验；有实时数仓、容量规划或数据平台经验者优先
 
-- Relevant labels: `g004, g018, g032, g060, g074, g088`
-- Baseline delivered: `g032, g074, g004, g088, g018`
-- Agent delivered: `g032, g074, g004, g088, g060`
-- Agent-only relevant: `g060`
+- Relevant labels: `v004, v018, v032, v046, v060, v074, v075, v088`
+- Baseline delivered: `v004, v074, v046, v047, v083`
+- Agent delivered: `v074, v018, v004, v046, v032`
+- Agent-only relevant: `v018, v032`
 - Agent degraded: `none`
 
 ### `distributed_infra`
 
 Query: 找有5年以上经验的分布式基础设施工程师，必须同时具备分布式系统和高并发系统设计经验；熟悉容灾、Kafka或链路追踪者优先
 
-- Relevant labels: `g005, g011, g019, g025, g033, g039, g047, g053, g061, g067, g075, g089`
-- Baseline delivered: `g061, g089, g005, g056, g047`
-- Agent delivered: `g061, g053, g067, g005, g011`
-- Agent-only relevant: `g011, g053, g067`
+- Relevant labels: `v005, v011, v019, v025, v033, v039, v047, v053, v061, v067, v075, v081, v089, v095`
+- Baseline delivered: `v061, v019, v089, v011, v057`
+- Agent delivered: `v019, v011, v061, v089, v047`
+- Agent-only relevant: `v047`
 - Agent degraded: `none`
 
 ### `architecture_transferable`
 
 Query: 找有8年以上经验的系统架构师，必须同时具备系统架构设计和微服务架构经验；跨团队协作、技术方案评审或可迁移背景优先
 
-- Relevant labels: `g041, g055, g069, g083, g097`
-- Baseline delivered: `g055, g097, g041, g069, g020`
-- Agent delivered: `g055, g097, g041, g069, g005`
-- Agent-only relevant: `(none)`
+- Relevant labels: `v041, v055, v069, v083, v097`
+- Baseline delivered: `v097, v041, v055, v005, v088`
+- Agent delivered: `v097, v041, v072, v083, v030`
+- Agent-only relevant: `v083`
 - Agent degraded: `none`
 
 ## Interpretation Boundary
-
-## What This Run Shows
-
-- Exploration improved clearly: mean pool recall increased from `0.735` to `0.937`, and the paired bootstrap interval excludes zero.
-- Delivered top-5 recall increased from `0.392` to `0.473`, but its interval crosses zero; this 10-query sample does not establish a reliable average top-5 gain.
-- Ranking quality did not simply trade off against recall: mean precision@5 increased from `0.740` to `0.840`, and `17` Agent-only candidates were relevant (`0.708` novel-candidate precision).
-- The improvement costs roughly `3x` LLM calls, tokens, and p50 latency. Two Agent runs hit `budget_exceeded`.
-- Not every query improved. `microservice_backend` regressed from recall@5 `0.333` to `0.133`; `data_realtime` widened its pool but did not improve delivered recall. The next iteration should focus on judge/rerank precision, converged-search budget allocation, and failure analysis for these query families.
 
 - The corpus and labels are public and synthetic; absolute values must not be compared with company metrics.
 - The run uses one model configuration and one observed sample per query; bootstrap CIs are descriptive, not significance tests.
