@@ -494,6 +494,7 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert 'id="sidebar-new"' in index.text
     assert 'id="agent-session-list"' in index.text
     assert "最近会话" in index.text
+    assert "SSE 实时事件" not in index.text
 
     styles = client.get("/styles.css")
     assert styles.status_code == 200

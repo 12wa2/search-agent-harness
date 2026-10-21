@@ -5280,26 +5280,6 @@ p {
   line-height: 1.6;
 }
 
-.sidebar-foot {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(234, 242, 237, 0.13);
-  color: rgba(234, 242, 237, 0.6);
-  font-size: 9px;
-  line-height: 1.4;
-}
-
-.sidebar-live {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 6px;
-  border-radius: 50%;
-  background: #63c9a3;
-  box-shadow: 0 0 0 3px rgba(99, 201, 163, 0.12);
-}
-
 .agent-main {
   display: flex;
   min-width: 0;
