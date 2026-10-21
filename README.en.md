@@ -136,23 +136,24 @@ The default view is a conversational agent workspace: recent conversations on th
 
 ## Evaluation snapshot
 
-Public evaluation uses synthetic candidates, fixed datasets, and explicit experiment configurations; no real company resumes are used. Scripted offline experiments are deterministic to rerun, while real-LLM experiments vary with model version, serving implementation, and generation randomness. The numbers are only engineering measurements of mechanism and cost/quality trade-offs, not production-environment claims.
+The repository's public evaluation uses synthetic candidates, fixed datasets, and generator-oracle labels; no real company resumes are used. Scripted offline experiments are deterministic to rerun, while real-LLM experiments vary with model version, serving implementation, and generation randomness. The numbers are engineering measurements only, not production-environment claims.
 
-| Experiment | Metric | Single pass | Full agent loop |
-|---|---|---:|---:|
-| Oracle benchmark (120 candidates, 6 queries) | Pool recall | 0.70 | 0.76 |
-| Same benchmark, default target | Delivered Recall@10 | 0.32 | 0.30 |
-| Real LLM + Hybrid V2 (100 candidates, 10 queries, synthetic) | Pool recall | 0.735 | 0.937 |
-| Same A/B experiment | Delivered Recall@5 | 0.392 | 0.473 |
-| Same A/B experiment | Precision@5 | 0.740 | 0.840 |
+Real LLM + Hybrid V2 A/B (100 synthetic candidates, 10 complex queries, top-5): the baseline and Agent share `qwen3.8-flash`, Hybrid V2, and Elasticsearch; the only structural variable is the reflection loop.
 
-Key findings:
+| Metric | Single pass | Agent reflection |
+|---|---:|---:|
+| Mean pool recall | 0.735 | 0.937 |
+| Mean Recall@5 | 0.392 | 0.473 |
+| Mean Precision@5 | 0.740 | 0.840 |
+| LLM calls | 20 | 59 |
+| Tokens | 148,428 | 446,704 |
+| p50 latency | 50.7 s | 139.9 s |
 
-- The loop widens exploration, but a larger candidate pool does not guarantee better delivered ranking: on the default Oracle target, delivered Recall@10 moves from `0.32` to `0.30`. A forced-iteration ablation reaches `0.32 → 0.41`; that setup deliberately raises the target and forces further search, so it must not be mixed with the default result.
-- In the real-LLM A/B, the pool-recall interval excludes zero; the Recall@5 bootstrap interval crosses zero, so 10 queries do not establish a stable average delivered-recall gain.
-- In the real A/B, the full loop uses roughly 3x the model calls and tokens and 2.8x the p50 latency; not every query improves, so judge/rerank precision is the next priority.
+- The bootstrap 95% CI for pool recall excludes zero; the Recall@5 interval crosses zero, so 10 queries do not establish a stable average delivered-recall gain.
+- The Agent delivered 24 new candidates, 17 of them relevant (0.708); cost is about 3x, p95 latency moves from 57.0 to 185.3 s, and 2/10 queries hit `budget_exceeded`.
+- A separate default-Oracle check is equally important: pool recall moves from 0.70 to 0.76, but delivered Recall@10 moves from 0.32 to 0.30, so the current bottleneck is judge/rerank rather than 'nothing was found.'
 
-Full tables, confidence intervals, per-query failure analysis, and reproduction commands are in **[Evaluation](docs/EVALUATION.md)**.
+Full tables, forced-iteration ablations, confidence intervals, and per-query failure analysis are in **[Evaluation](docs/EVALUATION.md)**.
 
 ## Core design
 
