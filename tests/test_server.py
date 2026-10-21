@@ -397,7 +397,7 @@ def test_root_serves_the_web_console(client: TestClient) -> None:
     assert 'id="agent-session-count"' in resp.text
     assert "最近会话" in resp.text
     assert "本次会话" not in resp.text
-    assert "检索原则" in resp.text
+    assert "检索原则" not in resp.text
     assert "一条需求如何变成名单" in resp.text
     assert "执行观测" in resp.text
     assert resp.headers["cache-control"] == "no-cache, no-store, must-revalidate"

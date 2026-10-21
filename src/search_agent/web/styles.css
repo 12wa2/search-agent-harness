@@ -5097,8 +5097,7 @@ p {
   border-bottom: 1px solid rgba(234, 242, 237, 0.13);
 }
 
-.sidebar-section-head h2,
-.sidebar-principles-label {
+.sidebar-section-head h2 {
   margin: 0;
   color: var(--forest-muted);
   font: 600 10.5px/1.4 var(--sans);
@@ -5258,56 +5257,6 @@ p {
   color: rgba(234, 242, 237, 0.6);
   font-size: 10.5px;
   line-height: 1.6;
-}
-
-.sidebar-principles {
-  padding-top: 16px;
-  border-top: 1px solid rgba(234, 242, 237, 0.13);
-}
-
-.sidebar-principles ol {
-  display: grid;
-  margin: 10px 0 0;
-  padding: 0;
-  gap: 0;
-  list-style: none;
-}
-
-.sidebar-principles li {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  gap: 9px;
-  padding: 8px 0;
-  border-top: 1px solid rgba(234, 242, 237, 0.08);
-}
-
-.sidebar-principles li:first-child {
-  border-top: 0;
-}
-
-.sidebar-principles li > b {
-  padding-top: 1px;
-  color: rgba(234, 242, 237, 0.55);
-  font: 500 9px/1.6 var(--mono);
-}
-
-.sidebar-principles li > span {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.sidebar-principles strong {
-  color: rgba(234, 242, 237, 0.85);
-  font-size: 10.5px;
-  font-weight: 600;
-}
-
-.sidebar-principles small {
-  color: rgba(234, 242, 237, 0.6);
-  font-size: 9.5px;
-  line-height: 1.45;
 }
 
 .sidebar-foot {
