@@ -227,7 +227,7 @@ class IntentRouter:
             return _reply(
                 Intent.OUT_OF_SCOPE,
                 "我目前专注于招聘需求解析与候选人搜索，暂不处理写诗、翻译、天气或通用知识问答。\n"
-                "你可以改为描述一个岗位和关键要求，我会启动八阶段搜索 Agent。",
+                "你可以改为描述一个岗位和关键要求，我会启动自适应搜索 Agent。",
                 rule=rule,
             )
 

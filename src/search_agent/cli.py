@@ -268,7 +268,7 @@ def _add_hybrid_v2_flags(parser: argparse.ArgumentParser) -> None:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="search-agent",
-        description="Eight-stage reflective retrieval agent (offline demo + real LLM mode).",
+        description="Adaptive 3/5/8-stage retrieval agent (offline demo + real LLM mode).",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)

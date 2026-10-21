@@ -355,7 +355,7 @@ def create_app(
     app = FastAPI(
         title="search-agent-harness",
         version=__version__,
-        description="Eight-stage reflective retrieval agent over HTTP.",
+        description="Adaptive 3/5/8-stage retrieval agent over HTTP.",
     )
     app.state.runtime_llm = runtime
     app.state.runtime_tool = runtime_tool
