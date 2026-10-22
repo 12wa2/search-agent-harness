@@ -313,12 +313,13 @@ class ConversationStore:
 
     def _touch_index(self, memory: ConversationMemory) -> None:
         scope_key = self._scope_key(memory.company_id, memory.hr_id)
+        score = time.time_ns()
         if self._redis is not None:
             key = self._index_key(memory.company_id, memory.hr_id)
-            self._redis.zadd(key, {memory.conversation_id: int(memory.updated_at)})
+            self._redis.zadd(key, {memory.conversation_id: score})
             self._redis.expire(key, self._ttl)
             return
-        _MEM_INDEX.setdefault(scope_key, {})[memory.conversation_id] = int(memory.updated_at)
+        _MEM_INDEX.setdefault(scope_key, {})[memory.conversation_id] = score
 
     def _index_ids(
         self,

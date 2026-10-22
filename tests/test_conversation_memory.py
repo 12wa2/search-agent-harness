@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock
 
+from search_agent import conversation_memory
 from search_agent.conversation_memory import (
     ConversationMemory,
     ConversationStore,
@@ -213,6 +214,21 @@ class TestConversationMemory:
 
 
 class TestConversationHistory:
+    def test_list_orders_conversations_created_in_same_second(self, monkeypatch):
+        store = ConversationStore(connect_redis=False)
+        company_id = 98762
+        ticks = iter([1_000_000_000_000_000, 1_000_000_000_000_001])
+        monkeypatch.setattr(conversation_memory.time, "time", lambda: 1000)
+        monkeypatch.setattr(conversation_memory.time, "time_ns", lambda: next(ticks))
+
+        store.create(company_id, 7, title="Earlier")
+        store.create(company_id, 7, title="Later")
+
+        assert [row.title for row in store.list(company_id, 7)[:2]] == [
+            "Later",
+            "Earlier",
+        ]
+
     def test_create_list_and_delete_are_tenant_scoped(self):
         store = ConversationStore(connect_redis=False)
         company_id = 98761

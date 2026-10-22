@@ -256,21 +256,21 @@ def test_conversation_api_persists_history_exclusions_and_tenant_scope() -> None
     with TestClient(app) as scoped:
         created = scoped.post(
             "/conversations",
-            json={"companyId": 39978, "hrId": 7, "title": "Backend hiring"},
+            json={"companyId": 98801, "hrId": 7, "title": "Backend hiring"},
         )
         assert created.status_code == 200
         conversation_id = created.json()["conversationId"]
 
         rows = scoped.get(
             "/conversations",
-            params={"companyId": 39978, "hrId": 7},
+            params={"companyId": 98801, "hrId": 7},
         )
         assert rows.status_code == 200
         assert rows.json()[0]["title"] == "Backend hiring"
 
         excluded = scoped.patch(
             f"/conversations/{conversation_id}/candidates/c004",
-            params={"companyId": 39978, "hrId": 7},
+            params={"companyId": 98801, "hrId": 7},
             json={"excluded": True},
         )
         assert excluded.status_code == 200
@@ -278,7 +278,7 @@ def test_conversation_api_persists_history_exclusions_and_tenant_scope() -> None
 
         detail = scoped.get(
             f"/conversations/{conversation_id}",
-            params={"companyId": 39978, "hrId": 7},
+            params={"companyId": 98801, "hrId": 7},
         )
         assert detail.status_code == 200
         assert detail.json()["excludedCandidateIds"] == ["c004"]
@@ -296,7 +296,7 @@ def test_conversation_api_persists_history_exclusions_and_tenant_scope() -> None
         ).json() == {"deleted": False}
         assert scoped.delete(
             f"/conversations/{conversation_id}",
-            params={"companyId": 39978, "hrId": 7},
+            params={"companyId": 98801, "hrId": 7},
         ).json() == {"deleted": True}
 
 
