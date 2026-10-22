@@ -194,6 +194,7 @@ See [`examples/custom_backend.py`](examples/custom_backend.py) for a minimal imp
 | [LLM Gateway](docs/LLM_GATEWAY.md) | Model aliases, fallback routing, authentication, and usage |
 | [Case Study](docs/CASE_STUDY.md) | Stage-by-stage walkthrough of a complete query |
 | [Decisions](docs/DECISIONS.md) | ADR-style trade-offs and alternatives |
+| [Technical Roadmap](docs/ROADMAP.md) | Open engineering hypotheses, validation plans, and trade-offs |
 | [Contributing](CONTRIBUTING.md) | Development setup, tests, and extension points |
 | [Changelog](CHANGELOG.md) | Implemented capabilities and behavior changes |
 
@@ -203,13 +204,6 @@ See [`examples/custom_backend.py`](examples/custom_backend.py) for a minimal imp
 - CI covers Ruff, pytest, Web asset validation, a demo smoke test, an evaluation gate, and Elasticsearch integration tests.
 - The repository is not deployed to production and contains no real resumes, company data, internal hosts, or credentials. Demo data is synthetic.
 - Model quality, cost, and latency vary by provider; rerun the evaluation before connecting real data.
-
-## Roadmap
-
-- [ ] Connect real embeddings and quantify semantic-recall gains
-- [ ] Improve judge/rerank evidence granularity and fix "found in exploration, lost in ranking"
-- [ ] Allocate convergence/re-search budgets by query family to reduce the roughly 3x cost
-- [ ] Record a README demo GIF; `docs/demo.tape` is ready
 
 ## License
 

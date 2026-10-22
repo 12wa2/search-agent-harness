@@ -194,6 +194,7 @@ class SearchTool(Protocol):
 | [LLM Gateway](docs/LLM_GATEWAY.md) | 模型别名、主备降级、鉴权与用量 |
 | [案例走查](docs/CASE_STUDY.md) | 一次完整查询的逐阶段演示 |
 | [设计决策](docs/DECISIONS.md) | ADR 风格的取舍与替代方案 |
+| [技术规划](docs/ROADMAP.md) | 未完成优化项的假设、验证方法与收益边界 |
 | [贡献指南](CONTRIBUTING.md) | 开发环境、测试与扩展方式 |
 | [变更记录](CHANGELOG.md) | 已实现能力与行为变化 |
 
@@ -203,13 +204,6 @@ class SearchTool(Protocol):
 - CI 包含 Ruff、pytest、Web 资源校验、Demo 冒烟、评测门禁与 Elasticsearch 集成测试。
 - 仓库未部署到生产环境，不包含真实简历、企业数据、内部主机或凭据；演示数据均为虚构。
 - 不同模型提供方的质量、成本和延迟差异很大，接入真实数据前应重新评测。
-
-## Roadmap
-
-- [ ] 接入真实 embedding，验证语义召回收益
-- [ ] 提升 judge / rerank 的证据粒度，修复“探索有货、排序丢货”
-- [ ] 按查询族分配收敛再搜预算，降低真实模型链路约 3 倍的成本
-- [ ] 录制 README 演示 GIF；`docs/demo.tape` 已就绪
 
 ## License
 

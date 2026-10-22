@@ -41,7 +41,7 @@
 - 精确率没有因扩大召回而下降；21 个 Agent 独有交付候选人中 14 个相关（0.667）。Precision@5 的提升没有配对 CI，只作描述性报告。
 - LLM 调用约为基线的 3.25 倍、tokens 约为 3.64 倍，p95 延迟从 32.2 s 升到 116.0 s；本次 10 条查询均未触发 `budget_exceeded`。
 - 并非每条查询都提升：`stability_capacity` 的 recall@5 从 0.500 降到 0.375，`microservice_backend` 从 0.250 降到 0.188。`payment_distributed_tx` 的最终 recall@5 从 0.062 升到 0.250，但池召回从 0.562 降到 0.438，说明更小的候选池也可能因排序改善而交付更好。
-- 下一轮应优先修 judge / rerank 精度、收敛再搜的预算分配，以及落后查询族的失败分析。
+- 下一轮应优先修 judge / rerank 精度、收敛再搜的预算分配，以及落后查询族的失败分析；对应假设和验证方法见[技术规划](ROADMAP.md)。
 
 逐查询结果、bootstrap 区间与原始 JSON：
 
