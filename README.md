@@ -10,7 +10,10 @@
 
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688)
 ![Pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
+![Elasticsearch](https://img.shields.io/badge/Elasticsearch-8-005571)
+![Web UI](https://img.shields.io/badge/Web_UI-zero--build-2f6f61)
 ![Tests](https://img.shields.io/badge/tests-540-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
