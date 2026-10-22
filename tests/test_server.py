@@ -379,9 +379,16 @@ def test_root_serves_the_web_console(client: TestClient) -> None:
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
     assert "Search Agent" in resp.text
-    assert "app.js?v=4" in resp.text
-    assert "styles.css?v=4" in resp.text
+    assert "app.js?v=8" in resp.text
+    assert "styles.css?v=10" in resp.text
     assert 'id="agent-view"' in resp.text
+    assert 'id="sidebar-toggle"' in resp.text
+    assert 'class="topbar-leading"' in resp.text
+    assert 'id="sidebar-collapse"' in resp.text
+    assert 'id="sidebar-rail-toggle"' in resp.text
+    assert 'id="sidebar-content"' in resp.text
+    assert 'id="agent-sidebar"' in resp.text
+    assert 'id="agent-sidebar-scrim"' in resp.text
     assert 'id="mode-chip"' in resp.text
     assert 'id="online-mode-dialog"' in resp.text
     assert "mode-toggle" in resp.text
@@ -446,6 +453,10 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "chat-progress-item" in script.text
     assert "renderChatResult" in script.text
     assert "agent-session-list" in script.text
+    assert "SIDEBAR_KEY" in script.text
+    assert "setSidebarVisible" in script.text
+    assert "sidebarMediaQuery" in script.text
+    assert "sidebarRailToggle" in script.text
     assert "/conversations/" in script.text
     assert "restoreConversation" in script.text
     assert "toggleCandidateExclusion" in script.text
@@ -510,6 +521,12 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert ".chat-progress-segment.is-skipped" in styles.text
     assert ".route-summary" in styles.text
     assert ".agent-sidebar" in styles.text
+    assert ".sidebar-toggle" in styles.text
+    assert ".topbar-leading" in styles.text
+    assert ".sidebar-collapse" in styles.text
+    assert ".sidebar-rail-toggle" in styles.text
+    assert ".agent-app.is-sidebar-collapsed" in styles.text
+    assert ".agent-app.is-sidebar-open" in styles.text
     assert ".agent-session-list" in styles.text
     assert ".intro-grid" in styles.text
     assert ".candidate-name-link" in styles.text

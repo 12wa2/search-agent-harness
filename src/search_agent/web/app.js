@@ -38,6 +38,7 @@ const STAGE_META = {
 const PAGE_SIZE = 5;
 const CONVERSATION_KEY = "search-agent:conversation";
 const VIEW_KEY = "search-agent:view";
+const SIDEBAR_KEY = "search-agent:sidebar";
 const RESUME_PAGE = "/resume.html";
 const RESUME_CACHE_PREFIX = "search-agent:candidate:";
 const FINALIZE_REASON_COPY = Object.freeze({
@@ -116,6 +117,14 @@ const agentSessionList = $("agent-session-list");
 const agentSessionCount = $("agent-session-count");
 const agentSessionEmpty = $("agent-session-empty");
 const sidebarNewBtn = $("sidebar-new");
+const agentSidebar = $("agent-sidebar");
+const sidebarToggle = $("sidebar-toggle");
+const sidebarToggleLabel = $("sidebar-toggle-label");
+const sidebarCollapse = $("sidebar-collapse");
+const sidebarRailToggle = $("sidebar-rail-toggle");
+const sidebarContent = $("sidebar-content");
+const sidebarScrim = $("agent-sidebar-scrim");
+const sidebarMediaQuery = window.matchMedia("(max-width: 980px)");
 
 function stageKeysForRoute(route, plannedStages) {
   if (Array.isArray(plannedStages) && plannedStages.length) {
@@ -1342,7 +1351,10 @@ function renderConversation() {
         el("span", "agent-session-query", title),
         el("small", "", `${Number(conversation.turnCount || 0)} 轮`),
       );
-      button.addEventListener("click", () => restoreConversation(conversation.conversationId));
+      button.addEventListener("click", () => {
+        void restoreConversation(conversation.conversationId);
+        if (sidebarMediaQuery.matches) setSidebarVisible(false);
+      });
       const deleteButton = el("button", "agent-session-delete");
       deleteButton.type = "button";
       deleteButton.title = `删除会话：${title}`;
@@ -2911,6 +2923,79 @@ function initViewMode() {
   setViewMode(requested, { persist: false });
 }
 
+function readSidebarPreference() {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) !== "hidden";
+  } catch (err) {
+    return true;
+  }
+}
+
+function sidebarIsVisible() {
+  if (!agentView) return false;
+  return sidebarMediaQuery.matches
+    ? agentView.classList.contains("is-sidebar-open")
+    : !agentView.classList.contains("is-sidebar-collapsed");
+}
+
+function setSidebarVisible(visible, { persist = true, moveFocus = false } = {}) {
+  const mobile = sidebarMediaQuery.matches;
+  const expanded = Boolean(visible);
+  const collapsed = !mobile && !expanded;
+  if (agentView) {
+    agentView.classList.toggle("is-sidebar-collapsed", collapsed);
+    agentView.classList.toggle("is-sidebar-open", mobile && expanded);
+  }
+  if (agentSidebar) {
+    const hidden = mobile && !expanded;
+    agentSidebar.setAttribute("aria-hidden", String(hidden));
+    if ("inert" in agentSidebar) agentSidebar.inert = hidden;
+  }
+  if (sidebarContent) {
+    sidebarContent.setAttribute("aria-hidden", String(collapsed));
+    if ("inert" in sidebarContent) sidebarContent.inert = collapsed;
+  }
+  if (sidebarToggle) {
+    const label = expanded ? "收起最近会话" : "展开最近会话";
+    sidebarToggle.setAttribute("aria-expanded", String(expanded));
+    sidebarToggle.setAttribute("aria-label", label);
+    sidebarToggle.title = label;
+  }
+  if (sidebarToggleLabel) {
+    sidebarToggleLabel.textContent = expanded ? "收起会话" : "展开会话";
+  }
+  if (sidebarScrim) {
+    sidebarScrim.hidden = !(mobile && expanded);
+  }
+  if (persist && !mobile) {
+    try {
+      localStorage.setItem(SIDEBAR_KEY, expanded ? "shown" : "hidden");
+    } catch (err) {
+      // Sidebar preference is optional.
+    }
+  }
+  if (moveFocus) {
+    if (expanded) requestAnimationFrame(() => sidebarNewBtn?.focus());
+    else if (mobile) sidebarToggle?.focus();
+    else requestAnimationFrame(() => sidebarRailToggle?.focus());
+  }
+}
+
+function initSidebarState() {
+  const syncForViewport = () => {
+    setSidebarVisible(
+      sidebarMediaQuery.matches ? false : readSidebarPreference(),
+      { persist: false },
+    );
+  };
+  syncForViewport();
+  if (typeof sidebarMediaQuery.addEventListener === "function") {
+    sidebarMediaQuery.addEventListener("change", syncForViewport);
+  } else {
+    sidebarMediaQuery.addListener(syncForViewport);
+  }
+}
+
 function bindEvents() {
   document.getElementById("search-form").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -2991,12 +3076,35 @@ function bindEvents() {
   }
 
   viewAgentBtn.addEventListener("click", () => setViewMode("agent"));
-  viewConsoleBtn.addEventListener("click", () => setViewMode("console"));
+  viewConsoleBtn.addEventListener("click", () => {
+    if (sidebarMediaQuery.matches) setSidebarVisible(false);
+    setViewMode("console");
+  });
   modeChip.addEventListener("click", toggleRuntimeMode);
 
   newConversationBtn.addEventListener("click", startNewConversation);
   chatNewBtn.addEventListener("click", startNewConversation);
-  sidebarNewBtn?.addEventListener("click", startNewConversation);
+  sidebarNewBtn?.addEventListener("click", () => {
+    startNewConversation();
+    if (sidebarMediaQuery.matches) setSidebarVisible(false);
+  });
+  sidebarToggle?.addEventListener("click", () => {
+    setSidebarVisible(!sidebarIsVisible(), { moveFocus: true });
+  });
+  sidebarCollapse?.addEventListener("click", () => {
+    setSidebarVisible(false, { moveFocus: true });
+  });
+  sidebarRailToggle?.addEventListener("click", () => {
+    setSidebarVisible(true, { moveFocus: true });
+  });
+  sidebarScrim?.addEventListener("click", () => {
+    setSidebarVisible(false, { moveFocus: true });
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && sidebarMediaQuery.matches && sidebarIsVisible()) {
+      setSidebarVisible(false, { moveFocus: true });
+    }
+  });
 
   prevPageBtn.addEventListener("click", () => {
     loadSessionPage(Math.max(0, state.pageOffset - state.pageLimit));
@@ -3027,6 +3135,7 @@ async function initializeConversationState() {
 loadConversationState();
 buildRail();
 renderConversation();
+initSidebarState();
 bindEvents();
 initViewMode();
 initFromUrl();
