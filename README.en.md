@@ -26,12 +26,16 @@ Controlled direct search · Adaptive reflection for harder requests · Evidence-
 
 ## Why this project
 
-Elasticsearch already knows how to retrieve and rank. The harder problem is the search policy around it:
+The project starts from a concrete mismatch: a job description states abstract abilities such as "high-concurrency system design", while a resume describes concrete projects such as order, payment, or distributed systems. The same ability can come from completely different roles, industries, or product lines; conversely, different titles may hide transferable experience. Keyword search naturally misses candidates in this gap.
 
-- How should a natural-language hiring brief become executable retrieval constraints?
-- When a path is not enough, should the system broaden it, change sources, or stop?
-- Is the model judging evidence from the candidate record, or only keyword similarity?
-- Which conversation context should carry over, and which candidates were explicitly excluded?
+I started with NL2IR, trying to make the "natural language → retrieval IR" step accurate. But there is a ceiling: **no matter how accurate the parser is, it only translates one sentence into one query.** The conventional pipeline `NL → IR → ES retrieval → LLM reranking → response` is one-shot: if the first constraints are too strict or the direction is wrong, the system does not revise based on the results, and no stage answers "are these candidates enough, and do they cover the must-have abilities?"
+
+Retrieval is not the bottleneck — Elasticsearch is already strong. The missing layer is **search-policy decision-making**: what to search, where to search, whether the result is sufficient, and when to change direction. In one sentence: **the problem is not retrieval; it is that no one owns the decision of how to search.**
+
+Around that policy layer, the project focuses on three questions:
+
+- When one path is not enough, should the system broaden it, change sources, or stop?
+- Is the model judging evidence from the candidate record, or being misled by keyword similarity?
 - What does reflection buy in quality, and what does it cost in tokens and latency?
 
 Search Agent Harness adds a controlled policy loop on top of deterministic retrieval. LLMs handle understanding, planning, judgment, and reflection. The engineering layer owns state transitions, budgets, signature deduplication, stopping conditions, cancellation, and degradation. Any retrieval system can plug in through the two-method `SearchTool` protocol.
