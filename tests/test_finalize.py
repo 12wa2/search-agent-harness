@@ -16,7 +16,7 @@ from search_agent.models.artifacts import (
 )
 from search_agent.models.ir import StructuredConditionIR
 from search_agent.stages.base import Deps
-from search_agent.stages.finalize import _selection_key, run_finalize
+from search_agent.stages.finalize import _judge_gate_key, _selection_key, run_finalize
 
 
 def _candidate(doc_id: str, score: float, *, has_python: bool) -> ToolCandidate:
@@ -50,6 +50,21 @@ class _PoolTool:
         raise AssertionError("converged finalize should not fall back to rerank_pool")
 
 
+class _FinalV2PoolTool(_PoolTool):
+    """Return a deliberately different order from the judge-first selector."""
+
+    def __init__(self, candidates: list[ToolCandidate]) -> None:
+        super().__init__(candidates)
+        self.rerank_calls = []
+
+    def rerank_pool(self, req):
+        self.rerank_calls.append(req)
+        by_id = {candidate.doc_id: candidate for candidate in req.candidates}
+        order = ["noise-a", "relevant", "noise-b"]
+        ordered = [by_id[doc_id] for doc_id in order if doc_id in by_id]
+        return SearchToolResult(items=ordered[: req.top_k], total=len(ordered), quality="rich")
+
+
 class _SelectiveJudge:
     """Judge only the one relevant candidate as matching Python."""
 
@@ -78,7 +93,35 @@ class _SelectiveJudge:
         return {"judgments": judgments}
 
 
-def test_finalize_judges_full_converged_pool_before_top_k_cut() -> None:
+def _policy_state() -> dict[str, Any]:
+    return {
+        "need_clarify": False,
+        "top_k": 2,
+        "recall_pool_size": 3,
+        "query": "Python backend",
+        "company_id": 1,
+        "hr_id": None,
+        "permission": None,
+        "routing": 1,
+        "details": False,
+        "job_profile": JobProfile(
+            raw_query="Python backend",
+            title="Backend",
+            must_abilities=[JobAbility(name="Python", level="must")],
+            hard_constraints=[
+                StructuredConditionIR(field="work_years", operator="gte", values=[3])
+            ],
+        ),
+        "reflections": [object()],
+        "fallback_baseline": False,
+        "paths": [],
+        "path_results": [],
+        "accumulated": {},
+    }
+
+
+def test_finalize_judges_full_converged_pool_before_top_k_cut(monkeypatch) -> None:
+    monkeypatch.delenv("SEARCH_AGENT_FINAL_SELECTION_POLICY", raising=False)
     # The first five backend hits are noise. The relevant hit is rank 10 and
     # would be lost if finalize cut fs_result.items[:top_k] before judging.
     candidates = [_candidate(f"n{i}", 1.0 - i * 0.01, has_python=False) for i in range(30)]
@@ -123,6 +166,125 @@ def test_finalize_judges_full_converged_pool_before_top_k_cut() -> None:
     assert "relevant" in {item.doc_id for item in result["final_items"]}
     assert len(result["final_items"]) == 5
     assert llm.calls == 1
+
+
+def test_final_v2_policy_skips_implicit_rerank_and_reranks_once(monkeypatch) -> None:
+    monkeypatch.setenv("SEARCH_AGENT_FINAL_SELECTION_POLICY", "final_v2")
+    candidates = [
+        _candidate("relevant", 0.2, has_python=True),
+        _candidate("noise-a", 0.9, has_python=False),
+        _candidate("noise-b", 0.8, has_python=False),
+    ]
+    tool = _FinalV2PoolTool(candidates)
+    llm = _SelectiveJudge("relevant")
+    deps = Deps(
+        llm=llm,
+        tool=tool,
+        budget_state=BudgetState(budget=Budget(max_llm_calls=20, time_budget_sec=120.0)),
+    )
+    state = {
+        "need_clarify": False,
+        "top_k": 2,
+        "recall_pool_size": 3,
+        "query": "Python backend",
+        "company_id": 1,
+        "hr_id": None,
+        "permission": None,
+        "routing": 1,
+        "details": False,
+        "job_profile": JobProfile(
+            raw_query="Python backend",
+            title="Backend",
+            must_abilities=[JobAbility(name="Python", level="must")],
+            hard_constraints=[
+                StructuredConditionIR(field="work_years", operator="gte", values=[3])
+            ],
+        ),
+        "reflections": [object()],
+        "fallback_baseline": False,
+        "paths": [],
+        "path_results": [],
+        "accumulated": {},
+    }
+
+    result = run_finalize(state, deps)
+
+    assert tool.search_calls[0].skip_rerank is True
+    assert len(tool.rerank_calls) == 1
+    assert {candidate.doc_id for candidate in tool.rerank_calls[0].candidates} == {
+        "relevant",
+        "noise-a",
+        "noise-b",
+    }
+    assert [candidate.doc_id for candidate in result["final_items"]] == ["noise-a", "relevant"]
+    assert result["rerank_used"] is True
+    assert llm.calls == 1
+
+
+def test_judge_gate_policy_keeps_search_rerank_and_prefers_must_match(monkeypatch) -> None:
+    monkeypatch.setenv("SEARCH_AGENT_FINAL_SELECTION_POLICY", "judge_gate")
+    candidates = [
+        _candidate("noise-a", 0.9, has_python=False),
+        _candidate("relevant", 0.2, has_python=True),
+        _candidate("noise-b", 0.8, has_python=False),
+    ]
+    tool = _PoolTool(candidates)
+    llm = _SelectiveJudge("relevant")
+    deps = Deps(
+        llm=llm,
+        tool=tool,
+        budget_state=BudgetState(budget=Budget(max_llm_calls=20, time_budget_sec=120.0)),
+    )
+
+    result = run_finalize(_policy_state(), deps)
+
+    assert tool.search_calls[0].skip_rerank is False
+    assert result["final_items"][0].doc_id == "relevant"
+    assert result["rerank_used"] is True
+    assert llm.calls == 1
+
+
+def test_judge_gate_v2_keeps_gate_above_v2_order(monkeypatch) -> None:
+    monkeypatch.setenv("SEARCH_AGENT_FINAL_SELECTION_POLICY", "judge_gate_v2")
+    candidates = [
+        _candidate("noise-a", 0.9, has_python=False),
+        _candidate("relevant", 0.2, has_python=True),
+        _candidate("noise-b", 0.8, has_python=False),
+    ]
+    tool = _FinalV2PoolTool(candidates)
+    llm = _SelectiveJudge("relevant")
+    deps = Deps(
+        llm=llm,
+        tool=tool,
+        budget_state=BudgetState(budget=Budget(max_llm_calls=20, time_budget_sec=120.0)),
+    )
+
+    result = run_finalize(_policy_state(), deps)
+
+    assert tool.search_calls[0].skip_rerank is True
+    assert len(tool.rerank_calls) == 1
+    assert tool.rerank_calls[0].top_k == 3
+    assert result["final_items"][0].doc_id == "relevant"
+    assert result["rerank_used"] is True
+
+
+def test_judge_gate_key_uses_v2_score_only_within_a_tier() -> None:
+    abilities = [JobAbility(name="Python", level="must")]
+    high_v2 = _candidate("high-v2", 0.1, has_python=True)
+    low_v2 = _candidate("low-v2", 0.1, has_python=True)
+    missing_must = _candidate("missing-must", 0.99, has_python=False)
+    accumulated = {
+        "high-v2": CandidateJudgment(doc_id="high-v2", matched_abilities=["Python"]),
+        "low-v2": CandidateJudgment(doc_id="low-v2", matched_abilities=["Python"]),
+        "missing-must": CandidateJudgment(doc_id="missing-must"),
+    }
+
+    assert _judge_gate_key(high_v2, accumulated, abilities, [], v2_score=0.9) < _judge_gate_key(
+        low_v2, accumulated, abilities, [], v2_score=0.2
+    )
+    assert _judge_gate_key(high_v2, accumulated, abilities, [], v2_score=0.9) < _judge_gate_key(
+        missing_must, accumulated, abilities, [], v2_score=1.0
+    )
 
 
 def test_selection_prefers_transferable_backend_evidence_on_llm_tie() -> None:

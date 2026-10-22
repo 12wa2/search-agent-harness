@@ -384,3 +384,37 @@ def test_explicit_simple_query_ignores_llm_clarification_request():
         "evaluate",
         "finalize",
     ]
+
+
+def test_actionable_role_query_ignores_llm_clarification_request():
+    tool = _FakeTool()
+    resp = _understand_resp("high")
+    resp["needs_clarification"] = True
+    resp["clarify_questions"] = ["请提供具体的岗位名称"]
+    llm = FakeLlmClient(
+        responses={
+            "agent_understand": resp,
+            "agent_judge": {
+                "judgments": [
+                    {
+                        "doc_id": f"d{i}",
+                        "matched_abilities": ["Python"],
+                        "missing_abilities": [],
+                        "summary": "ok",
+                    }
+                    for i in range(5)
+                ]
+            },
+        }
+    )
+    state = _state()
+    state["query"] = (
+        "找有8年以上经验的系统架构师，必须同时具备系统架构设计和微服务架构经验；"
+        "跨团队协作、技术方案评审或可迁移背景优先"
+    )
+
+    state = Harness(_deps(llm, tool)).run(state)
+
+    assert state.get("need_clarify") is not True
+    assert state["job_profile"].needs_clarification is False
+    assert "execute" in state["executed_stages"]

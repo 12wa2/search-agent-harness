@@ -97,3 +97,15 @@ def test_plain_talent_tier_is_not_rewritten_without_education_scope() -> None:
 
     conditions = updates["job_profile"].hard_constraints
     assert [condition.field for condition in conditions] == ["talent_tag"]
+
+
+def test_malformed_risk_filter_is_coerced_instead_of_failing_understand() -> None:
+    response = _response(position_filter=False)
+    response["talent_profile"]["risk_filters"] = [
+        {"type": "exclude_if_only", "value": "只看标签不看实际经历"}
+    ]
+    state = {"query": "找3年以上后端工程师", "conversation_history": []}
+
+    updates = run_understand(state, _deps(response))
+
+    assert updates["talent_profile"].risk_filters == ["只看标签不看实际经历"]

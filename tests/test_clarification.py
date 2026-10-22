@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from search_agent.core.clarification import detect_skill_only_clarification
+from search_agent.core.clarification import (
+    detect_skill_only_clarification,
+    is_actionable_recruitment_query,
+)
 
 
 @pytest.mark.parametrize(
@@ -63,3 +66,21 @@ def test_java_does_not_match_javascript() -> None:
     assert detect_skill_only_clarification("JavaScript") is not None
     assert detect_skill_only_clarification("Java") is not None
     assert detect_skill_only_clarification("JavaScript 工程师") is None
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "找有8年以上经验的系统架构师，必须同时具备系统架构设计和微服务架构经验",
+        "Python 工程师",
+        "帮我找会 Python 的",
+        "招聘 Java 后端工程师，北京",
+    ],
+)
+def test_actionable_recruitment_query_has_enough_search_context(query: str) -> None:
+    assert is_actionable_recruitment_query(query) is True
+
+
+@pytest.mark.parametrize("query", ["Java", "懂 Spark", "北京", "3年以上经验"])
+def test_underspecified_query_is_not_actionable(query: str) -> None:
+    assert is_actionable_recruitment_query(query) is False

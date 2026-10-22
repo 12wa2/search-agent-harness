@@ -238,6 +238,9 @@ def run_benchmark(
             "max_paths_per_iteration": os.environ.get("SEARCH_AGENT_MAX_PATHS_PER_ITERATION"),
             "target_qualified": os.environ.get("SEARCH_AGENT_TARGET_QUALIFIED"),
             "disable_thinking": os.environ.get("SEARCH_AGENT_DISABLE_THINKING"),
+            "final_selection_policy": os.environ.get(
+                "SEARCH_AGENT_FINAL_SELECTION_POLICY", "current"
+            ),
         },
         "benchmark": benchmark,
         "aggregate": aggregate,

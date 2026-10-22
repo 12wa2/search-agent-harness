@@ -14,7 +14,10 @@ import re
 from datetime import datetime
 from typing import Any
 
-from search_agent.core.clarification import detect_skill_only_clarification
+from search_agent.core.clarification import (
+    detect_skill_only_clarification,
+    is_actionable_recruitment_query,
+)
 from search_agent.core.difficulty import is_explicit_simple_query, resolve_difficulty
 from search_agent.llm.prompts import (
     build_understand_payload,
@@ -160,6 +163,33 @@ def _coerce_soft_signals(raw: Any) -> list[SemanticConditionIR]:
     return out
 
 
+def _coerce_string_list(raw: Any) -> list[str]:
+    """Coerce loose model output for fields typed as ``list[str]``.
+
+    Some OpenAI-compatible gateways ignore the JSON schema for nested talent
+    profile fields and return objects such as ``{"type": ..., "value": ...}``.
+    Keep the useful text instead of failing the entire understand stage.
+    """
+    if isinstance(raw, str):
+        return [raw]
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            value = item
+        elif isinstance(item, dict):
+            value = item.get("value") or item.get("text") or item.get("name") or item.get("type")
+        elif item is not None:
+            value = item
+        else:
+            continue
+        text = str(value).strip()
+        if text:
+            out.append(text)
+    return out
+
+
 def _coerce_sources(raw: Any) -> list[CandidateSource]:
     out: list[CandidateSource] = []
     for s in raw or []:
@@ -192,6 +222,8 @@ def run_understand(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     difficulty = resolve_difficulty(state["query"], difficulty)
     simple_lookup = is_explicit_simple_query(state["query"])
     tp = data.get("talent_profile") or data.get("initial_talent_profile") or {}
+    if not isinstance(tp, dict):
+        tp = {}
 
     hard_constraints = _coerce_hard_constraints(data.get("hard_constraints"))
     hard_constraints = _repair_education_tier_constraints(state["query"], hard_constraints)
@@ -199,7 +231,7 @@ def run_understand(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
         state["query"], hard_constraints
     )
     soft_signals = _coerce_soft_signals(tp.get("soft_signals"))
-    must_keywords = list(tp.get("must_keywords", []) or [])
+    must_keywords = _coerce_string_list(tp.get("must_keywords"))
     existing_soft_texts = {condition.text.casefold() for condition in soft_signals}
     for term in relaxed_terms:
         if term.casefold() not in {str(keyword).casefold() for keyword in must_keywords}:
@@ -214,6 +246,11 @@ def run_understand(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
             )
             existing_soft_texts.add(term.casefold())
 
+    llm_needs_clarification = bool(data.get("needs_clarification", False)) and not simple_lookup
+    if llm_needs_clarification and is_actionable_recruitment_query(state["query"]):
+        logger.info("understand: ignoring clarification request for actionable query")
+        llm_needs_clarification = False
+
     job = JobProfile(
         raw_query=state["query"],
         title=data.get("title"),
@@ -222,8 +259,10 @@ def run_understand(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
         hard_constraints=hard_constraints,
         subjective_difficulty=difficulty,
         difficulty_reason=data.get("difficulty_reason", "") or "",
-        needs_clarification=bool(data.get("needs_clarification", False)) and not simple_lookup,
-        clarify_questions=((data.get("clarify_questions", []) or []) if not simple_lookup else []),
+        needs_clarification=llm_needs_clarification,
+        clarify_questions=(
+            (data.get("clarify_questions", []) or []) if llm_needs_clarification else []
+        ),
     )
     clarification = detect_skill_only_clarification(
         state["query"],
@@ -240,7 +279,7 @@ def run_understand(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
         source_hypotheses=_coerce_sources(tp.get("source_hypotheses")),
         must_keywords=must_keywords,
         soft_signals=soft_signals,
-        risk_filters=tp.get("risk_filters", []) or [],
+        risk_filters=_coerce_string_list(tp.get("risk_filters")),
     )
 
     updates: dict[str, Any] = {"job_profile": job, "talent_profile": talent}

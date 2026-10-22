@@ -71,7 +71,7 @@ IntentRouter ─── 问候 / 身份 / 帮助 / 明确无关任务 ───> 
 | 轻量 Agent | `understand → execute → judge → evaluate → finalize` | 需求清楚，但仍需能力判断与覆盖检查 |
 | 完整反思 | `understand → plan → execute → judge → evaluate → reflect → revise → finalize` | 开放式偏好、抽象能力、可迁移经验或多路径探索 |
 
-直连路径不运行 Agent 编排的理解、规划、判断与反思阶段，因此 **Agent LLM 调用为 0**；Hybrid V2 parser 通常仍调用 1 次模型，失败时显式回退到本地规则。完整路由规则见 [意图路由](docs/INTENT_ROUTING.md)。
+直连路径不运行 Agent 编排的理解、规划、判断与反思阶段，因此 **Agent LLM 调用为 0**；强直连信号直接进入 Hybrid V2 parser，弱直连信号最多增加 1 次轻量入口复核模型调用。Hybrid V2 parser 通常仍调用 1 次模型，失败时显式回退到本地规则。完整路由规则见 [意图路由](docs/INTENT_ROUTING.md)。
 
 ## 快速开始
 

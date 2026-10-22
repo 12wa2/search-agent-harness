@@ -294,7 +294,7 @@ def test_clarification_short_circuits():
     tool = FakeSearchTool()
     llm = FakeLlmClient(responses={"agent_understand": _understand_resp(needs_clarify=True)})
     harness = Harness(_deps(llm, tool))
-    state = harness.run(_initial_state())
+    state = harness.run(_initial_state("Java"))
 
     assert state["phase"] == "done"
     assert state["need_clarify"] is True

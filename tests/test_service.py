@@ -66,38 +66,38 @@ class _FakeTool:
         )
 
 
-def _llm():
-    return FakeLlmClient(
-        responses={
-            "hybrid_search_v2_ir": _ir().model_dump(),
-            "agent_understand": {
-                "title": "Python engineer",
-                "must_abilities": [{"name": "Python", "level": "must"}],
-                "needs_clarification": False,
-                "talent_profile": {"must_keywords": ["Python"]},
-            },
-            "agent_plan": {
-                "paths": [
-                    {
-                        "rationale": "direct",
-                        "intent": _ir().model_dump(),
-                        "expected_yield": "high",
-                    }
-                ]
-            },
-            "agent_judge": {
-                "judgments": [
-                    {
-                        "doc_id": f"d{i}",
-                        "matched_abilities": ["Python"],
-                        "missing_abilities": [],
-                        "summary": "ok",
-                    }
-                    for i in range(5)
-                ]
-            },
-        }
-    )
+def _llm(extra: dict | None = None):
+    responses = {
+        "hybrid_search_v2_ir": _ir().model_dump(),
+        "agent_understand": {
+            "title": "Python engineer",
+            "must_abilities": [{"name": "Python", "level": "must"}],
+            "needs_clarification": False,
+            "talent_profile": {"must_keywords": ["Python"]},
+        },
+        "agent_plan": {
+            "paths": [
+                {
+                    "rationale": "direct",
+                    "intent": _ir().model_dump(),
+                    "expected_yield": "high",
+                }
+            ]
+        },
+        "agent_judge": {
+            "judgments": [
+                {
+                    "doc_id": f"d{i}",
+                    "matched_abilities": ["Python"],
+                    "missing_abilities": [],
+                    "summary": "ok",
+                }
+                for i in range(5)
+            ]
+        },
+    }
+    responses.update(extra or {})
+    return FakeLlmClient(responses=responses)
 
 
 def test_service_returns_search_response_with_items():
@@ -117,6 +117,87 @@ def test_service_returns_search_response_with_items():
     assert resp.debug is not None
     assert "agentTrace" in resp.debug
     assert resp.debug["agentTrace"]["final"]["rerankUsed"] is True
+
+
+def test_service_skips_entry_llm_for_strong_direct_query():
+    cands = [_candidate(f"d{i}") for i in range(3)]
+    tool = _FakeTool(cands)
+    llm = _llm(
+        {
+            "agent_entry_route": {
+                "route": "agent",
+                "confidence": 0.99,
+                "reason": "must not be called",
+            }
+        }
+    )
+    svc = SearchAgentService(tool=tool, llm_client=llm, runner=LoopRunner())
+
+    resp = svc.search(
+        SearchRequest(query="帮我找会 Python 的", companyId=39978, topK=3, details=True)
+    )
+
+    assert "agent_entry_route" not in [name for name, _ in llm.calls]
+    assert resp.debug is not None
+    assert resp.debug["difficultyRoute"] == "direct_search"
+    assert resp.debug["entryRoute"]["route"] == "direct_search"
+    assert resp.debug["entryRoute"]["source"] == "rule"
+    assert resp.debug["agentMetrics"]["meta"]["entryLlmCalls"] == 0
+    assert tool.search_calls == 1
+
+
+def test_service_uses_entry_llm_review_to_veto_weak_direct_query():
+    cands = [_candidate(f"d{i}") for i in range(5)]
+    tool = _FakeTool(cands)
+    llm = _llm(
+        {
+            "agent_entry_route": {
+                "route": "agent",
+                "confidence": 0.92,
+                "reason": "缺少岗位或技能，先进入 Agent 理解",
+            }
+        }
+    )
+    svc = SearchAgentService(tool=tool, llm_client=llm, runner=LoopRunner())
+
+    resp = svc.search(SearchRequest(query="帮我找北京的", companyId=39978, topK=5, details=True))
+
+    call_names = [name for name, _ in llm.calls]
+    assert call_names[0] == "agent_entry_route"
+    assert "agent_understand" in call_names
+    assert resp.debug is not None
+    assert resp.debug["entryRoute"]["route"] == "agent"
+    assert resp.debug["entryRoute"]["source"] == "llm"
+    assert resp.debug["difficultyRoute"] != "direct_search"
+    assert tool.search_calls == 1
+
+
+def test_service_keeps_weak_direct_query_when_entry_llm_confirms_it():
+    cands = [_candidate(f"d{i}") for i in range(3)]
+    tool = _FakeTool(cands)
+    llm = _llm(
+        {
+            "agent_entry_route": {
+                "route": "direct_search",
+                "confidence": 0.9,
+                "reason": "地点条件足以直接检索",
+            }
+        }
+    )
+    svc = SearchAgentService(tool=tool, llm_client=llm, runner=LoopRunner())
+
+    resp = svc.search(SearchRequest(query="帮我找北京的", companyId=39978, topK=3, details=True))
+
+    call_names = [name for name, _ in llm.calls]
+    assert call_names == ["agent_entry_route", "hybrid_search_v2_ir"]
+    assert resp.debug is not None
+    assert resp.debug["difficultyRoute"] == "direct_search"
+    assert resp.debug["entryRoute"]["route"] == "direct_search"
+    assert resp.debug["entryRoute"]["source"] == "llm"
+    assert resp.debug["agentMetrics"]["meta"]["entryLlmCalls"] == 1
+    assert resp.debug["agentMetrics"]["meta"]["parserLlmCalls"] == 1
+    assert resp.debug["agentMetrics"]["meta"]["llmCalls"] == 2
+    assert tool.search_calls == 1
 
 
 def test_service_backfills_conversation_id_and_second_turn_uses_history():

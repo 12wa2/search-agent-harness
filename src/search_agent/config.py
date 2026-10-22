@@ -10,6 +10,8 @@ import os
 
 from search_agent.models.artifacts import Budget
 
+_FINAL_SELECTION_POLICIES = frozenset({"current", "final_v2", "judge_gate", "judge_gate_v2"})
+
 
 def _env_int(name: str, default: int) -> int:
     try:
@@ -48,4 +50,24 @@ def recall_pool_size_from_env(top_k: int) -> int:
     return _env_int("SEARCH_AGENT_RECALL_POOL_SIZE", max(top_k * 3, 30))
 
 
-__all__ = ["budget_from_env", "recall_pool_size_from_env"]
+def final_selection_policy_from_env() -> str:
+    """Return the final ordering policy for an enriched Agent run.
+
+    ``current`` preserves the existing judge/evidence-first selection.
+    ``final_v2`` skips the implicit rerank inside the converged search and
+    applies one Hybrid V2 rerank over the complete merged pool in ``finalize``.
+    ``judge_gate`` keeps the normal converged-search rerank and applies
+    explicit must/evidence tiers. ``judge_gate_v2`` applies the same tiers,
+    with one global Hybrid V2 rerank used only as a tie-breaker inside a tier.
+    Unknown values fall back to ``current`` so a deployment typo cannot change
+    existing behaviour.
+    """
+    value = os.environ.get("SEARCH_AGENT_FINAL_SELECTION_POLICY", "current").strip().lower()
+    return value if value in _FINAL_SELECTION_POLICIES else "current"
+
+
+__all__ = [
+    "budget_from_env",
+    "final_selection_policy_from_env",
+    "recall_pool_size_from_env",
+]

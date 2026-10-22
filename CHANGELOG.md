@@ -7,6 +7,11 @@
 
 ### Added
 
+- **弱直连信号的 LLM 入口复核**（`entry_router.py`、`service.py`、`server.py`、`docs/INTENT_ROUTING.md`）：
+  强直连规则保持零额外调用；只有缺少岗位/技能、仅含城市或年限等弱直连计划，才调用一次
+  `agent_entry_route` 轻量分类器复核 `direct_search | agent`。高置信度遵从模型判断，低置信度安全回退
+  Agent，模型不可用或格式非法时保留原规则直连。直连指标新增 `entryLlmCalls` / `parserLlmCalls`
+  分项，SSE 与 debug 暴露 `entryRoute`、来源和置信度，并补充单元与 Service 回归测试。
 - **L1/L2/L3 会话记忆与历史会话恢复**（`conversation_memory.py`、`service.py`、`server.py`、`web/`）：
   L1 只向理解 Prompt 注入最近 3 轮结构化条件；L2 将完整轮次归档到 Redis（未配置时进程内降级），
   默认保留 30 天、最多 50 轮，并可恢复候选人与助手摘要；L3 记录已看候选人与显式排除项，只有显式排除
@@ -204,6 +209,7 @@
 
 ### Fixed
 
+- **可执行 Query 误澄清**（`core/clarification.py`、`stages/understand.py`）：当查询已经包含岗位与年限/技能，或技能与搜索动作时，忽略模型误返回的 `needs_clarification=true`，避免明确的岗位搜索在 `understand` 阶段直接返回 0 人；补充单元测试与 Harness 回归测试。
 - **Judge 输入与简单查询延迟**（`harness.py`、`llm/prompts/__init__.py`）：`single_pass` 路由把
   召回/判定候选池上限收紧为 `max(20, top_k * 2)`，默认 `topK=20` 时从 60 人降至 40 人；
   每位候选人只发送年限、技能名、最近两段岗位、学历摘要与截断后的概要，不再把完整工作经历

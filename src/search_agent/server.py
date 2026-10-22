@@ -106,6 +106,9 @@ def _stage_payload(event: str, state: dict[str, Any]) -> dict[str, Any]:
         payload = dict(direct.get("plan") or {})
         payload.update(
             {
+                "entryRoute": (state.get("entry_route") or {}).get("route"),
+                "entryRouteSource": (state.get("entry_route") or {}).get("source"),
+                "entryRouteConfidence": (state.get("entry_route") or {}).get("confidence"),
                 "difficultyRoute": state.get("difficulty_route"),
                 "plannedStages": list(state.get("planned_stages") or []),
                 "historyTurns": len((state.get("conversation_history") or [])[-3:]),
@@ -129,6 +132,8 @@ def _stage_payload(event: str, state: dict[str, Any]) -> dict[str, Any]:
             "difficulty": job.subjective_difficulty,
             "difficultyRoute": state.get("difficulty_route"),
             "plannedStages": list(state.get("planned_stages") or []),
+            "entryRoute": (state.get("entry_route") or {}).get("route"),
+            "entryRouteSource": (state.get("entry_route") or {}).get("source"),
         }
     if event == "plan":
         paths = state.get("paths") or []

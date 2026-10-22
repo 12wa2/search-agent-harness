@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from search_agent.config import final_selection_policy_from_env
 from search_agent.contract.tool import (
     RerankToolRequest,
     SearchToolRequest,
@@ -195,6 +196,58 @@ def _selection_key(
     )
 
 
+def _judge_gate_key(
+    tc: ToolCandidate,
+    accumulated: dict[str, Any],
+    must_abilities: list[Any],
+    nice_abilities: list[Any],
+    *,
+    v2_score: float | None = None,
+) -> tuple[int, int, int, int, int, int, int, int, float, str]:
+    """Rank by must-qualified tier, then evidence and optional V2 score.
+
+    Qualification is a gate, not a weighted average: a candidate missing a
+    must ability cannot outrank one that satisfies every must ability merely
+    because its backend score is higher. Within a tier, evidence, nice-to-have
+    coverage and multi-path agreement break ties before the backend score.
+    """
+    must_names = {str(getattr(a, "name", "")) for a in must_abilities}
+    nice_names = {str(getattr(a, "name", "")) for a in nice_abilities}
+    judgment = accumulated.get(tc.doc_id)
+    matched = set(judgment.matched_abilities) if judgment else set()
+    must_matched = len(matched & must_names)
+    missing_must = len(must_names) - must_matched
+    nice_matched = len(matched & nice_names)
+    evidence_hits, evidence_missing = _resume_evidence_coverage(tc, must_abilities)
+    hard_violations = _hard_required_violations(tc)
+    path_agreement = min(len(set(judgment.source_path_ids or [])), 3) if judgment else 0
+
+    if judgment is None or hard_violations:
+        tier = 3
+    elif missing_must == 0:
+        # T0 has both judgement and resume evidence; T1 still qualifies by
+        # judgement but lacks a directly verifiable evidence term.
+        tier = 0 if evidence_missing == 0 else 1
+    elif missing_must == 1 and (evidence_hits > 0 or nice_matched > 0):
+        tier = 2
+    else:
+        tier = 3
+
+    score = tc.score if v2_score is None else v2_score
+    return (
+        tier,
+        -must_matched,
+        missing_must,
+        hard_violations,
+        -evidence_hits,
+        evidence_missing,
+        -nice_matched,
+        -path_agreement,
+        -float(score),
+        tc.doc_id,
+    )
+
+
 def _build_converged_intent(state: dict[str, Any]) -> CandidateSearchIR | None:
     """Build the definitive intent from the fully-evolved talent profile.
 
@@ -315,6 +368,7 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     rerank_used = False
     final_search_new = 0
     final_search_total = 0
+    selection_policy = final_selection_policy_from_env()
 
     merged_pool = _build_merged_pool(path_results)
     pool_by_id = {tc.doc_id: tc for tc in merged_pool}
@@ -356,9 +410,14 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
                     routing=state["routing"],
                     exclude_doc_ids=list(state.get("excluded_doc_ids") or []),
                     details=state.get("details", False),
+                    skip_rerank=selection_policy in {"final_v2", "judge_gate_v2"},
                 )
             )
-            rerank_used = True
+            # ``current`` reranks inside the converged search; ``final_v2``
+            # deliberately defers the one rerank until the complete pool has
+            # been merged and judged below.
+            if selection_policy in {"current", "judge_gate"}:
+                rerank_used = True
             final_search_total = fs_result.total
             for tc in fs_result.items:
                 if tc.doc_id not in accumulated:
@@ -379,15 +438,87 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
     final_judged = 0
     _job = state.get("job_profile")
     _must_abilities = list(_job.must_abilities) if _job else []
+    _nice_abilities = list(_job.nice_abilities) if _job else []
 
     if converged is not None and converged_pool:
         # Union the enriched converged page with the already-judged path pool,
         # then judge every newly surfaced candidate before choosing top-k.
         candidate_pool = _dedupe_candidates(converged_pool, merged_pool)
         final_judged = _judge_converged_new(deps, state, candidate_pool, accumulated)
-        final_items = [_enrich(tc, accumulated, path_rationale) for tc in candidate_pool]
-        final_items.sort(key=lambda tc: _selection_key(tc, accumulated, _must_abilities))
-        final_items = final_items[:top_k]
+        if selection_policy == "final_v2":
+            # One global V2 rerank over the complete merged pool. Its order is
+            # the delivery order; _selection_key must not override it here.
+            try:
+                result = deps.tool.rerank_pool(
+                    RerankToolRequest(
+                        query_text=state["query"],
+                        candidates=candidate_pool,
+                        job_context=job_context,
+                        top_k=top_k,
+                        routing=state["routing"],
+                    )
+                )
+                rerank_used = True
+                final_items = [
+                    _enrich(tc, accumulated, path_rationale) for tc in result.items[:top_k]
+                ]
+                if len(final_items) < top_k:
+                    have = {tc.doc_id for tc in final_items}
+                    fill = sorted(
+                        [tc for tc in candidate_pool if tc.doc_id not in have],
+                        key=lambda tc: tc.score,
+                        reverse=True,
+                    )
+                    final_items.extend(
+                        _enrich(tc, accumulated, path_rationale)
+                        for tc in fill[: top_k - len(final_items)]
+                    )
+            except Exception:  # noqa: BLE001 - keep an explainable fallback
+                _, reason = degrade("rerank_pool", "llm_failed")
+                degraded_reason = reason
+                final_items = [_enrich(tc, accumulated, path_rationale) for tc in candidate_pool]
+                final_items.sort(key=lambda tc: _selection_key(tc, accumulated, _must_abilities))
+                final_items = final_items[:top_k]
+        elif selection_policy in {"judge_gate", "judge_gate_v2"}:
+            # Qualification is the primary key. In judge_gate_v2, the one
+            # global V2 rerank supplies a score map; it may break ties inside a
+            # tier but cannot lift a candidate across tiers.
+            ranking_pool = list(candidate_pool)
+            v2_scores: dict[str, float] = {}
+            if selection_policy == "judge_gate_v2":
+                try:
+                    result = deps.tool.rerank_pool(
+                        RerankToolRequest(
+                            query_text=state["query"],
+                            candidates=candidate_pool,
+                            job_context=job_context,
+                            top_k=len(candidate_pool),
+                            routing=state["routing"],
+                        )
+                    )
+                    rerank_used = True
+                    ranking_pool = list(result.items)
+                    v2_scores = {tc.doc_id: float(tc.score) for tc in result.items}
+                    seen = {tc.doc_id for tc in ranking_pool}
+                    ranking_pool.extend(tc for tc in candidate_pool if tc.doc_id not in seen)
+                except Exception:  # noqa: BLE001 - keep gate ranking
+                    _, reason = degrade("rerank_pool", "llm_failed")
+                    degraded_reason = reason
+            final_items = [_enrich(tc, accumulated, path_rationale) for tc in ranking_pool]
+            final_items.sort(
+                key=lambda tc: _judge_gate_key(
+                    tc,
+                    accumulated,
+                    _must_abilities,
+                    _nice_abilities,
+                    v2_score=v2_scores.get(tc.doc_id),
+                )
+            )
+            final_items = final_items[:top_k]
+        else:
+            final_items = [_enrich(tc, accumulated, path_rationale) for tc in candidate_pool]
+            final_items.sort(key=lambda tc: _selection_key(tc, accumulated, _must_abilities))
+            final_items = final_items[:top_k]
     else:
         # --- fallback: global rerank over the accumulated cross-path pool ---
         # single_pass / no enrichment / converged-search-failed.

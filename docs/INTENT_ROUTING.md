@@ -1,6 +1,6 @@
 # 意图路由与执行路径
 
-> 本文说明一个自然语言请求在进入搜索循环之前如何被分类，以及为什么会走 3、5 或 8 个阶段。规则以 `src/search_agent/intent_router.py` 和 `src/search_agent/core/difficulty.py` 为准。
+> 本文说明一个自然语言请求在进入搜索循环之前如何被分类，以及为什么会走 3、5 或 8 个阶段。规则以 `src/search_agent/intent_router.py`、`src/search_agent/direct_search.py`、`src/search_agent/entry_router.py` 和 `src/search_agent/core/difficulty.py` 为准。
 
 ## 1. 总览
 
@@ -14,7 +14,9 @@
                                       ├─ 问候 / 身份 / 帮助 / 明确无关任务 -> reply
                                       │
                                       └─ SEARCH
-                                           ├─ 结构化直连门槛 -> 3 阶段
+                                           ├─ 直连门槛（强信号直接 / 弱信号 LLM 复核）
+                                           │     ├─ direct_search -> 3 阶段
+                                           │     └─ agent -> Harness
                                            └─ Harness -> understand
                                                           ├─ 低难度 -> 5 阶段
                                                           ├─ 中等难度 -> 精简反思
@@ -71,9 +73,29 @@ direct_search -> execute -> finalize
 
 完整口径是 **Agent LLM = 0，Hybrid V2 parser LLM ≥ 1**。parser 通常调用一次模型；失败时重试一次，仍失败则回退到本地规则，并记录 `degradedReason=hybrid_v2_parse_failed`。工具侧的 reranker 成本单独计算，不并入 Agent 或 parser 计数。
 
+#### 弱直连信号的 LLM 复核
+
+规则层先判断直连计划是否足够强。以下情况属于弱直连信号：
+
+- 只有城市或年限，没有岗位或技能；
+- 只有泛岗位方向，没有具体技能，且缺少年限或城市补充。
+
+强直连计划直接执行，不调用入口复核模型。弱直连计划会额外调用一次轻量 `agent_entry_route` 分类器，返回：
+
+```json
+{"route": "direct_search | agent", "confidence": 0.0, "reason": "..."}
+```
+
+- 高置信度 `direct_search`：保留 3 阶段直连；
+- 高置信度 `agent`：进入 Harness，由 `understand` 继续理解；
+- 低置信度：安全回退到 Agent；
+- 模型不可用或返回格式非法：保留原规则直连，避免离线演示被额外依赖阻断。
+
+这里不是全量 LLM Router：强规则和复杂查询都不会增加这次调用。入口复核 LLM 与 Agent LLM 分开计数，弱直连的一次运行最多是 **1 次入口复核 + 1 次 V2 parser**。
+
 | 输入 | 走向 | 原因 |
 |---|---|---|
-| 找 5 年以上、做过高并发的上海后端工程师 | 直连 | 搜索动作和结构化字段明确 |
+| 找 5 年以上的上海 Java 后端工程师 | 直连 | 搜索动作和结构化字段明确 |
 | 帮我找会 Python 的 | 直连 | 搜索动作与具体技能明确 |
 | 找可迁移到基础架构的后端，最好有大厂背景 | 反思 Agent | “可迁移”“最好”引入开放判断 |
 | 你是谁 | 意图回复 | 身份询问，不启动搜索 |
@@ -96,9 +118,12 @@ SSE 搜索事件会暴露：
 
 - `requestIntent`：`IntentRouter` 的最终意图；
 - `intentRule`：命中的规则；
+- `entryRoute` / `entryRouteSource` / `entryRouteConfidence`：直连与 Agent 的入口复核结果和来源；
 - `difficultyRoute`：`direct_search`、`single_pass`、`reduced` 或 `standard`；
 - `plannedStages`：本次计划执行的阶段；
 - `executedStages` / 前端“实际阶段”：以真实 SSE 事件为准，不把未执行阶段标成完成。
+
+直连响应还会在 `agentMetrics.meta` 中提供 `entryLlmCalls`、`parserLlmCalls` 与 `llmCalls`，避免把入口复核成本和 parser 成本混在一起。
 
 ## 5. 相关文档
 

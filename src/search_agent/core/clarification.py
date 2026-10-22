@@ -79,6 +79,25 @@ _SEARCH_ACTION = re.compile(
 )
 
 
+def is_actionable_recruitment_query(query: str) -> bool:
+    """Return True when the query already has enough context to search.
+
+    The LLM occasionally asks for a role or skill clarification even when the
+    query already names a role together with a condition, or names a skill
+    together with a search action. Those requests would unnecessarily stop a
+    valid search, so the deterministic harness ignores them.
+    """
+    text = str(query or "").strip()
+    if not text:
+        return False
+
+    has_role = bool(_ROLE_SIGNAL.search(text))
+    has_condition = bool(_CONDITION_SIGNAL.search(text))
+    has_action = bool(_SEARCH_ACTION.search(text))
+    has_skill = bool(_matched_skills(text))
+    return (has_role and has_condition) or (has_skill and (has_role or has_action))
+
+
 def _matched_skills(query: str) -> list[str]:
     skills: list[str] = []
     for label, pattern in _SKILL_PATTERNS:
@@ -137,4 +156,9 @@ def detect_skill_only_clarification(
     return Clarification(questions=[question], options=options)
 
 
-__all__ = ["Clarification", "ClarificationOption", "detect_skill_only_clarification"]
+__all__ = [
+    "Clarification",
+    "ClarificationOption",
+    "detect_skill_only_clarification",
+    "is_actionable_recruitment_query",
+]

@@ -32,6 +32,7 @@ from search_agent.direct_search import (
     DirectSearchPlan,
     build_direct_search_plan,
 )
+from search_agent.entry_router import EntryRouteDecision, choose_entry_route
 from search_agent.hybrid_v2.parser import parse_query_to_ir
 from search_agent.llm.client import LlmClient, MeteredLlmClient, OpenAILlmClient
 from search_agent.models.api import CandidateItem, PageInfo, SearchRequest, SearchResponse
@@ -94,18 +95,33 @@ class SearchAgentService:
             except Exception:
                 pass
 
+        budget_state = BudgetState(budget=budget)
         direct_plan = build_direct_search_plan(req.query)
-        if direct_plan is not None:
+        reviewer = MeteredLlmClient(
+            self._llm,
+            budget_state,
+            cancel_event=cancel_event,
+        )
+        entry_decision = choose_entry_route(
+            req.query,
+            direct_plan,
+            reviewer,
+            has_history=bool(conversation_history),
+        )
+        if entry_decision.llm_used:
+            budget_state.record_llm()
+        if direct_plan is not None and entry_decision.route == "direct_search":
             state = self._run_direct_search(
                 req,
                 direct_plan,
-                budget=budget,
+                budget_state=budget_state,
+                entry_decision=entry_decision,
                 conversation_history=conversation_history,
                 excluded_doc_ids=excluded_doc_ids,
                 cancel_event=cancel_event,
             )
         else:
-            bs = BudgetState(budget=budget)
+            bs = budget_state
             deps = Deps(
                 llm=MeteredLlmClient(self._llm, bs, cancel_event=cancel_event),
                 tool=self._tool,
@@ -126,6 +142,7 @@ class SearchAgentService:
                 "budget": budget,
                 "conversation_history": conversation_history,
                 "excluded_doc_ids": excluded_doc_ids,
+                "entry_route": entry_decision.to_dict(),
             }
             state = self._runner.run(initial_state, deps)
 
@@ -176,7 +193,8 @@ class SearchAgentService:
         req: SearchRequest,
         plan: DirectSearchPlan,
         *,
-        budget: Budget,
+        budget_state: BudgetState,
+        entry_decision: EntryRouteDecision,
         conversation_history: list[dict],
         excluded_doc_ids: list[str],
         cancel_event: Event | None,
@@ -189,7 +207,11 @@ class SearchAgentService:
         """
         started = time.perf_counter()
         stages = ["direct_search", "execute", "finalize"]
-        budget_state = BudgetState(budget=budget)
+        route_llm_calls = budget_state.llm_calls
+        route_retries = budget_state.llm_retries
+        route_prompt_tokens = budget_state.prompt_tokens
+        route_completion_tokens = budget_state.completion_tokens
+        route_tokens_estimated = budget_state.tokens_estimated
         state: dict[str, Any] = {
             "query": req.query,
             "company_id": req.companyId,
@@ -199,11 +221,19 @@ class SearchAgentService:
             "top_k": req.topK,
             "recall_pool_size": req.recallPoolSize or req.topK,
             "details": req.details,
-            "budget": budget,
+            "budget": budget_state.budget,
             "conversation_history": conversation_history,
             "excluded_doc_ids": excluded_doc_ids,
             "job_profile": plan.job_profile,
             "talent_profile": plan.talent_profile,
+            "entry_route": {
+                **entry_decision.to_dict(),
+                "llmCalls": route_llm_calls,
+                "llmRetries": route_retries,
+                "promptTokens": route_prompt_tokens,
+                "completionTokens": route_completion_tokens,
+                "tokensEstimated": route_tokens_estimated,
+            },
             "difficulty_route": DIRECT_SEARCH_ROUTE,
             "planned_stages": stages,
             "executed_stages": [],
@@ -233,6 +263,8 @@ class SearchAgentService:
             return state
         parser_elapsed_ms = int((time.perf_counter() - parser_started) * 1000)
         budget_state.record_llm(parsed.attempts)
+        parser_prompt_tokens = max(0, budget_state.prompt_tokens - route_prompt_tokens)
+        parser_completion_tokens = max(0, budget_state.completion_tokens - route_completion_tokens)
 
         if parsed.intent is not None:
             effective_plan = plan.with_intent(
@@ -253,16 +285,17 @@ class SearchAgentService:
         state["talent_profile"] = effective_plan.talent_profile
         state["direct_search"] = {
             "plan": effective_plan.event_payload(),
+            "entryRoute": dict(state["entry_route"]),
             "parser": {
                 "source": effective_plan.ir_source,
                 "attempts": parsed.attempts,
                 "error": parsed.error,
                 "elapsedMs": parser_elapsed_ms,
-                "llmCalls": budget_state.llm_calls,
-                "promptTokens": budget_state.prompt_tokens,
-                "completionTokens": budget_state.completion_tokens,
+                "llmCalls": parsed.attempts,
+                "promptTokens": parser_prompt_tokens,
+                "completionTokens": parser_completion_tokens,
                 "tokensEstimated": budget_state.tokens_estimated,
-                "llmRetries": budget_state.llm_retries,
+                "llmRetries": max(0, budget_state.llm_retries - route_retries),
             },
         }
         self._emit_direct_stage("direct_search", state)
@@ -342,18 +375,27 @@ class SearchAgentService:
     def _attach_direct_observability(state: dict[str, Any], *, req: SearchRequest) -> None:
         """Build a trace separating Agent LLM calls from V2 parser calls."""
         direct = state.get("direct_search") or {}
+        entry_route = direct.get("entryRoute") or {}
         parser = direct.get("parser") or {}
         items = state.get("final_items") or []
         elapsed_ms = int(direct.get("elapsedMs") or 0)
         tool_elapsed_ms = int(direct.get("toolElapsedMs") or 0)
+        entry_calls = int(entry_route.get("llmCalls") or 0)
         parser_calls = int(parser.get("llmCalls") or 0)
-        prompt_tokens = int(parser.get("promptTokens") or 0)
-        completion_tokens = int(parser.get("completionTokens") or 0)
+        prompt_tokens = int(entry_route.get("promptTokens") or 0) + int(
+            parser.get("promptTokens") or 0
+        )
+        completion_tokens = int(entry_route.get("completionTokens") or 0) + int(
+            parser.get("completionTokens") or 0
+        )
+        total_llm_calls = entry_calls + parser_calls
         budget = state.get("budget")
         direct_trace = dict(direct.get("plan") or {})
+        direct_trace["entryRoute"] = dict(entry_route)
         direct_trace["parser"] = dict(parser)
         state["agent_trace"] = {
             "route": DIRECT_SEARCH_ROUTE,
+            "entryRoute": dict(entry_route),
             "iterations": [],
             "final": {
                 "mergedPoolSize": int(direct.get("returned") or 0),
@@ -362,8 +404,9 @@ class SearchAgentService:
             },
             "budget": budget.model_dump() if budget else {},
             "budgetUsed": {
-                "llmCalls": parser_calls,
+                "llmCalls": total_llm_calls,
                 "agentLlmCalls": 0,
+                "entryLlmCalls": entry_calls,
                 "parserLlmCalls": parser_calls,
                 "elapsedMs": elapsed_ms,
             },
@@ -394,14 +437,17 @@ class SearchAgentService:
             "reasoning": {"sourceConversion": {}},
             "reflection": {"gain": []},
             "meta": {
-                "llmCalls": parser_calls,
+                "llmCalls": total_llm_calls,
                 "agentLlmCalls": 0,
+                "entryLlmCalls": entry_calls,
                 "parserLlmCalls": parser_calls,
-                "llmRetries": int(parser.get("llmRetries") or 0),
+                "llmRetries": int(entry_route.get("llmRetries") or 0)
+                + int(parser.get("llmRetries") or 0),
                 "promptTokens": prompt_tokens,
                 "completionTokens": completion_tokens,
                 "totalTokens": prompt_tokens + completion_tokens,
-                "tokensEstimated": bool(parser.get("tokensEstimated")),
+                "tokensEstimated": bool(entry_route.get("tokensEstimated"))
+                or bool(parser.get("tokensEstimated")),
                 "elapsedMs": elapsed_ms,
                 "degradedReason": state.get("degraded_reason"),
                 "rerankUsed": bool(state.get("rerank_used")),
@@ -547,6 +593,8 @@ class SearchAgentService:
         debug["difficultyRoute"] = state.get("difficulty_route")
         debug["plannedStages"] = list(state.get("planned_stages") or [])
         debug["executedStages"] = list(state.get("executed_stages") or [])
+        if state.get("entry_route"):
+            debug["entryRoute"] = state["entry_route"]
         if state.get("direct_search"):
             debug["directSearch"] = state["direct_search"]
         return debug
