@@ -145,7 +145,7 @@ search-agent demo "找有 3 年以上经验、做过高并发系统的后端工�
 
 上面的 16 人案例用于解释阶段和确定性行为；正式展示还需回答「换到真实 LLM、真实 ES 和更大语料后
 是否仍成立」。仓库中的 `examples/real_ab_experiment.py` 因此固定同一网关模型别名
-`search-agent-primary`（主映射 Qwen、配置 fallback）、Hybrid V2 索引、
+`search-agent-primary`（历史产物只记录客户端别名，未记录实际解析到的上游模型或 fallback 状态）、Hybrid V2 索引、
 `top-k=5` 和同一套 `synthetic_oracle` 标签，只切换 `reflect + revise`。
 
 **成功案例 `backend_concurrency`**：基线交付 5 人、相关 2 人；Agent 交付 5 人、相关 5 人（其中 3 人是新增相关），

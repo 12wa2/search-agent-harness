@@ -24,7 +24,11 @@ from search_agent.models.ir import (
     StructuredConditionIR,
     WhereNode,
 )
-from search_agent.tools.elasticsearch import ElasticsearchSearchTool, compile_where
+from search_agent.tools.elasticsearch import (
+    ElasticsearchSearchTool,
+    build_scope_filters,
+    compile_where,
+)
 from search_agent.tools.memory import InMemorySearchTool, load_candidates
 from search_agent.tools.text import where_matches
 
@@ -229,7 +233,32 @@ def test_details_returns_executed_dsl(es_tool):
     result = es_tool.search_with_intent(req)
     assert result.es_query is not None
     assert result.es_query["backend"] == "elasticsearch"
-    assert result.es_query["query"]["bool"]["filter"][0] == {"terms": {"skill": ["spark"]}}
+    assert result.es_query["query"]["bool"]["filter"][0] == {"term": {"company_id": 1}}
+    assert result.es_query["query"]["bool"]["filter"][1] == {"terms": {"skill": ["spark"]}}
+
+
+def test_scope_filters_cover_tenant_and_permission():
+    assert build_scope_filters(7) == [{"term": {"company_id": 7}}]
+    assert build_scope_filters(
+        7,
+        {
+            "hasFullAccess": False,
+            "allowedPoolIds": [11, 12],
+            "allowedCollaboratorIds": [],
+        },
+    ) == [
+        {"term": {"company_id": 7}},
+        {"terms": {"profile_pool_id": [11, 12]}},
+        {"term": {"collaborator_id": -1}},
+    ]
+    assert build_scope_filters(7, {"hasFullAccess": True}) == [{"term": {"company_id": 7}}]
+
+
+def test_document_carries_configured_tenant_id():
+    tool = ElasticsearchSearchTool.__new__(ElasticsearchSearchTool)
+    tool._tenant_id = 42
+    document = tool._document(_SAMPLE[0])
+    assert document["company_id"] == 42
 
 
 @pytest.mark.es

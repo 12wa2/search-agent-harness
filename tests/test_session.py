@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import sys
+import types
+
 import pytest
 
 from search_agent.contract.tool import ToolCandidate
@@ -142,3 +145,68 @@ def test_page_rejects_invalid_slice(offset: int, limit: int) -> None:
     token = store.create(_state(1))
     with pytest.raises(ValueError):
         store.get_page(token, offset=offset, limit=limit)
+
+
+def test_runtime_redis_failure_falls_back_to_memory() -> None:
+    class _BrokenRedis:
+        def set(self, *_args, **_kwargs):
+            raise ConnectionError("redis down")
+
+        def get(self, *_args, **_kwargs):
+            raise ConnectionError("redis down")
+
+        def delete(self, *_args, **_kwargs):
+            raise ConnectionError("redis down")
+
+    store = AgentSessionStore(ttl_seconds=60, connect_redis=False)
+    store._redis = _BrokenRedis()
+    token = store.create(_state(4))
+    page = store.get_page(token, offset=1, limit=2)
+    assert [item.docId for item in page.items] == ["d1", "d2"]
+    assert store._redis is None
+
+
+def test_constructor_falls_back_when_redis_ping_fails(monkeypatch) -> None:
+    class _Client:
+        def ping(self):
+            raise ConnectionError("redis down")
+
+    module = types.ModuleType("redis")
+    module.Redis = types.SimpleNamespace(from_url=lambda *_args, **_kwargs: _Client())
+    monkeypatch.setitem(sys.modules, "redis", module)
+    monkeypatch.setenv("SEARCH_AGENT_REDIS_URL", "redis://example")
+
+    store = AgentSessionStore()
+    assert store._redis is None
+
+
+def test_optional_scope_must_match_session_owner() -> None:
+    store = AgentSessionStore(ttl_seconds=60, connect_redis=False)
+    token = store.create(_state(3))
+
+    page = store.get_page(token, company_id=39978, hr_id=1)
+    assert page.total == 3
+    with pytest.raises(KeyError):
+        store.get_page(token, company_id=40000, hr_id=1)
+
+    assert store.invalidate(token, company_id=40000, hr_id=1) is False
+    assert store.get_session(token) is not None
+    assert store.invalidate(token, company_id=39978, hr_id=1) is True
+    assert store.get_session(token) is None
+
+
+def test_redis_miss_does_not_resurrect_a_locally_cached_session() -> None:
+    class _EmptyRedis:
+        def get(self, *_args, **_kwargs):
+            return None
+
+        def delete(self, *_args, **_kwargs):
+            return 0
+
+    store = AgentSessionStore(ttl_seconds=60, connect_redis=False)
+    token = store.create(_state(2))
+    store._redis = _EmptyRedis()
+
+    with pytest.raises(KeyError):
+        store.get_page(token, company_id=39978, hr_id=1)
+    assert store.invalidate(token, company_id=39978, hr_id=1) is False

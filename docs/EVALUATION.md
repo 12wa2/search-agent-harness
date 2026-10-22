@@ -49,6 +49,16 @@
 - [top-5 原始 JSON](real_llm_ab_results_100.json)
 - [当前 V2 原生字段基准与复现说明](../examples/bench_v2_100/README.md)
 
+历史产物（保留用于追溯，不作为当前结论）：
+
+- [current rerun](real_llm_ab_results_100_current_rerun_top5.md)
+- [final v2](real_llm_ab_results_100_final_v2_top5.md)
+- [judge gate](real_llm_ab_results_100_judge_gate_top5.md)
+- [judge gate v2](real_llm_ab_results_100_judge_gate_v2_top5.md)
+
+当前 canonical 报告是 `real_llm_ab_results_100.md`；带 `_current_rerun`、`_final_v2`、
+`_judge_gate`、`_judge_gate_v2` 后缀的文件是不同排序策略下的历史复跑结果。
+
 ## 3. 解释边界
 
 - 语料和标签公开、合成；标签由生成器自动生成，不是人工标注；绝对数值不能与公司数据或生产 A/B 直接比较。

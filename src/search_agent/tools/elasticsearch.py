@@ -52,7 +52,7 @@ from search_agent.tools.text import (
     where_matches,
 )
 
-__all__ = ["ElasticsearchSearchTool", "compile_where"]
+__all__ = ["ElasticsearchSearchTool", "build_scope_filters", "compile_where"]
 
 DEFAULT_ES_URL = "http://127.0.0.1:9200"
 
@@ -61,6 +61,11 @@ _ALIAS_FIELDS = {"live_city": "city"}
 #: ``latest_*`` fields index only the newest entry (mirrors ``companies[:1]``).
 _LATEST_FIELDS = ("latest_company", "latest_work_job")
 _NUMERIC_FIELDS = ("work_years", "age")
+_SCOPE_FIELDS = {
+    "company_id": {"type": "long"},
+    "profile_pool_id": {"type": "long"},
+    "collaborator_id": {"type": "long"},
+}
 
 _MAPPINGS: dict[str, Any] = {
     "properties": {
@@ -74,6 +79,7 @@ _MAPPINGS: dict[str, Any] = {
         },
         "work_years": {"type": "float"},
         "age": {"type": "float"},
+        **_SCOPE_FIELDS,
         **{field: {"type": "keyword"} for field in TERM_FIELDS},
         "latest_company": {"type": "keyword"},
         "latest_work_job": {"type": "keyword"},
@@ -83,6 +89,30 @@ _MAPPINGS: dict[str, Any] = {
 
 _MATCH_ALL: dict[str, Any] = {"match_all": {}}
 _MATCH_NONE: dict[str, Any] = {"match_none": {}}
+
+
+def build_scope_filters(
+    company_id: int,
+    permission: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Tenant and talent-pool filters shared by every simple-ES recall path."""
+    filters: list[dict[str, Any]] = [{"term": {"company_id": company_id}}]
+    if permission and not permission.get("hasFullAccess"):
+        allowed_pool_ids = permission.get("allowedPoolIds")
+        allowed_collaborator_ids = permission.get("allowedCollaboratorIds")
+        if allowed_pool_ids is not None:
+            filters.append(
+                {"terms": {"profile_pool_id": allowed_pool_ids}}
+                if allowed_pool_ids
+                else {"term": {"profile_pool_id": -1}}
+            )
+        if allowed_collaborator_ids is not None:
+            filters.append(
+                {"terms": {"collaborator_id": allowed_collaborator_ids}}
+                if allowed_collaborator_ids
+                else {"term": {"collaborator_id": -1}}
+            )
+    return filters
 
 
 def _compile_node(node: WhereNode | None) -> tuple[dict[str, Any], bool]:
@@ -169,6 +199,7 @@ class ElasticsearchSearchTool:
         index: str = "search-agent-candidates",
         recreate: bool = False,
         client: Any | None = None,
+        tenant_id: int | None = None,
     ) -> None:
         if client is None:
             try:
@@ -179,7 +210,29 @@ class ElasticsearchSearchTool:
                     'pip install "search-agent-harness[es]"'
                 ) from exc
             url = url or os.environ.get("SEARCH_AGENT_ES_URL", DEFAULT_ES_URL)
-            client = Elasticsearch(url)
+            client_kwargs: dict[str, Any] = {}
+            api_key = os.environ.get("SEARCH_AGENT_ES_API_KEY")
+            username = os.environ.get("SEARCH_AGENT_ES_USERNAME")
+            password = os.environ.get("SEARCH_AGENT_ES_PASSWORD")
+            if api_key:
+                client_kwargs["api_key"] = api_key
+            elif username and password:
+                client_kwargs["basic_auth"] = (username, password)
+            verify_certs = os.environ.get("SEARCH_AGENT_ES_VERIFY_CERTS")
+            if verify_certs is not None and verify_certs.strip():
+                client_kwargs["verify_certs"] = verify_certs.strip().lower() not in {
+                    "0",
+                    "false",
+                    "no",
+                    "off",
+                }
+            request_timeout = os.environ.get("SEARCH_AGENT_ES_REQUEST_TIMEOUT")
+            if request_timeout:
+                try:
+                    client_kwargs["request_timeout"] = float(request_timeout)
+                except ValueError:
+                    pass
+            client = Elasticsearch(url, **client_kwargs)
             try:
                 client.info()
             except Exception as exc:  # noqa: BLE001 - any connection failure
@@ -190,6 +243,12 @@ class ElasticsearchSearchTool:
         self._client = client
         self._url = url or os.environ.get("SEARCH_AGENT_ES_URL", DEFAULT_ES_URL)
         self._index = index
+        if tenant_id is None:
+            try:
+                tenant_id = int(os.environ.get("SEARCH_AGENT_ES_TENANT_ID", "1"))
+            except ValueError:
+                tenant_id = 1
+        self._tenant_id = tenant_id
         self._items = load_candidates(candidates)
         self._by_id = {item.docId: item for item in self._items}
         self._ensure_index(recreate=recreate)
@@ -223,14 +282,18 @@ class ElasticsearchSearchTool:
             # the corpus is re-indexed below either way.
             self._client.indices.put_mapping(
                 index=self._index,
-                properties={"semantic_vector": _MAPPINGS["properties"]["semantic_vector"]},
+                properties={
+                    **{
+                        name: _MAPPINGS["properties"][name]
+                        for name in ("semantic_vector", *_SCOPE_FIELDS)
+                    },
+                },
             )
         for item in self._items:
             self._client.index(index=self._index, id=item.docId, document=self._document(item))
         self._client.indices.refresh(index=self._index)
 
-    @staticmethod
-    def _document(item: CandidateItem) -> dict[str, Any]:
+    def _document(self, item: CandidateItem) -> dict[str, Any]:
         blob = candidate_text(item)
         terms = normalized_terms(item)
         document: dict[str, Any] = {
@@ -240,6 +303,7 @@ class ElasticsearchSearchTool:
             "payload": item.model_dump(by_alias=True),
             "work_years": item.workYears if isinstance(item.workYears, (int, float)) else None,
             "age": item.age if isinstance(item.age, (int, float)) else None,
+            "company_id": self._tenant_id,
             "latest_company": terms.get("company", [])[:1],
             "latest_work_job": terms.get("position", [])[:1],
         }
@@ -340,7 +404,8 @@ class ElasticsearchSearchTool:
         started = time.perf_counter()
         excluded = set(req.exclude_doc_ids or [])
         compiled = compile_where(req.intent.where)
-        filters: list[dict[str, Any]] = [compiled["query"]]
+        filters: list[dict[str, Any]] = build_scope_filters(req.company_id, req.permission)
+        filters.append(compiled["query"])
         if excluded:
             filters.append({"bool": {"must_not": [{"terms": {"doc_id": sorted(excluded)}}]}})
         response = self._client.search(

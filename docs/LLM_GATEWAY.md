@@ -62,6 +62,11 @@ ignored `gateway.local.json` remains the default for the CLI. Upstream keys are
 injected from `.env` and are never baked into the image. The service uses
 `restart: unless-stopped`.
 
+> `examples/gateway.docker.json` is a template. Replace every upstream `model`
+> with a model available in your account before starting Compose. A model name
+> copied from the template can fail with `Model not found` even when the base
+> URL and API key are correct.
+
 On Windows without Docker, use the local helper (logs go to `logs/`):
 
 ```powershell
@@ -195,8 +200,10 @@ not logged by default.
 ## Limitations
 
 - Chat Completions only; streaming is intentionally rejected.
-- `response_format: json_schema` is passed through, but compatibility depends
-  on the upstream provider.
+- The agent prefers `response_format: json_schema`; if the upstream rejects
+  that field, `OpenAILlmClient` retries with `json_object` and then prompt-only
+  JSON. Direct callers of the gateway still need to handle provider-specific
+  compatibility themselves.
 - The usage ledger is not persistent yet.
 - Automatic fallback is for provider failures, not semantic-quality failures;
   the agent's judge and stage degradation still need to run.

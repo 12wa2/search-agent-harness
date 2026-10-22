@@ -2,7 +2,7 @@
 
 > 每个决策记录：背景 → 选择 → 取舍。按重要性排序，面试可逐条展开。
 
-## D1. 自研显式循环，不套 Agent 框架
+## D1. 自研显式循环，Agent 框架作为可选 Runner
 
 **背景**：Agent 编排有大量现成框架（LangGraph 等），但它们引入运行时依赖与
 编排语义的隐式行为，调试和单测成本高。
@@ -27,7 +27,8 @@ Agent 逻辑不应该和任何一种耦合。
 
 **背景**：LLM 输出格式漂移是常态，一个坏字段不该让整次搜索失败。
 
-**选择**：所有 LLM 调用走 strict json_schema（`OpenAILlmClient`）；
+**选择**：LLM 调用默认优先使用 strict json_schema（`OpenAILlmClient`）；当上游明确拒绝
+`response_format` 时，客户端自动降级到 `json_object`，再降级到仅靠 prompt 约束的 JSON；
 解析层对每个条目做 try/except 级容错（alias、字符串归一、跳过坏条目并记日志）。
 
 **取舍**：更多解析代码；换来「单点畸形不拖垮全局」，且降级路径始终可用。
@@ -189,7 +190,7 @@ dev 依赖里带上它们以在 CI 跑接口测试；核心安装仍然只有 py
 
 **背景**：README 的「一条命令跑起来」如果止步于 `pip install`，使用者仍要自己装 ES、配地址、灌数据；「能被部署」是 harness 从库变成系统的一道坎，也是最容易在面试里被追问的部分。
 
-**选择**：`Dockerfile` 两阶段——build 阶段 `pip wheel ".[api,es]"` 产出全部 wheel，runtime 阶段只装 wheel（镜像里没有编译工具链）、非 root 运行、内置 `HEALTHCHECK`；compose 增加 `api` 服务，等待 Elasticsearch 与 gateway 健康后启动，先执行 `hybrid-v2 index --recreate` 重灌 16 人演示索引，再以 `--offline` 启动快速演示预置；配置主模型 key 后，compose 把在线预置接到内部 gateway。后端选择收敛到 `tools/factory.py`，CLI `--backend` 与容器入口共用一条路径。
+**选择**：`Dockerfile` 两阶段——build 阶段 `pip wheel ".[api,es,openai]"` 产出全部 wheel，runtime 阶段只装 wheel（镜像里没有编译工具链）、非 root 运行、内置 `HEALTHCHECK`；compose 增加 `api` 服务，等待 Elasticsearch 与 gateway 健康后启动，先执行 `hybrid-v2 index --recreate` 重灌 16 人演示索引，再以 `--offline` 启动快速演示预置；配置主模型 key 后，compose 把在线预置接到内部 gateway。后端选择收敛到 `tools/factory.py`，CLI `--backend` 与容器入口共用一条路径。
 
 **取舍**：镜像默认「脚本化 LLM + 16 人内存库」的快速演示，零 API key 也能复现完整自适应搜索链路；配置上游 key 后可在页面切到「真实 LLM + Hybrid V2 + ES」。`--recreate` 对单实例演示是自愈，多副本部署应改成一次性 init job——这点写进了 README 的说明。
 

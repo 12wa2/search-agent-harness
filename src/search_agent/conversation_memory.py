@@ -108,7 +108,9 @@ class ConversationStore:
 
                 url = os.environ.get("SEARCH_AGENT_REDIS_URL") or os.environ.get("REDIS_URL")
                 if url:
-                    self._redis = redis.Redis.from_url(url, protocol=2)
+                    client = redis.Redis.from_url(url, protocol=2)
+                    client.ping()
+                    self._redis = client
             except Exception as exc:  # pragma: no cover
                 logger.info("Redis unavailable, conversation memory falls back to memory: %s", exc)
 
@@ -194,10 +196,12 @@ class ConversationStore:
         memory = self.load(conversation_id)
         if memory is None or not self._scope_matches(memory, company_id, hr_id):
             return False
+        _MEM_CACHE.pop(self._key(conversation_id), None)
         if self._redis is not None:
-            self._redis.delete(self._key(conversation_id))
-        else:
-            _MEM_CACHE.pop(self._key(conversation_id), None)
+            try:
+                self._redis.delete(self._key(conversation_id))
+            except Exception as exc:  # pragma: no cover - live Redis failure
+                self._redis_failed("delete", exc)
         self._remove_index(company_id, hr_id, conversation_id)
         return True
 
@@ -276,6 +280,27 @@ class ConversationStore:
 
     # -- internals -- --------------------------------------------------------
 
+    def _redis_failed(self, operation: str, exc: Exception) -> None:
+        logger.warning(
+            "conversation memory Redis %s failed; switching to in-memory fallback: %s",
+            operation,
+            exc,
+        )
+        self._redis = None
+
+    def _memory_set(self, key: str, value: str) -> None:
+        _MEM_CACHE[key] = (int(time.time()) + self._ttl, value)
+
+    def _memory_get(self, key: str) -> dict[str, Any] | None:
+        row = _MEM_CACHE.get(key)
+        if not row:
+            return None
+        expires, value = row
+        if int(time.time()) >= expires:
+            _MEM_CACHE.pop(key, None)
+            return None
+        return json.loads(value)
+
     def _key(self, conversation_id: str) -> str:
         return f"{self.PREFIX}{conversation_id}"
 
@@ -314,12 +339,14 @@ class ConversationStore:
     def _touch_index(self, memory: ConversationMemory) -> None:
         scope_key = self._scope_key(memory.company_id, memory.hr_id)
         score = time.time_ns()
+        _MEM_INDEX.setdefault(scope_key, {})[memory.conversation_id] = score
         if self._redis is not None:
             key = self._index_key(memory.company_id, memory.hr_id)
-            self._redis.zadd(key, {memory.conversation_id: score})
-            self._redis.expire(key, self._ttl)
-            return
-        _MEM_INDEX.setdefault(scope_key, {})[memory.conversation_id] = score
+            try:
+                self._redis.zadd(key, {memory.conversation_id: score})
+                self._redis.expire(key, self._ttl)
+            except Exception as exc:  # pragma: no cover - live Redis failure
+                self._redis_failed("zadd", exc)
 
     def _index_ids(
         self,
@@ -332,12 +359,18 @@ class ConversationStore:
         if limit < 1:
             return []
         if self._redis is not None:
-            raw_ids = self._redis.zrevrange(
-                self._index_key(company_id, hr_id),
-                offset,
-                offset + limit - 1,
-            )
-            return [row.decode("utf-8") if isinstance(row, bytes) else str(row) for row in raw_ids]
+            try:
+                raw_ids = self._redis.zrevrange(
+                    self._index_key(company_id, hr_id),
+                    offset,
+                    offset + limit - 1,
+                )
+                rows = [
+                    row.decode("utf-8") if isinstance(row, bytes) else str(row) for row in raw_ids
+                ]
+                return rows
+            except Exception as exc:  # pragma: no cover - live Redis failure
+                self._redis_failed("zrevrange", exc)
         scope_key = self._scope_key(company_id, hr_id)
         rows = sorted(
             _MEM_INDEX.get(scope_key, {}).items(),
@@ -347,36 +380,39 @@ class ConversationStore:
         return [conversation_id for conversation_id, _ in rows[offset : offset + limit]]
 
     def _remove_index(self, company_id: int, hr_id: int | None, conversation_id: str) -> None:
-        if self._redis is not None:
-            self._redis.zrem(self._index_key(company_id, hr_id), conversation_id)
-            return
         _MEM_INDEX.get(self._scope_key(company_id, hr_id), {}).pop(conversation_id, None)
+        if self._redis is not None:
+            try:
+                self._redis.zrem(self._index_key(company_id, hr_id), conversation_id)
+            except Exception as exc:  # pragma: no cover - live Redis failure
+                self._redis_failed("zrem", exc)
 
     def _set(self, conversation_id: str, payload: dict[str, Any]) -> bool:
         value = json.dumps(payload, ensure_ascii=False)
         key = self._key(conversation_id)
+        self._memory_set(key, value)
         if self._redis is not None:
-            return self._redis.set(key, value, ex=self._ttl)
-        _MEM_CACHE[key] = (int(time.time()) + self._ttl, value)
+            try:
+                self._redis.set(key, value, ex=self._ttl)
+            except Exception as exc:  # pragma: no cover - live Redis failure
+                self._redis_failed("set", exc)
         return True
 
     def _get(self, conversation_id: str) -> dict[str, Any] | None:
         key = self._key(conversation_id)
         if self._redis is not None:
-            raw = self._redis.get(key)
-            if raw is None:
+            try:
+                raw = self._redis.get(key)
+                if raw:
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8")
+                    payload = json.loads(raw)
+                    self._memory_set(key, raw)
+                    return payload
                 return None
-            if isinstance(raw, bytes):
-                raw = raw.decode("utf-8")
-            return json.loads(raw)
-        row = _MEM_CACHE.get(key)
-        if not row:
-            return None
-        expires, value = row
-        if int(time.time()) >= expires:
-            _MEM_CACHE.pop(key, None)
-            return None
-        return json.loads(value)
+            except Exception as exc:  # pragma: no cover - live Redis failure
+                self._redis_failed("get", exc)
+        return self._memory_get(key)
 
 
 def new_conversation_id() -> str:

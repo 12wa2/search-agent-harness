@@ -249,6 +249,84 @@ def test_session_endpoint_paginates_and_expires_after_delete(client: TestClient)
     assert client.get(f"/sessions/{token}").status_code == 404
 
 
+def test_permission_enforcement_rejects_unscoped_requests(monkeypatch) -> None:
+    monkeypatch.setenv("SEARCH_AGENT_REQUIRE_PERMISSION", "1")
+    client = TestClient(create_app(offline=True))
+    company_id = 931_000_001
+
+    missing = client.post("/search", json={"query": QUERY, "topK": 5})
+    assert missing.status_code == 403
+
+    mismatched = client.post(
+        "/search",
+        json={
+            "query": QUERY,
+            "topK": 5,
+            "companyId": company_id + 1,
+            "permission": {"companyId": company_id, "hasFullAccess": True},
+        },
+    )
+    assert mismatched.status_code == 403
+
+    allowed = client.post(
+        "/search",
+        json={
+            "query": QUERY,
+            "topK": 5,
+            "pageSize": 2,
+            "companyId": company_id,
+            "permission": {"companyId": company_id, "hasFullAccess": True},
+        },
+    )
+    assert allowed.status_code == 200
+    token = allowed.json()["queryToken"]
+    assert token
+
+    assert client.get(f"/sessions/{token}").status_code == 403
+    assert client.get(f"/sessions/{token}", params={"companyId": company_id + 1}).status_code == 404
+    page = client.get(f"/sessions/{token}", params={"companyId": company_id})
+    assert page.status_code == 200
+    assert page.json()["queryToken"] == token
+    assert (
+        client.delete(f"/sessions/{token}", params={"companyId": company_id + 1}).status_code == 404
+    )
+    assert client.delete(f"/sessions/{token}", params={"companyId": company_id}).status_code == 200
+
+
+def test_permission_enforcement_keeps_non_search_stream_available(monkeypatch) -> None:
+    monkeypatch.setenv("SEARCH_AGENT_REQUIRE_PERMISSION", "1")
+    client = TestClient(create_app(offline=True))
+    company_id = 931_000_002
+
+    with client.stream(
+        "POST",
+        "/search/stream",
+        json={"query": "你好", "topK": 5, "companyId": company_id},
+    ) as greeting:
+        assert greeting.status_code == 200
+        assert "event: reply" in "".join(greeting.iter_text())
+
+    with client.stream(
+        "POST",
+        "/search/stream",
+        json={"query": QUERY, "topK": 5, "companyId": company_id},
+    ) as missing:
+        assert missing.status_code == 403
+
+    with client.stream(
+        "POST",
+        "/search/stream",
+        json={
+            "query": QUERY,
+            "topK": 5,
+            "companyId": company_id,
+            "permission": {"companyId": company_id, "hasFullAccess": True},
+        },
+    ) as allowed:
+        assert allowed.status_code == 200
+        assert "event: result" in "".join(allowed.iter_text())
+
+
 def test_conversation_api_persists_history_exclusions_and_tenant_scope() -> None:
     store = ConversationStore(connect_redis=False)
     app = create_app(offline=True, conversation_store=store)

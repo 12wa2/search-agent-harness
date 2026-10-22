@@ -81,7 +81,9 @@ class AgentSessionStore:
 
                 url = os.environ.get("SEARCH_AGENT_REDIS_URL") or os.environ.get("REDIS_URL")
                 if url:
-                    self._redis = redis.Redis.from_url(url, protocol=2)
+                    client = redis.Redis.from_url(url, protocol=2)
+                    client.ping()
+                    self._redis = client
             except Exception as exc:  # pragma: no cover
                 logger.info("Redis unavailable, agent session falls back to memory: %s", exc)
 
@@ -144,6 +146,10 @@ class AgentSessionStore:
         query_token: str,
         offset: int = 0,
         limit: int = 20,
+        *,
+        company_id: int | None = None,
+        hr_id: int | None = None,
+        require_scope: bool = False,
     ) -> AgentSessionPage:
         """Slice the stored merged_pool; no re-run, no re-query."""
         if offset < 0:
@@ -153,6 +159,12 @@ class AgentSessionStore:
         raw = self._get(query_token)
         if raw is None:
             raise KeyError(f"agent session not found or expired: {query_token}")
+        if require_scope and company_id is None:
+            raise KeyError("agent session requires an explicit tenant scope")
+        if company_id is not None and (
+            raw.get("company_id") != company_id or raw.get("hr_id") != hr_id
+        ):
+            raise KeyError(f"agent session not found or scope mismatch: {query_token}")
 
         pool = raw.get("merged_pool", [])
         total = raw.get("total", len(pool))
@@ -188,32 +200,45 @@ class AgentSessionStore:
 
     # ── invalidate ──────────────────────────────────────────────────────
 
-    def invalidate(self, query_token: str) -> bool:
+    def invalidate(
+        self,
+        query_token: str,
+        *,
+        company_id: int | None = None,
+        hr_id: int | None = None,
+        require_scope: bool = False,
+    ) -> bool:
+        if require_scope or company_id is not None:
+            raw = self._get(query_token)
+            if raw is None:
+                return False
+            if require_scope and company_id is None:
+                return False
+            if raw.get("company_id") != company_id or raw.get("hr_id") != hr_id:
+                return False
         key = self._key(query_token)
-        if self._redis is not None:
-            self._redis.delete(key)
-            return True
         _MEM_CACHE.pop(key, None)
+        if self._redis is not None:
+            try:
+                self._redis.delete(key)
+            except Exception as exc:  # pragma: no cover - live Redis failure
+                self._redis_failed("delete", exc)
         return True
 
     # ── internals ───────────────────────────────────────────────────────
 
-    def _key(self, token: str) -> str:
-        return f"{self.PREFIX}{token}"
+    def _redis_failed(self, operation: str, exc: Exception) -> None:
+        logger.warning(
+            "agent session Redis %s failed; switching to in-memory fallback: %s",
+            operation,
+            exc,
+        )
+        self._redis = None
 
-    def _set(self, token: str, payload: dict[str, Any]) -> bool:
-        value = json.dumps(payload, ensure_ascii=False)
-        key = self._key(token)
-        if self._redis is not None:
-            return self._redis.set(key, value, ex=self._ttl)
+    def _memory_set(self, key: str, value: str) -> None:
         _MEM_CACHE[key] = (int(time.time()) + self._ttl, value)
-        return True
 
-    def _get(self, token: str) -> dict[str, Any] | None:
-        key = self._key(token)
-        if self._redis is not None:
-            raw = self._redis.get(key)
-            return json.loads(raw) if raw else None
+    def _memory_get(self, key: str) -> dict[str, Any] | None:
         row = _MEM_CACHE.get(key)
         if not row:
             return None
@@ -222,6 +247,36 @@ class AgentSessionStore:
             _MEM_CACHE.pop(key, None)
             return None
         return json.loads(value)
+
+    def _key(self, token: str) -> str:
+        return f"{self.PREFIX}{token}"
+
+    def _set(self, token: str, payload: dict[str, Any]) -> bool:
+        value = json.dumps(payload, ensure_ascii=False)
+        key = self._key(token)
+        self._memory_set(key, value)
+        if self._redis is not None:
+            try:
+                self._redis.set(key, value, ex=self._ttl)
+            except Exception as exc:  # pragma: no cover - live Redis failure
+                self._redis_failed("set", exc)
+        return True
+
+    def _get(self, token: str) -> dict[str, Any] | None:
+        key = self._key(token)
+        if self._redis is not None:
+            try:
+                raw = self._redis.get(key)
+                if raw:
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8")
+                    payload = json.loads(raw)
+                    self._memory_set(key, raw)
+                    return payload
+                return None
+            except Exception as exc:  # pragma: no cover - live Redis failure
+                self._redis_failed("get", exc)
+        return self._memory_get(key)
 
 
 __all__ = ["AgentSessionData", "AgentSessionPage", "AgentSessionStore"]

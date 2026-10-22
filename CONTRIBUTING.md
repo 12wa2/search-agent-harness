@@ -34,7 +34,7 @@ search-agent demo --json         # 原始 JSON 响应（含 agentTrace 与质量
 
 ## 提交与 PR 规范
 
-- 小步提交，一个 PR 只做一件事；保持 `main` 全绿（CI = ruff + pytest + demo 冒烟）。
+- 小步提交，一个 PR 只做一件事；保持 `main` 全绿。CI 覆盖 ruff、pytest、前端语法、wheel 资源、离线 demo、评测门禁、Elasticsearch 集成和 Docker 运行时依赖冒烟。
 - 提交信息用祈使句 + 前缀：`feat:` / `fix:` / `docs:` / `test:` / `refactor:`，
   例如 `feat: add explainable rerank fallback`。
 - 新行为必须带测试；**降级矩阵的每条分支**与**预算边界**是重点覆盖对象。

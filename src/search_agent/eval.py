@@ -238,9 +238,9 @@ def run_ablation(
     if baseline_path:
         ok, messages = compare_baseline(payload, baseline_path)
         if ok:
-            print(f"\n门禁：与 {baseline_path} 对比，所有指标在容差内 ✅", file=out)
+            print(f"\n门禁：与 {baseline_path} 对比，所有指标在容差内 [OK]", file=out)
             return 0
-        print(f"\n门禁：相对 {baseline_path} 出现回归 ❌", file=out)
+        print(f"\n门禁：相对 {baseline_path} 出现回归 [REGRESSION]", file=out)
         for message in messages:
             print(f"  {message}", file=out)
         return 1

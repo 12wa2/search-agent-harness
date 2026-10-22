@@ -2,7 +2,9 @@
 
 - ``LlmClient``: the protocol every stage depends on.
 - ``OpenAILlmClient``: real client for any OpenAI-compatible chat endpoint
-  (OpenAI, Qwen/DashScope, DeepSeek, vLLM, ...) using strict json_schema output.
+  (OpenAI, Qwen/DashScope, DeepSeek, vLLM, ...) preferring strict json_schema
+  output and downgrading to json_object or prompt-only JSON when a provider
+  rejects that request field.
   Transient failures (timeout / 429 / 5xx) are retried with exponential backoff;
   replies that are not valid JSON get one repair round instead of crashing the loop.
 - ``MeteredLlmClient``: wraps any client so token usage lands in the run budget.
@@ -17,6 +19,7 @@ Environment for ``OpenAILlmClient``::
     SEARCH_AGENT_LLM_JSON_REPAIRS             # JSON repair rounds (1)
     SEARCH_AGENT_LLM_BACKOFF_SEC              # base backoff, doubling (0.5)
     SEARCH_AGENT_LLM_TIMEOUT_SEC              # per-call timeout (60)
+    SEARCH_AGENT_RESPONSE_FORMAT              # auto | json_schema | json_object | none
 """
 
 from __future__ import annotations
@@ -49,6 +52,7 @@ _REPAIR_PROMPT = (
     "上一条回复不是合法的 JSON 对象。只输出一个符合给定 schema 的 JSON 对象："
     "不要解释，不要 markdown 代码块。"
 )
+_RESPONSE_FORMAT_MODES = ("json_schema", "json_object", "none")
 
 
 def _env_int(name: str, default: int) -> int:
@@ -80,6 +84,38 @@ def is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, (TimeoutError, ConnectionError)):
         return True
     return any(token in type(exc).__name__ for token in _RETRYABLE_NAMES)
+
+
+def is_response_format_unsupported(exc: BaseException) -> bool:
+    """Whether a provider rejected ``response_format`` rather than the request overall."""
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int) and status not in {400, 404, 422}:
+        return False
+    parts = [str(exc)]
+    for attr in ("message", "code", "param", "body"):
+        value = getattr(exc, attr, None)
+        if value is not None:
+            parts.append(repr(value))
+    text = " ".join(parts).lower()
+    format_marker = any(
+        token in text
+        for token in ("response_format", "json_schema", "json schema", "structured output")
+    )
+    unsupported_marker = any(
+        token in text
+        for token in (
+            "unsupported",
+            "not supported",
+            "does not support",
+            "unknown",
+            "unrecognized",
+            "invalid parameter",
+            "extra inputs",
+            "not permitted",
+            "not allowed",
+        )
+    )
+    return format_marker and unsupported_marker
 
 
 def parse_json_object(content: str) -> dict[str, Any]:
@@ -228,7 +264,11 @@ class OpenAILlmClient:
         self._repair_retries = _env_int("SEARCH_AGENT_LLM_JSON_REPAIRS", 1)
         self._backoff_sec = _env_float("SEARCH_AGENT_LLM_BACKOFF_SEC", 0.5)
         self._disable_thinking = _env_bool("SEARCH_AGENT_DISABLE_THINKING", False)
+        configured_format = os.environ.get("SEARCH_AGENT_RESPONSE_FORMAT", "auto").strip().lower()
+        self._response_format = configured_format or "auto"
         self._sleep = sleep or time.sleep
+        self._client: Any | None = None
+        self._resolved_format: str | None = None
         self.usage = LlmUsage()
         self.last_usage: LlmUsage | None = None
         #: Cumulative and per-call resilience counters (observability).
@@ -236,11 +276,55 @@ class OpenAILlmClient:
         self.last_retries = 0
         self.repairs = 0
         self.last_repairs = 0
+        self.format_fallbacks = 0
+        self.last_format_fallbacks = 0
 
     @property
     def is_configured(self) -> bool:
         """Whether an API key was available when this client was constructed."""
         return bool(self._api_key)
+
+    def _get_client(self) -> Any:
+        if self._client is not None:
+            return self._client
+        try:
+            from openai import OpenAI
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError(
+                'real LLM calls require the "openai" package: '
+                'pip install "search-agent-harness[openai]"'
+            ) from exc
+        self._client = OpenAI(api_key=self._api_key, base_url=self._base_url)
+        return self._client
+
+    def _format_sequence(self) -> list[str]:
+        if self._response_format in _RESPONSE_FORMAT_MODES:
+            return [self._response_format]
+        if self._response_format not in {"auto", "prompt"}:
+            logger.warning(
+                "Unknown SEARCH_AGENT_RESPONSE_FORMAT=%s; using auto",
+                self._response_format,
+            )
+        if self._resolved_format in _RESPONSE_FORMAT_MODES:
+            return [self._resolved_format]
+        return list(_RESPONSE_FORMAT_MODES)
+
+    @staticmethod
+    def _response_format_payload(mode: str, schema_name: str, schema: dict[str, Any]) -> Any:
+        if mode == "json_schema":
+            return {
+                "type": "json_schema",
+                "json_schema": {"name": schema_name, "strict": True, "schema": schema},
+            }
+        if mode == "json_object":
+            return {"type": "json_object"}
+        return None
+
+    def close(self) -> None:
+        client, self._client = self._client, None
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
 
     def complete_json(
         self,
@@ -251,42 +335,52 @@ class OpenAILlmClient:
         schema: dict[str, Any],
         model: str | None = None,
     ) -> dict[str, Any]:
-        try:
-            from openai import OpenAI
-        except ImportError as exc:  # pragma: no cover - optional dependency
-            raise RuntimeError(
-                'real LLM calls require the "openai" package: '
-                'pip install "search-agent-harness[openai]"'
-            ) from exc
         if not self._api_key:
             raise RuntimeError(
                 "missing API key: set SEARCH_AGENT_API_KEY (or OPENAI_API_KEY), "
                 "or run with --offline to use the scripted demo LLM"
             )
-        client = OpenAI(api_key=self._api_key, base_url=self._base_url)
+        client = self._get_client()
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
         self.last_retries = 0
         self.last_repairs = 0
+        self.last_format_fallbacks = 0
         attempt = 0
         repairs = 0
+        format_modes = self._format_sequence()
+        format_index = 0
+        format_fallbacks = 0
         while True:
+            mode = format_modes[format_index]
             try:
                 request_kwargs: dict[str, Any] = {
                     "model": model or self._default_model,
                     "messages": messages,
-                    "response_format": {
-                        "type": "json_schema",
-                        "json_schema": {"name": schema_name, "strict": True, "schema": schema},
-                    },
                     "timeout": self._timeout,
                 }
+                response_format = self._response_format_payload(mode, schema_name, schema)
+                if response_format is not None:
+                    request_kwargs["response_format"] = response_format
                 if self._disable_thinking:
                     request_kwargs["extra_body"] = {"enable_thinking": False}
                 resp = client.chat.completions.create(**request_kwargs)
             except Exception as exc:  # noqa: BLE001 - classified right below
+                if format_index + 1 < len(format_modes) and is_response_format_unsupported(exc):
+                    next_mode = format_modes[format_index + 1]
+                    logger.warning(
+                        "Provider rejected response_format=%s (%s); falling back to %s",
+                        mode,
+                        type(exc).__name__,
+                        next_mode,
+                    )
+                    format_index += 1
+                    format_fallbacks += 1
+                    self.format_fallbacks += 1
+                    self.last_format_fallbacks = format_fallbacks
+                    continue
                 if attempt >= self._max_retries or not is_retryable(exc):
                     raise
                 attempt += 1
@@ -321,6 +415,8 @@ class OpenAILlmClient:
                     {"role": "user", "content": _REPAIR_PROMPT},
                 ]
                 continue
+            if format_index > 0:
+                self._resolved_format = mode
             return result
 
     def _record_response_usage(self, resp: Any, system: str, user: str, content: str) -> None:
@@ -383,6 +479,7 @@ __all__ = [
     "MeteredLlmClient",
     "OpenAILlmClient",
     "estimate_tokens",
+    "is_response_format_unsupported",
     "estimated_usage",
     "is_retryable",
     "parse_json_object",

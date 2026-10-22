@@ -22,6 +22,10 @@ jobs:
           ruff format --check .
       - name: Test
         run: pytest -q
+      - name: Check browser asset syntax
+        run: |
+          node --check src/search_agent/web/app.js
+          node --check src/search_agent/web/resume.js
       - name: Build wheel
         run: pip wheel . --no-deps --no-cache-dir --wheel-dir dist
       - name: Verify packaged web console
@@ -36,6 +40,9 @@ jobs:
               "search_agent/web/index.html",
               "search_agent/web/styles.css",
               "search_agent/web/app.js",
+              "search_agent/web/resume.html",
+              "search_agent/web/resume.css",
+              "search_agent/web/resume.js",
               "search_agent/hybrid_v2/service.py",
               "search_agent/hybrid_v2/data/onet_position_aliases.json",
           }
@@ -84,3 +91,14 @@ jobs:
         run: pip install -e ".[dev,es]"
       - name: Integration tests (real Elasticsearch)
         run: pytest -q -m es
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build runtime image
+        run: docker build --target runtime -t search-agent-harness:ci .
+      - name: Verify runtime extras are importable
+        run: |
+          docker run --rm --entrypoint python search-agent-harness:ci -c \
+            "import fastapi, elasticsearch, openai; print('runtime extras ok')"

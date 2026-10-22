@@ -209,6 +209,20 @@
 
 ### Fixed
 
+- **Docker 完整在线依赖**（`Dockerfile`、`docs/ARCHITECTURE.md`、`docs/DECISIONS.md`）：
+  build/runtime 阶段同时安装 `openai` extra，修复镜像切到完整在线后真实 LLM 调用缺少 SDK 的问题；
+  CI 增加 Docker 运行时导入冒烟。
+- **运行期降级与终端兼容**（`session.py`、`conversation_memory.py`、`eval.py`）：Redis 初始化执行
+  `ping()`，运行期读写失败自动切回进程内存储；Redis 明确未命中时不会被本地副本复活；
+  Windows GBK 控制台不再因评测门禁 emoji 崩溃。
+- **权限与检索边界**（`server.py`、`config.py`、`session.py`、`tools/elasticsearch.py`）：新增
+  `SEARCH_AGENT_REQUIRE_PERMISSION` fail-closed 模式；分页 token 可校验租户作用域；简版 ES 后端补齐
+  ES 凭据/TLS 配置、租户过滤和 talent-pool 权限过滤。
+- **LLM 兼容性与连接复用**（`llm/client.py`）：复用同一个 OpenAI client；上游拒绝 strict
+  `json_schema` 时自动降级到 `json_object` 和 prompt-only JSON。
+- **配置、CI 与文档对齐**（`.dockerignore`、`.github/workflows/ci.yml`、`CONTRIBUTING.md`、`docs/`）：
+  排除本地密钥/临时文件；CI 校验前端语法、resume 静态资源和 Docker 运行时依赖；补齐完整在线安装、
+  模型名替换、Redis 故障降级、权限边界与历史评测产物说明。
 - **可执行 Query 误澄清**（`core/clarification.py`、`stages/understand.py`）：当查询已经包含岗位与年限/技能，或技能与搜索动作时，忽略模型误返回的 `needs_clarification=true`，避免明确的岗位搜索在 `understand` 阶段直接返回 0 人；补充单元测试与 Harness 回归测试。
 - **Judge 输入与简单查询延迟**（`harness.py`、`llm/prompts/__init__.py`）：`single_pass` 路由把
   召回/判定候选池上限收紧为 `max(20, top_k * 2)`，默认 `topK=20` 时从 60 人降至 40 人；

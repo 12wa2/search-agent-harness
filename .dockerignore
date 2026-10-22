@@ -13,6 +13,10 @@ __pycache__
 .coverage
 htmlcov
 .env
+gateway.local.json
+.tmp-*
+.pytest_tmp
+logs
 tests
 docs
 examples

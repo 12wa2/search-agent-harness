@@ -238,7 +238,6 @@ if ($gatewayHealthy) {
     $env:SEARCH_AGENT_API_KEY = $env:SEARCH_AGENT_GATEWAY_API_KEY
     $env:SEARCH_AGENT_MODEL = "search-agent-primary"
 }
-$env:SEARCH_AGENT_DISABLE_THINKING = "1"
 $env:SEARCH_AGENT_TIME_BUDGET_SEC = "180"
 
 $apiArgs = @("serve", "--host", "127.0.0.1", "--port", "8000")

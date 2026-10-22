@@ -35,19 +35,29 @@ class _HttpError(Exception):
         self.status_code = status_code
 
 
+class _UnsupportedFormatError(Exception):
+    def __init__(self, message: str, *, param: str = "response_format") -> None:
+        super().__init__(message)
+        self.status_code = 400
+        self.param = param
+        self.body = {"error": {"message": message, "param": param}}
+
+
 def _resp(content, usage):
     message = types.SimpleNamespace(content=content)
     choice = types.SimpleNamespace(message=message)
     return types.SimpleNamespace(choices=[choice], usage=usage)
 
 
-def _install_openai_script(monkeypatch, script):
+def _install_openai_script(monkeypatch, script, instances=None):
     """Feed the client a script: exceptions raise, tuples are (content, usage)."""
     module = types.ModuleType("openai")
     calls: list[dict] = []
 
     class _OpenAI:
         def __init__(self, **_kwargs):
+            if instances is not None:
+                instances.append(self)
             self.chat = types.SimpleNamespace(
                 completions=types.SimpleNamespace(create=self._create)
             )
@@ -82,6 +92,63 @@ def test_openai_client_records_provider_usage(monkeypatch):
     assert client.last_usage == LlmUsage(prompt_tokens=120, completion_tokens=30, calls=1)
     assert client.usage.total_tokens == 150
     assert client.usage.estimated is False
+
+
+def test_openai_client_reuses_one_provider_client(monkeypatch):
+    instances: list[object] = []
+    calls = _install_openai_script(
+        monkeypatch,
+        [_Usage(1, 1), _Usage(1, 1)],
+        instances=instances,
+    )
+    client, _ = _client()
+    client.complete_json(system="s", user="u", schema_name="x", schema={})
+    client.complete_json(system="s", user="u", schema_name="x", schema={})
+    assert len(instances) == 1
+    assert len(calls) == 2
+
+
+def test_response_format_falls_back_to_json_object(monkeypatch):
+    monkeypatch.delenv("SEARCH_AGENT_RESPONSE_FORMAT", raising=False)
+    calls = _install_openai_script(
+        monkeypatch,
+        [
+            _UnsupportedFormatError("response_format json_schema is not supported"),
+            _Usage(1, 1),
+        ],
+    )
+    client, sleeps = _client()
+    assert client.complete_json(system="s", user="u", schema_name="x", schema={}) == {"ok": True}
+    assert calls[0]["response_format"]["type"] == "json_schema"
+    assert calls[1]["response_format"] == {"type": "json_object"}
+    assert client.format_fallbacks == 1
+    assert client.last_format_fallbacks == 1
+    assert client.retries == 0
+    assert sleeps == []
+
+
+def test_response_format_falls_back_to_prompt_only(monkeypatch):
+    monkeypatch.delenv("SEARCH_AGENT_RESPONSE_FORMAT", raising=False)
+    calls = _install_openai_script(
+        monkeypatch,
+        [
+            _UnsupportedFormatError("json_schema is not supported"),
+            _UnsupportedFormatError("response_format is not supported"),
+            _Usage(1, 1),
+        ],
+    )
+    client, _ = _client()
+    client.complete_json(system="s", user="u", schema_name="x", schema={})
+    assert "response_format" not in calls[2]
+    assert client.last_format_fallbacks == 2
+
+
+def test_response_format_can_be_forced_by_env(monkeypatch):
+    monkeypatch.setenv("SEARCH_AGENT_RESPONSE_FORMAT", "json_object")
+    calls = _install_openai_script(monkeypatch, [_Usage(1, 1)])
+    client, _ = _client()
+    client.complete_json(system="s", user="u", schema_name="x", schema={})
+    assert calls[0]["response_format"] == {"type": "json_object"}
 
 
 def test_disable_thinking_sends_qwen_extension(monkeypatch):

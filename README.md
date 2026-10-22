@@ -11,7 +11,7 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![Pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-525-brightgreen)
+![Tests](https://img.shields.io/badge/tests-540-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 <img src="docs/console.png" alt="Search Agent 对话式人才搜索界面" width="100%">
@@ -46,7 +46,7 @@ Search Agent Harness 在确定性检索之上增加一层受控的策略循环�
 - **证据优先**：Judge 使用工具返回的候选人事实；卡片展示命中能力、缺口、硬条件与来源路径。
 - **受控循环**：显式状态机、迭代/路径/LLM/Token/墙钟预算、签名防重，以及阶段级降级。
 - **可观测与会话**：SSE 阶段事件、实际执行阶段、原始 Trace；L1 最近上下文、L2 会话归档、L3 候选人排除。
-- **可插拔且可复现**：内存、SQLite/FTS5、Elasticsearch、Hybrid V2 共用同一契约；525 项测试与零 Key 演示可直接运行。
+- **可插拔且可复现**：内存、SQLite/FTS5、Elasticsearch、Hybrid V2 共用同一契约；540 项测试与零 Key 演示可直接运行。
 
 ## 执行模型
 
@@ -126,6 +126,7 @@ pip install -e ".[api,openai,es,redis]"
 docker compose up -d elasticsearch
 Copy-Item .env.example .env
 # 在 .env 中填写模型地址、Key、模型名与 Elasticsearch 配置
+# gateway 示例里的上游模型名必须替换成账号实际可用的模型，否则会报 Model not found
 $env:SEARCH_AGENT_HYBRID_V2_ES_URL = 'http://127.0.0.1:9200'
 $env:SEARCH_AGENT_HYBRID_V2_ES_INDEX = 'search-agent-demo'
 
@@ -137,6 +138,8 @@ search-agent hybrid-v2 doctor
 直接运行 `search-agent ...` 不会自动读取 `.env`；上面的 `$env:` 只导出索引初始化所需的 Elasticsearch 地址和索引名。若 `.env` 还修改了 embedding、模型或其他 Hybrid V2 参数，请先按[部署指南](docs/DEPLOYMENT.md)把对应变量导入当前 shell。`start-dev.cmd -StartOnline` 会自动读取 `.env`。
 
 完整配置、Docker 全栈、Redis 与常见问题见 **[部署指南](docs/DEPLOYMENT.md)**；所有环境变量见 **[配置参考](docs/CONFIGURATION.md)**。
+
+> 安全边界：本仓库是参考服务，不内置用户认证。生产环境必须由可信 API 网关完成鉴权，并注入 `companyId`、`hrId` 和 `permission`；不要信任浏览器直接提交这些字段。建议设置 `SEARCH_AGENT_REQUIRE_PERMISSION=1` 启用 fail-closed 校验。
 
 ## 界面
 
@@ -204,8 +207,8 @@ class SearchTool(Protocol):
 
 ## 质量与边界
 
-- 测试集当前共 `525` 项；本地完整环境为 `525 passed`，CI 会在独立作业中执行 ES 集成用例。
-- CI 包含 Ruff、pytest、Web 资源校验、Demo 冒烟、评测门禁与 Elasticsearch 集成测试。
+- 测试集当前共 `540` 项；本地完整环境为 `540 passed`，CI 会在独立作业中执行 ES 集成用例。
+- CI 包含 Ruff、pytest、前端语法、Web 资源校验、Demo 冒烟、评测门禁、Elasticsearch 集成与 Docker 运行时依赖冒烟。
 - 仓库未部署到生产环境，不包含真实简历、企业数据、内部主机或凭据；演示数据均为虚构。
 - 不同模型提供方的质量、成本和延迟差异很大，接入真实数据前应重新评测。
 

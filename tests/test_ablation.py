@@ -354,4 +354,7 @@ def test_cli_eval_ablate_gate_round_trip(tmp_path, capsys):
     assert baseline.exists()
     capsys.readouterr()
     assert main([*args, "--baseline", str(baseline)]) == 0
-    assert "门禁" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "门禁" in out
+    assert "[OK]" in out
+    assert "✅" not in out

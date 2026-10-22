@@ -245,7 +245,7 @@ tie-breaker。`rerank_pool` 失败时则回退到 per-path 分数。排序分只
 
 ## 12. 部署形态（容器）
 
-`Dockerfile` 两阶段构建：build 阶段把 `.[api,es]` 解析成 wheel，runtime 阶段只安装 wheel，
+`Dockerfile` 两阶段构建：build 阶段把 `.[api,es,openai]` 解析成 wheel，runtime 阶段只安装 wheel，
 以 uid 10001 非 root 运行，内置 `HEALTHCHECK` 打 `/healthz`。
 
 compose 的 `api` 服务等待 `elasticsearch` 和 `gateway` 通过健康检查后才启动，随后先执行

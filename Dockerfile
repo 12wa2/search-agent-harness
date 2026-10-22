@@ -7,7 +7,7 @@ WORKDIR /build
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 RUN pip install --no-cache-dir --upgrade pip \
- && pip wheel --no-cache-dir --wheel-dir /wheels ".[api,es]"
+ && pip wheel --no-cache-dir --wheel-dir /wheels ".[api,es,openai]"
 
 # ---- runtime stage: wheels only, non-root, healthchecked -------------------
 FROM python:3.12-slim AS runtime
@@ -25,7 +25,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /wheels /wheels
-RUN pip install --no-cache-dir --no-index --find-links=/wheels "search-agent-harness[api,es]" \
+RUN pip install --no-cache-dir --no-index --find-links=/wheels "search-agent-harness[api,es,openai]" \
  && rm -rf /wheels \
  && useradd --create-home --uid 10001 agent
 

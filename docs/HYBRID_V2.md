@@ -23,7 +23,7 @@ parser 位于 `hybrid_v2/parser.py`，不绑定具体模型供应商：Agent 会
 ## 快速开始
 
 ```powershell
-pip install -e ".[es,api]"
+pip install -e ".[api,openai,es]"
 docker compose up -d elasticsearch
 $env:SEARCH_AGENT_HYBRID_V2_ES_URL = "http://127.0.0.1:9200"
 $env:SEARCH_AGENT_HYBRID_V2_ES_INDEX = "candidate"

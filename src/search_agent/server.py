@@ -44,6 +44,7 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from search_agent import __version__
+from search_agent.config import require_permission_from_env
 from search_agent.contract.tool import SearchTool
 from search_agent.conversation_memory import (
     ConversationMemory,
@@ -378,6 +379,34 @@ def create_app(
             "startedAt": _PROCESS_STARTED_AT,
         }
 
+    def require_trusted_permission(req: SearchRequest) -> None:
+        if not require_permission_from_env():
+            return
+        permission = req.permission
+        if permission is None:
+            raise HTTPException(
+                status_code=403,
+                detail="SEARCH_AGENT_REQUIRE_PERMISSION is enabled; permission context is required",
+            )
+        if permission.companyId is not None and permission.companyId != req.companyId:
+            raise HTTPException(
+                status_code=403, detail="permission companyId does not match request"
+            )
+        if permission.hrId is not None and permission.hrId != req.hrId:
+            raise HTTPException(status_code=403, detail="permission hrId does not match request")
+
+    def session_scope(
+        company_id: int | None,
+        hr_id: int | None,
+    ) -> tuple[int | None, int | None, bool]:
+        required = require_permission_from_env()
+        if required and company_id is None:
+            raise HTTPException(
+                status_code=403,
+                detail="companyId is required when permission enforcement is enabled",
+            )
+        return company_id, hr_id, required
+
     @app.get("/healthz")
     def healthz() -> dict[str, Any]:
         return runtime_health()
@@ -397,6 +426,7 @@ def create_app(
 
     @app.post("/search")
     def search(req: SearchRequest) -> SearchResponse:
+        require_trusted_permission(req)
         runtime.begin_run()
         try:
             return service.search(req)
@@ -408,6 +438,7 @@ def create_app(
     def stream_response(req: SearchRequest) -> StreamingResponse:
         decision = router.route(req.query)
         if decision.intent is Intent.SEARCH:
+            require_trusted_permission(req)
             runtime.begin_run()
             body = _tracked_search_events(
                 _stream_search(
@@ -537,15 +568,38 @@ def create_app(
         query_token: str,
         offset: int = Query(0, ge=0),
         limit: int = Query(20, ge=1, le=100),
+        companyId: int | None = Query(None, gt=0),
+        hrId: int | None = Query(None, gt=0),
     ) -> AgentSessionPage:
+        company_id, hr_id, require_scope = session_scope(companyId, hrId)
         try:
-            return resolved_sessions.get_page(query_token, offset=offset, limit=limit)
+            return resolved_sessions.get_page(
+                query_token,
+                offset=offset,
+                limit=limit,
+                company_id=company_id,
+                hr_id=hr_id,
+                require_scope=require_scope,
+            )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.delete("/sessions/{query_token}")
-    def delete_session(query_token: str) -> dict[str, bool]:
-        return {"deleted": resolved_sessions.invalidate(query_token)}
+    def delete_session(
+        query_token: str,
+        companyId: int | None = Query(None, gt=0),
+        hrId: int | None = Query(None, gt=0),
+    ) -> dict[str, bool]:
+        company_id, hr_id, require_scope = session_scope(companyId, hrId)
+        deleted = resolved_sessions.invalidate(
+            query_token,
+            company_id=company_id,
+            hr_id=hr_id,
+            require_scope=require_scope,
+        )
+        if require_scope and not deleted:
+            raise HTTPException(status_code=404, detail="agent session not found or scope mismatch")
+        return {"deleted": deleted}
 
     if _WEB_DIR.is_dir():
         # Mounted last so every API route above keeps precedence.

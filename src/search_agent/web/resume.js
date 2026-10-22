@@ -124,7 +124,7 @@ async function fetchSessionCandidate(token) {
   let offset = 0;
   for (let page = 0; page < MAX_SESSION_PAGES; page += 1) {
     const response = await fetch(
-      `/sessions/${encodeURIComponent(token)}?offset=${offset}&limit=${SESSION_PAGE_LIMIT}`,
+      `/sessions/${encodeURIComponent(token)}?offset=${offset}&limit=${SESSION_PAGE_LIMIT}&companyId=1`,
       { cache: "no-store" },
     );
     if (response.status === 404) {

@@ -66,8 +66,15 @@ def final_selection_policy_from_env() -> str:
     return value if value in _FINAL_SELECTION_POLICIES else "current"
 
 
+def require_permission_from_env() -> bool:
+    """Whether HTTP requests must carry a trusted permission context."""
+    value = os.environ.get("SEARCH_AGENT_REQUIRE_PERMISSION", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 __all__ = [
     "budget_from_env",
     "final_selection_policy_from_env",
     "recall_pool_size_from_env",
+    "require_permission_from_env",
 ]

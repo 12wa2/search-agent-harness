@@ -9,7 +9,9 @@ Tests:
 
 from __future__ import annotations
 
+import sys
 import time
+import types
 from unittest.mock import MagicMock
 
 from search_agent import conversation_memory
@@ -167,6 +169,18 @@ class TestConversationStoreRedis:
 
         assert store.load("missing") is None
 
+    def test_redis_miss_does_not_resurrect_locally_cached_memory(self):
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None
+        mock_redis.zrevrange.return_value = []
+
+        store = ConversationStore(connect_redis=False)
+        conversation = store.create(99123, 1, title="cached")
+        store._redis = mock_redis
+
+        assert store.load(conversation.conversation_id) is None
+        assert store.list(99123, 1) == []
+
     def test_redis_bytes_response_handled(self):
         mock_redis = MagicMock()
         mock_redis.get.return_value = None  # no existing memory on first append
@@ -180,6 +194,38 @@ class TestConversationStoreRedis:
         memory = store.load("bytes-test")
         assert memory is not None
         assert memory.turns[0].query == "bytes query"
+
+    def test_runtime_redis_failure_falls_back_to_memory(self):
+        mock_redis = MagicMock()
+        mock_redis.get.side_effect = ConnectionError("redis down")
+        mock_redis.set.side_effect = ConnectionError("redis down")
+        mock_redis.zadd.side_effect = ConnectionError("redis down")
+
+        store = ConversationStore(connect_redis=False)
+        store._redis = mock_redis
+
+        company_id = 88123
+        conversation = store.create(company_id, 1, title="fallback")
+        store.append_turn(conversation.conversation_id, company_id, 1, _turn(0, "fallback query"))
+
+        restored = store.load(conversation.conversation_id)
+        assert restored is not None
+        assert restored.turns[0].query == "fallback query"
+        assert [row.title for row in store.list(company_id, 1)] == ["fallback"]
+        assert store._redis is None
+
+    def test_constructor_falls_back_when_redis_ping_fails(self, monkeypatch):
+        class _Client:
+            def ping(self):
+                raise ConnectionError("redis down")
+
+        module = types.ModuleType("redis")
+        module.Redis = types.SimpleNamespace(from_url=lambda *_args, **_kwargs: _Client())
+        monkeypatch.setitem(sys.modules, "redis", module)
+        monkeypatch.setenv("SEARCH_AGENT_REDIS_URL", "redis://example")
+
+        store = ConversationStore()
+        assert store._redis is None
 
 
 # ── 4. new_conversation_id ───────────────────────────────────────────────

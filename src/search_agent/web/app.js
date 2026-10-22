@@ -2530,7 +2530,7 @@ async function loadSessionPage(offset, { updateChat = false } = {}) {
   if (updateChat) updateChatPager();
   try {
     const resp = await fetch(
-      `/sessions/${encodeURIComponent(state.queryToken)}?offset=${offset}&limit=${state.pageLimit}`,
+      `/sessions/${encodeURIComponent(state.queryToken)}?offset=${offset}&limit=${state.pageLimit}&companyId=1`,
     );
     if (resp.status === 404) throw new Error("该分页会话已过期，请重新运行搜索。");
     if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);

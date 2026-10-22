@@ -14,9 +14,9 @@
         }
       },
       {
-        "name": "deepseek-flash",
+        "name": "deepseek-chat",
         "base_url": "https://api.deepseek.com",
-        "model": "deepseek-flash",
+        "model": "deepseek-chat",
         "api_key_env": "FALLBACK_LLM_API_KEY",
         "timeout_sec": 60
       }

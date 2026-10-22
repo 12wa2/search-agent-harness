@@ -29,8 +29,9 @@ Windows 启动器 `scripts/start-dev.ps1` 的优先级为：
 | `SEARCH_AGENT_LLM_RETRIES` | `2` | 瞬时错误重试次数 |
 | `SEARCH_AGENT_LLM_JSON_REPAIRS` | `1` | JSON 修复轮数 |
 | `SEARCH_AGENT_LLM_BACKOFF_SEC` | `0.5` | 指数退避基数 |
+| `SEARCH_AGENT_RESPONSE_FORMAT` | `auto` | `auto` / `json_schema` / `json_object` / `none` |
 
-Qwen、DeepSeek、vLLM 等 OpenAI-compatible 端点可直接接入。Claude 需要提供 OpenAI-compatible 兼容层的服务或网关。
+Qwen、DeepSeek、vLLM 等 OpenAI-compatible 端点可直接接入，但上游必须支持所用请求字段。客户端默认优先发送 strict `json_schema`；如果上游明确拒绝 `response_format`，会依次降级到 `json_object` 和仅靠 prompt 约束的 JSON。需要固定行为时用 `SEARCH_AGENT_RESPONSE_FORMAT` 指定格式。Claude 需要提供 OpenAI-compatible 兼容层的服务或网关。
 
 ## 3. 本地 LLM 网关
 
@@ -52,7 +53,7 @@ Qwen、DeepSeek、vLLM 等 OpenAI-compatible 端点可直接接入。Claude 需�
 | `SEARCH_AGENT_CONVERSATION_TTL_SEC` | `2592000` | L2 会话归档保留 30 天 |
 | `SEARCH_AGENT_CONVERSATION_MAX_TURNS` | `50` | 每个会话最多保留轮数 |
 
-未配置 Redis 时自动使用进程内存储。进程重启后进程内会话与分页会丢失；结果分页默认保留 1 小时。
+未配置 Redis 时自动使用进程内存储；配置了 Redis 但初始化 ping 或后续读写失败时，也会切回进程内存储。Redis 正常返回“未命中”时以 Redis 为准，不会用本地副本复活已删除或过期的数据。进程重启后进程内会话与分页会丢失；结果分页默认保留 1 小时。多进程部署仍应使用高可用 Redis。
 
 ## 5. 预算与召回
 
@@ -84,6 +85,7 @@ Qwen、DeepSeek、vLLM 等 OpenAI-compatible 端点可直接接入。Claude 需�
 | `SEARCH_AGENT_ES_API_KEY` | 空 | API Key |
 | `SEARCH_AGENT_ES_VERIFY_CERTS` | `true` | 是否校验 TLS 证书 |
 | `SEARCH_AGENT_ES_REQUEST_TIMEOUT` | `30` | ES 请求超时秒数 |
+| `SEARCH_AGENT_ES_TENANT_ID` | `1` | 简版 ES 索引写入的租户 ID；查询时同时按请求 `companyId` 过滤 |
 
 ### 字段与召回
 
@@ -100,7 +102,7 @@ Qwen、DeepSeek、vLLM 等 OpenAI-compatible 端点可直接接入。Claude 需�
 | `SEARCH_AGENT_HYBRID_V2_CHEAP_POOL_SIZE` | `100` | 昂贵重排前的候选池 |
 | `SEARCH_AGENT_HYBRID_V2_MATCH_RATE_BASELINE` | `40` | 匹配率映射基线 |
 
-字段约定、mapping 和索引命令见 [Hybrid V2](HYBRID_V2.md)。
+字段约定、mapping 和索引命令见 [Hybrid V2](HYBRID_V2.md)。简版 `--backend es` 也会应用租户和 talent-pool 权限过滤；生产场景仍推荐 Hybrid V2，以便复用完整 mapping、BM25/kNN 和重排。
 
 ## 7. Embedding
 
@@ -139,7 +141,15 @@ Qwen、DeepSeek、vLLM 等 OpenAI-compatible 端点可直接接入。Claude 需�
 | `SEARCH_AGENT_HYBRID_V2_WORK_STATES` | 空 | 工作状态词表 |
 | `SEARCH_AGENT_HYBRID_V2_ONET_ALIASES` | 空 | 岗位别名词表 |
 
-## 10. 容器
+## 10. HTTP 权限边界
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `SEARCH_AGENT_REQUIRE_PERMISSION` | `false` | 设为 `1` 时，搜索必须携带 `permission`，且会话分页 token 必须带匹配的 `companyId` |
+
+参考服务不内置用户认证。生产部署应由可信 API 网关注入身份和 permission，不要信任浏览器直接提交的 `companyId` / `hrId` / `permission`。
+
+## 11. 容器
 
 | 变量 | 默认 | 说明 |
 |---|---|---|

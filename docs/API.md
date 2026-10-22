@@ -5,14 +5,19 @@
 ## 1. 启动服务
 
 ```bash
+# 快速演示
 pip install -e ".[api]"
-search-agent serve --offline                 # 快速演示：脚本化 LLM + 内存检索
-search-agent serve --backend hybrid_v2       # 完整在线：真实 LLM + Hybrid V2
+search-agent serve --offline
+
+# 完整在线：真实 LLM + Hybrid V2；Redis 可选
+pip install -e ".[api,openai,es]"
+# 需要跨进程会话/分页时再安装 redis extra
+search-agent serve --backend hybrid_v2
 ```
 
 默认地址为 `http://127.0.0.1:8000`。FastAPI 自带的 OpenAPI 文档通常可通过 `/docs` 访问。
 
-本仓库的参考服务不内置用户认证。生产环境应在反向代理或 API 网关层加入鉴权、限流和租户校验；请求里的 `companyId` / `hrId` 只用于数据隔离，不等于身份认证。
+本仓库的参考服务不内置用户认证。生产环境必须由可信的反向代理或 API 网关完成鉴权、限流和租户校验，并由网关注入 `companyId` / `hrId` / `permission`，不能信任浏览器直接提交的字段。建议同时设置 `SEARCH_AGENT_REQUIRE_PERMISSION=1`，让服务拒绝缺少 permission 的搜索请求。该模式下请使用 `POST /search` 或 `POST /search/stream`；`GET /search/stream` 无法携带 permission JSON。
 
 ## 2. 端点总览
 
@@ -48,7 +53,7 @@ search-agent serve --backend hybrid_v2       # 完整在线：真实 LLM + Hybri
 | `conversationId` | string/null | `null` | 续接已有会话 |
 | `pageSize` | int/null | 服务默认 | 交付列表分页大小，范围 1–100 |
 
-`permission` 可包含 `companyId`、`hrId`、`hasFullAccess`、`allowedPoolIds`、`allowedCollaboratorIds`。
+`permission` 的 `hasFullAccess`、`allowedPoolIds`、`allowedCollaboratorIds` 会进入检索过滤；`companyId`、`hrId` 仅用于与顶层字段做一致性交叉校验，不参与 ES 过滤。
 
 ### POST /search
 
@@ -145,10 +150,10 @@ curl -s -X PATCH \
 搜索响应中的 `queryToken` 保存了一次运行的合并结果池。翻页只切片，不重新运行 Agent：
 
 ```bash
-curl -s "http://127.0.0.1:8000/sessions/<queryToken>?offset=20&limit=20"
+curl -s "http://127.0.0.1:8000/sessions/<queryToken>?offset=20&limit=20&companyId=1"
 ```
 
-分页结果默认保留 1 小时；Redis 不可用时回退到进程内存储。
+分页结果默认保留 1 小时；Redis 未配置或运行期不可用时回退到进程内存储。开启 `SEARCH_AGENT_REQUIRE_PERMISSION=1` 后，`companyId` 为必填，且必须与 token 创建时的 `(companyId, hrId)` 作用域一致。
 
 ## 7. 运行时模式
 
@@ -165,6 +170,7 @@ curl -s http://127.0.0.1:8000/runtime/mode \
 | 状态码 | 场景 |
 |---|---|
 | `200` | 成功 |
+| `403` | 开启 `SEARCH_AGENT_REQUIRE_PERMISSION=1` 后，搜索缺少 `permission`，或 `permission` 与顶层租户字段不一致 |
 | `404` | 会话或分页令牌不存在，或作用域不匹配 |
 | `409` | 在线模式未配置，或运行期间尝试切换模式 |
 | `503` | 搜索服务暂时不可用 |
