@@ -11,7 +11,7 @@ Controlled direct search · Adaptive reflection for harder requests · Evidence-
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![Pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-508-brightgreen)
+![Tests](https://img.shields.io/badge/tests-525-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 <img src="docs/console.png" alt="Search Agent conversational talent-search UI" width="100%">
@@ -42,7 +42,7 @@ Search Agent Harness adds a controlled policy loop on top of deterministic retri
 - **Evidence first**: the judge consumes candidate facts returned by the search tool; cards expose matched abilities, gaps, hard constraints, and source paths.
 - **Governed loop**: explicit state machine, iteration/path/LLM/token/wall-clock budgets, signature deduplication, and stage-level degradation.
 - **Observable and conversational**: SSE stage events, actual executed stages, raw trace, L1 recent context, L2 conversation archive, and L3 candidate exclusion.
-- **Pluggable and reproducible**: in-memory, SQLite/FTS5, Elasticsearch, and Hybrid V2 share one contract; 508 tests and a zero-key demo run locally.
+- **Pluggable and reproducible**: in-memory, SQLite/FTS5, Elasticsearch, and Hybrid V2 share one contract; 525 tests and a zero-key demo run locally.
 
 ## Execution model
 
@@ -70,6 +70,8 @@ Every run: budget checks · signature deduplication · stage degradation · canc
 | Direct search | `direct_search → execute → finalize` | Structured skills, title, tenure, or city |
 | Lightweight agent | `understand → execute → judge → evaluate → finalize` | Clear request that still needs judgment and coverage checks |
 | Reflective agent | `understand → plan → execute → judge → evaluate → reflect → revise → finalize` | Open-ended preferences, transferable experience, abstract abilities |
+
+The full 8-stage reflection sequence has two budget presets: `reduced` and `standard`. Both execute the same stages, but `reduced` defaults to at most one iteration with two paths per iteration, while `standard` uses the full reflection budget. The SSE events, not the eight-stage navigation, are the source of truth for stages actually executed.
 
 The direct route skips the Agent understanding, planning, judging, and reflection stages, so **Agent LLM calls are 0**. The Hybrid V2 parser still typically makes one model call and explicitly falls back to local rules on failure. See [Intent Routing](docs/INTENT_ROUTING.md) for the complete policy.
 
@@ -120,11 +122,15 @@ pip install -e ".[api,openai,es,redis]"
 docker compose up -d elasticsearch
 Copy-Item .env.example .env
 # Fill in the model endpoint, key, model name, and Elasticsearch settings.
+$env:SEARCH_AGENT_HYBRID_V2_ES_URL = 'http://127.0.0.1:9200'
+$env:SEARCH_AGENT_HYBRID_V2_ES_INDEX = 'search-agent-demo'
 
 search-agent hybrid-v2 index --recreate
 search-agent hybrid-v2 doctor
 .\scripts\start-dev.cmd -StartOnline
 ```
+
+Running `search-agent ...` directly does not load `.env`. The `$env:` lines above only export the Elasticsearch endpoint and index name needed to build the index. If `.env` changes embedding, model, or other Hybrid V2 settings, export those variables into the current shell first as described in [Deployment](docs/DEPLOYMENT.md). `start-dev.cmd -StartOnline` loads `.env` automatically.
 
 See **[Deployment](docs/DEPLOYMENT.md)** for the full Docker stack, Redis setup, and troubleshooting. See **[Configuration](docs/CONFIGURATION.md)** for every environment variable.
 
@@ -136,9 +142,14 @@ The default view is a conversational agent workspace: recent conversations on th
 
 ## Evaluation snapshot
 
-The repository's public evaluation uses 100 synthetic candidates, 10 complex queries, and automatically generated labels; no real company resumes are used. Real-LLM experiments vary with model version, serving implementation, and generation randomness. The numbers are engineering measurements only, not production-environment claims.
+The repository keeps two public evaluation tracks:
 
-Real LLM + Hybrid V2 A/B (100 V2-native synthetic candidates, 10 complex queries, top-5): the baseline and Agent share `qwen3.8-flash`, Hybrid V2, and Elasticsearch; the only structural variable is the reflection loop. The figures below are the latest run on 2026-10-21.
+- the real-LLM A/B in this section: 100 synthetic candidates, 10 complex queries, and top-5, used to observe quality and cost of the reflection loop;
+- the CI Oracle/ablation gate: 120 synthetic candidates, Seed 7, and top-10, used to validate mechanism contributions and prevent regressions.
+
+The two datasets serve different purposes and do not replace each other. Real-LLM experiments vary with model version, serving implementation, and generation randomness. The numbers are engineering measurements only, not production-environment claims.
+
+Real LLM + Hybrid V2 A/B (100 V2-native synthetic candidates, 10 complex queries, top-5): the baseline and Agent share the gateway model alias `search-agent-primary` (the repository gateway maps it primarily to `qwen3.8-flash` and configures `deepseek-flash` as fallback), Hybrid V2, and Elasticsearch; the only structural variable is the reflection loop. The figures below are the latest run on 2026-10-21.
 
 | Metric | Single pass | Agent reflection |
 |---|---:|---:|
@@ -188,7 +199,7 @@ See [`examples/custom_backend.py`](examples/custom_backend.py) for a minimal imp
 
 ## Quality and scope
 
-- The suite contains 508 tests; a local run with Elasticsearch reports `508 passed`, and CI runs the integration cases in a dedicated job.
+- The suite currently contains 525 tests; a local run with Elasticsearch reports `525 passed`, and CI runs the integration cases in a dedicated job.
 - CI covers Ruff, pytest, Web asset validation, a demo smoke test, an evaluation gate, and Elasticsearch integration tests.
 - The repository is not deployed to production and contains no real resumes, company data, internal hosts, or credentials. Demo data is synthetic.
 - Model quality, cost, and latency vary by provider; rerun the evaluation before connecting real data.

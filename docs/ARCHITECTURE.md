@@ -10,8 +10,8 @@
 2. **阶段级失败受控、可观测**。已覆盖的阶段级失败走降级矩阵（`core/degrade.py`），
    循环在预算与降级保护下继续或收敛；`degradedReason` 显式透传到响应与 trace。取消是唯一的内部
    控制流异常，在 Harness / Graph 边界被捕获并转为 `cancelled` 终态。
-3. **预算是第一公民**。迭代 / 路径 / LLM 调用 / 墙钟预算贯穿整个循环（`core/budget.py`），
-   而不是用「超时兜底」处理失控。
+3. **预算是第一公民**。迭代 / 路径 / LLM 调用 / Token / 墙钟预算贯穿整个循环（`core/budget.py`），
+   而不是用「超时兜底」处理失控。Token 默认只记账；只有 `max_tokens > 0` 时才启用硬上限。
 4. **不引入 Agent 框架**。8 个阶段是纯函数，`LoopRunner` 就是一个显式循环；
    框架接入点通过 `runner.py` 的协议实现：`graph.py` 的 `LangGraphRunner`（可选 extra）把同一批阶段
    编译成 StateGraph，与默认循环行为等价（`tests/test_langgraph_runner.py`），阶段代码不改动。

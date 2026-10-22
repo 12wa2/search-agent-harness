@@ -11,7 +11,7 @@
 [![CI](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/12wa2/search-agent-harness/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![Pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
-![Tests](https://img.shields.io/badge/tests-508-brightgreen)
+![Tests](https://img.shields.io/badge/tests-525-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 <img src="docs/console.png" alt="Search Agent 对话式人才搜索界面" width="100%">
@@ -42,7 +42,7 @@ Search Agent Harness 在确定性检索之上增加一层受控的策略循环�
 - **证据优先**：Judge 使用工具返回的候选人事实；卡片展示命中能力、缺口、硬条件与来源路径。
 - **受控循环**：显式状态机、迭代/路径/LLM/Token/墙钟预算、签名防重，以及阶段级降级。
 - **可观测与会话**：SSE 阶段事件、实际执行阶段、原始 Trace；L1 最近上下文、L2 会话归档、L3 候选人排除。
-- **可插拔且可复现**：内存、SQLite/FTS5、Elasticsearch、Hybrid V2 共用同一契约；508 项测试与零 Key 演示可直接运行。
+- **可插拔且可复现**：内存、SQLite/FTS5、Elasticsearch、Hybrid V2 共用同一契约；525 项测试与零 Key 演示可直接运行。
 
 ## 执行模型
 
@@ -70,6 +70,8 @@ IntentRouter ─── 问候 / 身份 / 帮助 / 明确无关任务 ───> 
 | 直连搜索 | `direct_search → execute → finalize` | 技能、岗位、年限、城市等结构化条件明确 |
 | 轻量 Agent | `understand → execute → judge → evaluate → finalize` | 需求清楚，但仍需能力判断与覆盖检查 |
 | 完整反思 | `understand → plan → execute → judge → evaluate → reflect → revise → finalize` | 开放式偏好、抽象能力、可迁移经验或多路径探索 |
+
+完整的 8 阶段反思序列还分为 `reduced` 与 `standard` 两种预算档：二者阶段序列相同，但 `reduced` 默认最多 1 轮、每轮 2 条路径，`standard` 使用完整反思预算。实际执行阶段以 SSE 事件为准，不能因为导航展示 8 个阶段就视为全部已执行。
 
 直连路径不运行 Agent 编排的理解、规划、判断与反思阶段，因此 **Agent LLM 调用为 0**；强直连信号直接进入 Hybrid V2 parser，弱直连信号最多增加 1 次轻量入口复核模型调用。Hybrid V2 parser 通常仍调用 1 次模型，失败时显式回退到本地规则。完整路由规则见 [意图路由](docs/INTENT_ROUTING.md)。
 
@@ -120,11 +122,15 @@ pip install -e ".[api,openai,es,redis]"
 docker compose up -d elasticsearch
 Copy-Item .env.example .env
 # 在 .env 中填写模型地址、Key、模型名与 Elasticsearch 配置
+$env:SEARCH_AGENT_HYBRID_V2_ES_URL = 'http://127.0.0.1:9200'
+$env:SEARCH_AGENT_HYBRID_V2_ES_INDEX = 'search-agent-demo'
 
 search-agent hybrid-v2 index --recreate
 search-agent hybrid-v2 doctor
 .\scripts\start-dev.cmd -StartOnline
 ```
+
+直接运行 `search-agent ...` 不会自动读取 `.env`；上面的 `$env:` 只导出索引初始化所需的 Elasticsearch 地址和索引名。若 `.env` 还修改了 embedding、模型或其他 Hybrid V2 参数，请先按[部署指南](docs/DEPLOYMENT.md)把对应变量导入当前 shell。`start-dev.cmd -StartOnline` 会自动读取 `.env`。
 
 完整配置、Docker 全栈、Redis 与常见问题见 **[部署指南](docs/DEPLOYMENT.md)**；所有环境变量见 **[配置参考](docs/CONFIGURATION.md)**。
 
@@ -136,9 +142,14 @@ search-agent hybrid-v2 doctor
 
 ## 评测摘要
 
-仓库内公开评测使用 100 个合成候选人、10 条复杂查询和生成器自动标签，不使用企业真实简历。真实 LLM 实验受模型版本、服务实现和生成随机性影响；指标仅用于分析工程机制与效果成本权衡，不代表生产环境表现。
+仓库保留两套公开评测口径：
 
-真实 LLM + Hybrid V2 A/B（100 个 V2 原生字段合成候选人、10 条复杂查询、top-5）：基线与 Agent 共用 `qwen3.8-flash`、Hybrid V2 和 Elasticsearch，唯一结构变量是反思循环。以下为 2026-10-21 的最新一次复核结果。
+- 本节的真实 LLM A/B：100 个合成候选人、10 条复杂查询、top-5，用于观察反思循环的质量与成本；
+- CI 的 Oracle / 消融门禁：120 个合成候选人、Seed 7、top-10，用于验证机制贡献并防止回归。
+
+两套数据用途不同，不互相替代。真实 LLM 实验受模型版本、服务实现和生成随机性影响；指标仅用于分析工程机制与效果成本权衡，不代表生产环境表现。
+
+真实 LLM + Hybrid V2 A/B（100 个 V2 原生字段合成候选人、10 条复杂查询、top-5）：基线与 Agent 共用同一网关模型别名 `search-agent-primary`（仓库网关主映射 `qwen3.8-flash`，并配置 `deepseek-flash` 作为 fallback）、Hybrid V2 和 Elasticsearch，唯一结构变量是反思循环。以下为 2026-10-21 的最新一次复核结果。
 
 | 指标 | 单趟基线 | Agent 反思链路 |
 |---|---:|---:|
@@ -188,7 +199,7 @@ class SearchTool(Protocol):
 
 ## 质量与边界
 
-- 测试集共 `508` 项；本地完整环境为 `508 passed`，CI 会在独立作业中执行 ES 集成用例。
+- 测试集当前共 `525` 项；本地完整环境为 `525 passed`，CI 会在独立作业中执行 ES 集成用例。
 - CI 包含 Ruff、pytest、Web 资源校验、Demo 冒烟、评测门禁与 Elasticsearch 集成测试。
 - 仓库未部署到生产环境，不包含真实简历、企业数据、内部主机或凭据；演示数据均为虚构。
 - 不同模型提供方的质量、成本和延迟差异很大，接入真实数据前应重新评测。

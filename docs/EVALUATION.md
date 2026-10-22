@@ -4,10 +4,13 @@
 
 ## 1. 实验设置
 
+本页只描述真实 LLM A/B：100 个合成候选人、10 条 Query、top-5。仓库另有一套用于 CI 门禁的 Oracle / 消融基准（120 个候选人、Seed 7、top-10），两套数据用途不同，不能混用指标。
+
 - 语料：100 个 V2 原生字段合成候选人
 - 查询：10 条复杂 Query
 - 检索：Elasticsearch 索引 `search-agent-hybrid-v2-bench100` + Hybrid V2
-- 模型：`qwen3.8-flash`
+- 客户端模型别名：`search-agent-primary`
+- 网关配置：主映射 `qwen3.8-flash`，fallback 为 `deepseek-flash`
 - 排序策略：`final_selection_policy=current`
 - 交付深度：top-5
 - 基线：`understand → 单路径 → judge → finalize`
@@ -50,5 +53,6 @@
 
 - 语料和标签公开、合成；标签由生成器自动生成，不是人工标注；绝对数值不能与公司数据或生产 A/B 直接比较。
 - 真实模型实验只覆盖一个模型配置，每个查询一次观测；这里的 bootstrap 区间是描述性的，不是显著性检验。
+- 原始 JSON 记录的是客户端别名，没有逐次记录实际解析到的上游模型或 fallback 状态；本页只能确认网关配置，不能反推每次调用都使用了主映射。
 - A/B 报告记录的是服务入口结果，未逐条记录实际执行阶段；不能据此断言每条 Query 都执行了全部八阶段。
 - 本页不报告无法在仓库内复现的非公开指标。
