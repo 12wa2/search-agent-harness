@@ -149,7 +149,7 @@ search-agent hybrid-v2 doctor
 
 两套数据用途不同，不互相替代。真实 LLM 实验受模型版本、服务实现和生成随机性影响；指标仅用于分析工程机制与效果成本权衡，不代表生产环境表现。
 
-真实 LLM + Hybrid V2 A/B（100 个 V2 原生字段合成候选人、10 条复杂查询、top-5）：基线与 Agent 共用同一网关模型别名 `search-agent-primary`（仓库网关主映射 `qwen3.8-flash`，并配置 `deepseek-flash` 作为 fallback）、Hybrid V2 和 Elasticsearch，唯一结构变量是反思循环。以下为 2026-10-21 的最新一次复核结果。
+真实 LLM + Hybrid V2 A/B（100 个 V2 原生字段合成候选人、10 条复杂查询、top-5）：基线与 Agent 共用客户端网关别名 `search-agent-primary`、Hybrid V2 和 Elasticsearch，唯一结构变量是反思循环。历史产物只记录了客户端别名，未记录逐次解析到的上游模型或 fallback 状态，不能用仓库示例网关配置反推实验所用模型。以下为 2026-10-21 的最新一次复核结果。
 
 | 指标 | 单趟基线 | Agent 反思链路 |
 |---|---:|---:|

@@ -10,7 +10,7 @@
 - 查询：10 条复杂 Query
 - 检索：Elasticsearch 索引 `search-agent-hybrid-v2-bench100` + Hybrid V2
 - 客户端模型别名：`search-agent-primary`
-- 网关配置：主映射 `qwen3.8-flash`，fallback 为 `deepseek-flash`
+- 网关记录：实验产物只记录客户端别名 `search-agent-primary`；未持久化逐次上游模型与 fallback 状态，不能用仓库示例网关配置反推实验所用模型
 - 排序策略：`final_selection_policy=current`
 - 交付深度：top-5
 - 基线：`understand → 单路径 → judge → finalize`

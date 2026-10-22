@@ -197,4 +197,4 @@ search-agent demo "找有 3 年以上经验、做过高并发系统的后端工�
 
 - 状态机 / 预算 / 降级细节：`docs/ARCHITECTURE.md`
 - 关键取舍（ADR）：`docs/DECISIONS.md`
-- 评测口径与消融表：`README.md` 的「评测」「消融」两节
+- 评测口径、消融结果、区间与边界：`docs/EVALUATION.md`

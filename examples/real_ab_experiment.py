@@ -10,7 +10,7 @@ Example::
     $env:SEARCH_AGENT_API_KEY = "local-gateway-key"
     $env:SEARCH_AGENT_MODEL = "search-agent-primary"
     $env:SEARCH_AGENT_ES_URL = "http://127.0.0.1:9200"
-    $env:SEARCH_AGENT_ES_INDEX = "search-agent-hybrid-v2-bench-v2-100"
+    $env:SEARCH_AGENT_ES_INDEX = "search-agent-hybrid-v2-bench100"
     $env:SEARCH_AGENT_TIME_BUDGET_SEC = "180"
     $env:SEARCH_AGENT_MAX_ITERATIONS = "2"
     $env:SEARCH_AGENT_TARGET_QUALIFIED = "99"

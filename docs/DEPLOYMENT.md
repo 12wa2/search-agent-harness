@@ -7,7 +7,9 @@
 | 预设 | LLM | 检索 | 适用场景 |
 |---|---|---|---|
 | 快速演示 | 脚本化 LLM | 16 人内存候选人 | 演示前端、阶段流、会话和预算，不需要 Key |
-| 完整在线 | OpenAI-compatible 模型 | Hybrid V2 + Elasticsearch 8 | 真实模型、真实索引与可复现实验 |
+| 完整在线 | OpenAI-compatible 模型 | Hybrid V2 + Elasticsearch 8 | 真实模型与 Elasticsearch 8 链路验证 |
+
+完整在线模式验证真实模型与 Elasticsearch 8 链路；默认仍使用虚构演示候选人，可通过 `--data` 导入自有语料。真实模型输出和评测数值不保证逐次完全一致。
 
 Redis 是可选项。配置后用于跨进程会话与结果分页；未配置时自动回退到进程内存储。
 

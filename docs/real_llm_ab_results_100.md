@@ -2,8 +2,8 @@
 
 > Public synthetic corpus. Label provenance is recorded in benchmark metadata; this is an observed engineering run, not a company-data reproduction.
 
-- Model: `search-agent-primary` (gateway alias; repository config maps it primarily to `qwen3.8-flash` with `deepseek-flash` fallback)
-- Model provenance: the original run recorded the client alias only; per-call fallback usage was not persisted
+- Model: `search-agent-primary` (client gateway alias)
+- Model provenance: the original run recorded the client alias only; the per-call upstream model and fallback state were not persisted, and the repository's example gateway configuration cannot be used to infer them
 - Index: `search-agent-hybrid-v2-bench100`
 - Corpus: `100` candidates (synthetic_oracle)
 - Top-k: `5`

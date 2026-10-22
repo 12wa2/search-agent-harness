@@ -33,15 +33,15 @@
 search-agent hybrid-v2 index `
   --data examples\bench_v2_100\candidates.jsonl `
   --es-url http://127.0.0.1:9200 `
-  --es-index search-agent-hybrid-v2-bench-v2-100 `
+  --es-index search-agent-hybrid-v2-bench100 `
   --recreate
 ```
 
 实验指向同一个索引：
 
 ```powershell
-$env:SEARCH_AGENT_HYBRID_V2_ES_INDEX = "search-agent-hybrid-v2-bench-v2-100"
-$env:SEARCH_AGENT_ES_INDEX = "search-agent-hybrid-v2-bench-v2-100"
+$env:SEARCH_AGENT_HYBRID_V2_ES_INDEX = "search-agent-hybrid-v2-bench100"
+$env:SEARCH_AGENT_ES_INDEX = "search-agent-hybrid-v2-bench100"
 ```
 
 ## 运行真实 LLM A/B

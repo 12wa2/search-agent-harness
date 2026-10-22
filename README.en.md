@@ -149,7 +149,7 @@ The repository keeps two public evaluation tracks:
 
 The two datasets serve different purposes and do not replace each other. Real-LLM experiments vary with model version, serving implementation, and generation randomness. The numbers are engineering measurements only, not production-environment claims.
 
-Real LLM + Hybrid V2 A/B (100 V2-native synthetic candidates, 10 complex queries, top-5): the baseline and Agent share the gateway model alias `search-agent-primary` (the repository gateway maps it primarily to `qwen3.8-flash` and configures `deepseek-flash` as fallback), Hybrid V2, and Elasticsearch; the only structural variable is the reflection loop. The figures below are the latest run on 2026-10-21.
+Real LLM + Hybrid V2 A/B (100 V2-native synthetic candidates, 10 complex queries, top-5): the baseline and Agent share the client gateway alias `search-agent-primary`, Hybrid V2, and Elasticsearch; the only structural variable is the reflection loop. Historical artifacts recorded only the client alias, not the per-call upstream model or fallback state; the repository's example gateway configuration cannot be used to infer the model used in the experiment. The figures below are the latest run on 2026-10-21.
 
 | Metric | Single pass | Agent reflection |
 |---|---:|---:|

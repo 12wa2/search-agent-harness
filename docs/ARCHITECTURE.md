@@ -12,7 +12,7 @@
    控制流异常，在 Harness / Graph 边界被捕获并转为 `cancelled` 终态。
 3. **预算是第一公民**。迭代 / 路径 / LLM 调用 / Token / 墙钟预算贯穿整个循环（`core/budget.py`），
    而不是用「超时兜底」处理失控。Token 默认只记账；只有 `max_tokens > 0` 时才启用硬上限。
-4. **不引入 Agent 框架**。8 个阶段是纯函数，`LoopRunner` 就是一个显式循环；
+4. **默认执行路径不依赖 Agent 编排框架**。8 个阶段是纯函数，`LoopRunner` 就是一个显式循环；
    框架接入点通过 `runner.py` 的协议实现：`graph.py` 的 `LangGraphRunner`（可选 extra）把同一批阶段
    编译成 StateGraph，与默认循环行为等价（`tests/test_langgraph_runner.py`），阶段代码不改动。
 5. **唯一协议边界**：`contract/tool.py` 的 `SearchTool`。换检索后端 = 换一个实现类。
