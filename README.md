@@ -148,7 +148,7 @@ search-agent hybrid-v2 doctor
 
 默认界面是对话式 Agent 体验：左侧恢复最近会话，中间展示需求解析、实际执行路径和候选人证据，右侧交付名单。侧栏可收起为带竖排“展开会话”的导航条，点击后恢复完整会话列表。窄屏下侧栏以抽屉形式打开，并在顶栏保留会话入口。顶部还可切换到执行观测，查看实际阶段、检索路径、运行指标和原始 Trace。两种视图共享同一条 SSE 运行，切换不会重新搜索。
 
-[候选人交付截图](docs/console-run.png) · [执行观测截图](docs/console-observe.png)
+[39 秒演示视频](docs/demo.mp4) · [候选人交付截图](docs/console-run.png) · [执行观测截图](docs/console-observe.png)
 
 ## 评测摘要
 
