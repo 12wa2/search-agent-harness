@@ -23,7 +23,7 @@ Controlled direct search · Adaptive reflection for harder requests · Evidence-
 
 > An adaptive Search Agent for talent search: explicit constraints are first parsed into retrieval IR by Hybrid V2 and then executed through a controlled direct-search path; requests that need capability judgment use a lightweight agent; complex requests add multi-path planning, evidence-grounded judgment, and reflective revision inside a budget-governed loop. The project includes a zero-API-key demo and supports real LLMs and Elasticsearch 8.
 
-[Quick start](#quick-start) · [Execution model](#execution-model) · [Evaluation](#evaluation-snapshot) · [Core design](#core-design) · [Documentation](#documentation)
+[Quick start](#quick-start) · [Architecture](#architecture) · [Execution model](#execution-model) · [Evaluation](#evaluation-snapshot) · [Core design](#core-design) · [Documentation](#documentation)
 
 ---
 
@@ -50,6 +50,16 @@ Search Agent Harness adds a controlled policy loop on top of deterministic retri
 - **Governed loop**: explicit state machine, iteration/path/LLM/token/wall-clock budgets, signature deduplication, and stage-level degradation.
 - **Observable and conversational**: SSE stage events, actual executed stages, raw trace, L1 recent context, L2 conversation archive, and L3 candidate exclusion.
 - **Pluggable and reproducible**: in-memory, SQLite/FTS5, Elasticsearch, and Hybrid V2 share one contract; 540 tests and a zero-key demo run locally.
+
+## Architecture
+
+<a href="docs/architecture.en.svg"><img src="docs/architecture.en.svg" alt="Search Agent Harness end-to-end architecture" width="100%"></a>
+
+Click the image for full resolution · see [detailed architecture](docs/ARCHITECTURE.md) for the state machine and budgets.
+
+A request enters FastAPI/SSE from the Web Console. `IntentRouter` first removes non-search requests, then `EntryRouter` chooses the direct path or the agent. The agent runs an adaptive 3 / 5 / 8-stage state machine while the engineering layer owns budgets, signature deduplication, degradation, cancellation, and trace. Retrieval crosses the two-method `SearchTool` contract into Hybrid V2, and `finalize` converges on an explainable shortlist.
+
+> Direct search skips agent orchestration stages, but the Hybrid V2 parser may still call a model; actual stages are reported by SSE events. See [Architecture](docs/ARCHITECTURE.md) for the state machine, budgets, and degradation matrix.
 
 ## Execution model
 

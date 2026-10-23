@@ -3,6 +3,55 @@
 > 本文说明 search-agent-harness 的运行机制。所有内容与代码一一对应
 > （括号中给出对应文件与函数，可直接对照阅读）。
 
+## 0. 系统总览
+
+![Search Agent Harness 端到端系统架构](architecture.zh.svg)
+
+> 图源：`docs/architecture.zh.svg`。中英文图由 `node scripts/generate-architecture-svg.mjs` 从同一布局生成。README 展示同一张总览图；本文后续章节进一步拆解状态机、预算、降级、合并和 finalize。
+
+一次复杂请求的端到端时序如下（以 `POST /search/stream` 为例）：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as Web Console
+    participant API as FastAPI / SSE
+    participant R as IntentRouter + EntryRouter
+    participant H as Harness
+    participant L as LLM Gateway
+    participant T as SearchTool
+    participant ES as Hybrid V2 / ES 8
+
+    UI->>API: POST /search/stream
+    API->>R: query + tenant / permission + L1 context
+    alt greeting / help / off-topic
+        R-->>API: reply
+    else direct_search
+        R->>L: V2 parser -> CandidateSearchIR
+        L-->>R: structured IR (or local fallback)
+        R->>T: search_with_intent(IR)
+        T->>ES: filters + BM25 + kNN + rerank
+        ES-->>T: hits + hardMatches + evidence
+        T-->>R: SearchToolResult
+        R-->>API: direct_search -> execute -> finalize
+    else agent
+        R->>H: initial state + budget + event_sink
+        loop until target reached or budget exhausted
+            H->>L: selected LLM stages (understand / plan / judge / reflect)
+            L-->>H: structured decisions
+            H->>T: execute pending paths
+            T->>ES: filters + BM25 + kNN
+            ES-->>T: recall pool + evidence
+            T-->>H: SearchToolResult
+        end
+        H->>L: finalize
+        H->>T: rerank_pool(merged pool, when needed)
+        T-->>H: ranked shortlist
+        H-->>API: final state + agentTrace
+    end
+    API-->>UI: SSE stage events, then final response
+```
+
 ## 1. 设计原则
 
 1. **LLM 只做判断，事实来自工具**。LLM 负责理解意图、规划路径、做能力级判断；

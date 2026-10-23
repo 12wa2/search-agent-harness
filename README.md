@@ -23,7 +23,7 @@
 
 > 一个面向人才搜索场景的自适应 Search Agent：明确条件先由 Hybrid V2 parser 生成检索 IR，再执行受控直连检索；需要能力判断的需求进入轻量 Agent；复杂需求通过多路径规划、候选人证据判断与反思修订，形成预算可控的搜索闭环。项目提供零 API Key 演示，并支持真实 LLM 和 Elasticsearch 8。
 
-[快速开始](#快速开始) · [执行模型](#执行模型) · [评测摘要](#评测摘要) · [核心设计](#核心设计) · [文档导航](#文档导航)
+[快速开始](#快速开始) · [架构总览](#架构总览) · [执行模型](#执行模型) · [评测摘要](#评测摘要) · [核心设计](#核心设计) · [文档导航](#文档导航)
 
 ---
 
@@ -50,6 +50,16 @@ Search Agent Harness 在确定性检索之上增加一层受控的策略循环�
 - **受控循环**：显式状态机、迭代/路径/LLM/Token/墙钟预算、签名防重，以及阶段级降级。
 - **可观测与会话**：SSE 阶段事件、实际执行阶段、原始 Trace；L1 最近上下文、L2 会话归档、L3 候选人排除。
 - **可插拔且可复现**：内存、SQLite/FTS5、Elasticsearch、Hybrid V2 共用同一契约；540 项测试与零 Key 演示可直接运行。
+
+## 架构总览
+
+<a href="docs/architecture.zh.svg"><img src="docs/architecture.zh.svg" alt="Search Agent Harness 端到端系统架构" width="100%"></a>
+
+点击图片查看原始尺寸 · 状态机和预算细节见 [详细架构设计](docs/ARCHITECTURE.md)。
+
+一次请求从 Web Console 进入 FastAPI/SSE，先在 `IntentRouter` 过滤非搜索请求，再由 `EntryRouter` 选择直连或 Agent。Agent 侧由显式状态机驱动 3 / 5 / 8 阶段，工程层统一管理预算、签名防重、降级、取消和 Trace；检索通过 `SearchTool` 协议进入 Hybrid V2，最终由 `finalize` 收敛为可解释的候选人名单。
+
+> 直连路径不执行 Agent 编排阶段，但 Hybrid V2 parser 仍可能调用模型；实际执行阶段以 SSE 事件为准。状态机、预算和降级矩阵见 [架构设计](docs/ARCHITECTURE.md)。
 
 ## 执行模型
 
