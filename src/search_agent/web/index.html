@@ -10,6 +10,7 @@
 </head>
 <body>
 <a class="skip-link" href="#chat-query">跳到招聘需求</a>
+<p class="sr-only" id="agent-live-status" role="status" aria-live="polite" aria-atomic="true"></p>
 
 <header class="topbar">
   <div class="topbar-leading">
@@ -169,7 +170,7 @@
       </section>
     </section>
 
-    <section class="chat-transcript" id="chat-transcript" aria-live="polite" aria-label="与 Search Agent 的对话"></section>
+    <section class="chat-transcript" id="chat-transcript" aria-label="与 Search Agent 的对话"></section>
   </div>
 
   <section class="composer-zone" aria-label="输入招聘需求">
@@ -199,7 +200,7 @@
         </div>
       </div>
     </form>
-    <p class="composer-note" id="composer-note" aria-live="polite">快速演示：脚本化 LLM + 16 人内存库，无需 API Key · Enter 发送，Shift+Enter 换行</p>
+    <p class="composer-note" id="composer-note">快速演示：脚本化 LLM + 16 人内存库，无需 API Key · Enter 发送，Shift+Enter 换行</p>
   </section>
   </div>
 </main>
@@ -247,10 +248,10 @@
           停止
         </button>
       </div>
-      <p class="run-hint" id="run-hint" aria-live="polite">快速演示：脚本化 LLM + 16 人内存库，零 API key · Ctrl+Enter 运行。</p>
+      <p class="run-hint" id="run-hint">快速演示：脚本化 LLM + 16 人内存库，零 API key · Ctrl+Enter 运行。</p>
     </form>
 
-    <section class="session-card" aria-live="polite">
+    <section class="session-card">
       <div class="session-top">
         <div>
           <h3>当前会话</h3>
@@ -270,7 +271,7 @@
         <h3>运行账本</h3>
         <span>本次执行</span>
       </div>
-      <div class="route-summary" id="route-summary" aria-live="polite">
+      <div class="route-summary" id="route-summary">
         <div class="route-summary-head">
           <span>本次路由</span>
           <code id="route-rule">等待判定</code>
@@ -317,7 +318,7 @@
 
     <div class="agent-runbar" id="agent-runbar" data-state="idle">
       <span class="agent-runbar-pulse" aria-hidden="true"></span>
-      <div class="agent-runbar-copy" aria-live="polite">
+      <div class="agent-runbar-copy">
         <strong id="agent-state">Agent 待命</strong>
         <span id="agent-state-detail">等待岗位简报；收到后会先判断难度，再选择直连、轻量或完整反思路径。</span>
       </div>
@@ -364,7 +365,7 @@
           <span>Reflect · 按需触发</span>
         </div>
       </div>
-      <ol id="timeline" class="timeline" aria-live="polite"></ol>
+      <ol id="timeline" class="timeline"></ol>
     </div>
   </section>
 
@@ -377,9 +378,9 @@
       <span class="hint" id="results-hint">—</span>
     </div>
 
-    <section class="delivery-overview" id="delivery-overview" hidden aria-live="polite"></section>
+    <section class="delivery-overview" id="delivery-overview" hidden></section>
     <p class="candidate-method-note" id="candidate-method-note" hidden>
-      排序分仅用于同一结果集内排序，不代表概率或匹配率。
+      综合顺位优先依据硬条件、能力覆盖与证据；相关度仅作同层参考，不代表概率、通过率或匹配率。
     </p>
 
     <div class="results-viewport">

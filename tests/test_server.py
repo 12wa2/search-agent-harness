@@ -568,7 +568,8 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "`${intent} · ${routeLabel(route)} · ${stages} 阶段`" in script.text
     assert "function formatSeconds(milliseconds)" in script.text
     assert 'setMetric("m-elapsed", formatSeconds(' in script.text
-    assert 'add("耗时", formatSeconds(meta.elapsedMs))' in script.text
+    assert "chat-run-details" not in script.text
+    assert "raw event" in script.text
     assert 'modeChip.removeAttribute("title")' in script.text
     assert 'modeChip.setAttribute("aria-label"' in script.text
     assert "LLM、检索工具与候选人库会一起切换" not in script.text
@@ -609,6 +610,8 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert ".intro-grid" in styles.text
     assert ".candidate-name-link" in styles.text
     assert ".cand-resume" in styles.text
+    assert ".chat-run-details" not in styles.text
+    assert ".raw > summary" in styles.text
 
 
 def test_resume_page_and_assets_are_served(client: TestClient) -> None:

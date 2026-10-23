@@ -118,6 +118,7 @@ const agentSessionCount = $("agent-session-count");
 const agentSessionEmpty = $("agent-session-empty");
 const sidebarNewBtn = $("sidebar-new");
 const agentSidebar = $("agent-sidebar");
+const agentMain = document.querySelector(".agent-main");
 const sidebarToggle = $("sidebar-toggle");
 const sidebarToggleLabel = $("sidebar-toggle-label");
 const sidebarCollapse = $("sidebar-collapse");
@@ -209,9 +210,11 @@ const chatStopBtn = $("chat-stop");
 const chatNewBtn = $("chat-new");
 const composerMode = $("composer-mode");
 const composerNote = $("composer-note");
+const agentLiveStatus = $("agent-live-status");
 const modeChip = $("mode-chip");
 const modeLabel = $("mode-label");
 const onlineModeDialog = $("online-mode-dialog");
+let agentLiveStatusTimer = 0;
 
 function defaultComposerNote() {
   return state.runtimeMode === "offline" || !state.runtimeMode
@@ -222,6 +225,15 @@ function defaultComposerNote() {
 function setComposerNote(text, { error = false } = {}) {
   composerNote.textContent = text;
   composerNote.classList.toggle("is-error", error);
+}
+
+function announceAgentStatus(message) {
+  if (!agentLiveStatus || !message) return;
+  window.clearTimeout(agentLiveStatusTimer);
+  agentLiveStatus.textContent = "";
+  agentLiveStatusTimer = window.setTimeout(() => {
+    agentLiveStatus.textContent = String(message);
+  }, 100);
 }
 
 function syncModeToggleState() {
@@ -367,6 +379,12 @@ function chip(text, extra = "") {
   return el("span", `tag ${extra}`.trim(), text);
 }
 
+function summaryWithLabel(text, label) {
+  const summary = el("summary", "", text);
+  summary.setAttribute("aria-label", label);
+  return summary;
+}
+
 function deliveryOverview(payload) {
   const target = Math.max(0, Number(payload.topK ?? state.activeRun?.topK ?? 0));
   const delivered = Math.max(0, Number(payload.total || 0));
@@ -489,6 +507,14 @@ function scrollChatToEnd(behavior = "smooth") {
   requestAnimationFrame(() => {
     if (!chatScroll || chatScroll.hidden) return;
     chatScroll.scrollTo({ top: chatScroll.scrollHeight, behavior });
+  });
+}
+
+function scrollChatToNode(node, behavior = "smooth") {
+  requestAnimationFrame(() => {
+    if (!chatScroll || !node || chatScroll.hidden) return;
+    const offset = node.getBoundingClientRect().top - chatScroll.getBoundingClientRect().top;
+    chatScroll.scrollTo({ top: Math.max(0, chatScroll.scrollTop + offset - 12), behavior });
   });
 }
 
@@ -656,13 +682,7 @@ function beginChatRun() {
   const progressFootnote = el("p", "chat-progress-footnote", "正在判断应使用轻量搜索还是完整反思链路。");
   progress.append(progressHead, progressTrack, progressList, progressFootnote);
 
-  const details = el("details", "chat-run-details");
-  const detailsSummary = el("summary");
-  detailsSummary.append(el("span", "", "Agent 执行详情"), el("small", "", "阶段 · 路径 · Trace"));
-  const detailsBody = el("div", "chat-details-body");
-  details.append(detailsSummary, detailsBody);
-
-  message.body.append(criteriaCard, progress, details);
+  message.body.append(criteriaCard, progress);
   const run = {
     ...message,
     criteriaCard,
@@ -677,14 +697,18 @@ function beginChatRun() {
     progressFootnote,
     visitedStages: new Set(),
     route: null,
-    details,
-    detailsSummary,
-    detailsBody,
     resultArticle: null,
   };
   state.activeRun.chatRun = run;
   scrollChatToEnd();
   return run;
+}
+
+function compactCompletedChatRun(run) {
+  if (!run?.article) return;
+  run.article.classList.add("is-complete");
+  const lead = run.article.querySelector(".chat-lead");
+  if (lead) lead.textContent = "已完成检索，结果见下方；执行过程可在「执行观测」查看。";
 }
 
 function renderProgressTrack(track, stageKeys) {
@@ -761,76 +785,7 @@ function addChatStage(stage, detail = {}) {
       : run.route === "single_pass"
         ? "轻量搜索执行中"
         : "Agent 正在执行";
-  rebuildChatDetails(run);
   scrollChatToEnd();
-}
-
-function rebuildChatDetails(run) {
-  const body = run.detailsBody;
-  body.replaceChildren();
-
-  if (state.lastResult?.debug?.agentMetrics) {
-    const metrics = state.lastResult.debug.agentMetrics;
-    const directRoute = state.lastResult.debug.difficultyRoute === "direct_search";
-    const meta = metrics.meta || {};
-    const rounds = metrics.rounds || {};
-    const recall = metrics.recall || {};
-    const stats = el("div", "chat-detail-metrics");
-    const add = (label, value) => {
-      const stat = el("span");
-      stat.append(el("b", "", value ?? "—"), el("small", "", label));
-      stats.append(stat);
-    };
-    add(directRoute ? "Agent LLM" : "LLM 调用", directRoute ? meta.agentLlmCalls ?? 0 : meta.llmCalls);
-    if (directRoute) add("V2 parser", meta.parserLlmCalls ?? meta.llmCalls ?? 0);
-    add("Tokens", `${meta.tokensEstimated ? "≈" : ""}${Number(meta.totalTokens || 0).toLocaleString()}`);
-    add(directRoute ? "工具调用" : "迭代轮次", directRoute ? 1 : rounds.iterations);
-    add("耗时", formatSeconds(meta.elapsedMs));
-    add(directRoute ? "SearchTool" : "通过判定", directRoute ? 1 : recall.judged ?? "—");
-    body.append(stats);
-  }
-
-  const timeline = el("ol", "chat-detail-timeline");
-  for (const event of state.runEvents) {
-    const item = el("li");
-    const head = el("div", "chat-detail-stage");
-    head.append(
-      el("strong", "", STAGE_LABEL[event.stage] || event.stage),
-      el("code", "", event.stage),
-      el("span", "", `+${formatSeconds(event.at)}`),
-    );
-    item.append(head, el("p", "", chatStageCopy(event.stage, event.detail)));
-    const parts = stageDetail(event.stage, event.detail);
-    if (parts.length) {
-      const facts = el("div", "chat-detail-facts");
-      facts.append(...parts);
-      item.append(facts);
-    }
-    const raw = el("details", "chat-raw");
-    raw.append(
-      el("summary", "", "raw event"),
-      el("pre", "", JSON.stringify(event.detail, null, 2)),
-    );
-    item.append(raw);
-    timeline.append(item);
-  }
-  body.append(timeline);
-
-  if (state.lastResult?.debug) {
-    const debug = state.lastResult.debug;
-    const raw = el("details", "chat-raw chat-raw-trace");
-    raw.append(
-      el("summary", "", "原始 agentTrace / agentMetrics"),
-      el("pre", "", JSON.stringify({
-        agentTrace: debug.agentTrace,
-        agentMetrics: debug.agentMetrics,
-        degradedReason: debug.degradedReason,
-      }, null, 2)),
-    );
-    body.append(raw);
-  }
-  run.detailsSummary.querySelector("small").textContent =
-    `${state.runEvents.length} 个阶段事件 · 路径 · Trace`;
 }
 
 function addChatCandidateCards(run, items, offset = 0) {
@@ -915,6 +870,16 @@ function appendChatDeliveryOverview(container, payload) {
     section.append(reason);
   }
   container.append(section);
+}
+
+function appendScoreMethodNote(container) {
+  container.append(
+    el(
+      "p",
+      "chat-score-note",
+      "综合顺位优先依据硬条件、能力覆盖与证据；相关度仅作同层参考，不代表通过率或匹配率。",
+    ),
+  );
 }
 
 function reasoningStep(kicker, copy) {
@@ -1035,6 +1000,7 @@ function renderChatResult(payload) {
   const degradedReason =
     payload.debug?.degradedReason || payload.debug?.agentMetrics?.meta?.degradedReason || "";
   const degraded = Boolean(degradedReason);
+  const items = Array.isArray(payload.items) ? payload.items : [];
   const resultTone = cancelled
     ? "stopped"
     : clarification
@@ -1136,7 +1102,7 @@ function renderChatResult(payload) {
       appendChatDeliveryOverview(message.body, payload);
       appendChatReasoning(message.body, payload);
     }
-    const items = payload.items || [];
+    if (items.length) appendScoreMethodNote(message.body);
     const list = addChatCandidateCards(run, items, Number(payload.page?.offset || 0));
     run.resultList = list;
     message.body.append(list);
@@ -1150,8 +1116,8 @@ function renderChatResult(payload) {
     if (!items.length) message.body.append(el("p", "chat-no-results", "本轮没有找到符合条件的候选人，可以补充或放宽条件后重试。"));
   }
   run.resultArticle = message.article;
-  rebuildChatDetails(run);
-  scrollChatToEnd();
+  if (!clarification && !cancelled) compactCompletedChatRun(run);
+  scrollChatToNode(message.article);
 }
 
 function renderChatReply(payload) {
@@ -1174,6 +1140,7 @@ function renderChatReply(payload) {
     }
     message.body.append(actions);
   }
+  announceAgentStatus("Search Agent 已回复，本次未启动搜索。");
   scrollChatToEnd();
 }
 
@@ -1187,6 +1154,7 @@ function renderChatError(message) {
     el("h3", "", "这次执行没有完成"),
     el("p", "", message),
   );
+  announceAgentStatus(`执行失败：${message}`);
   scrollChatToEnd();
 }
 
@@ -1468,6 +1436,7 @@ function renderRestoredConversation(memory) {
 
     const items = Array.isArray(turn.resultItems) ? turn.resultItems : [];
     if (items.length) {
+      appendScoreMethodNote(message.body);
       const list = el("ul", "chat-candidates");
       items.forEach((item, index) => {
         const card = renderCandidate(item, index + 1, {
@@ -1632,7 +1601,7 @@ function stageDetail(stage, detail = {}) {
     if (detail.ir) {
       const raw = el("details", "raw");
       raw.append(
-        el("summary", "", "CandidateSearchIR"),
+        summaryWithLabel("CandidateSearchIR", "查看 CandidateSearchIR 原始数据"),
         el("pre", "", JSON.stringify(detail.ir, null, 2)),
       );
       parts.push(raw);
@@ -1890,7 +1859,11 @@ function addEvent(stage, detail) {
   if (parts.length) detailWrap.append(...parts);
 
   const raw = el("details", "raw");
-  raw.append(el("summary", "", "raw event"), el("pre", "", JSON.stringify(detail, null, 2)));
+  const stageLabel = STAGE_LABEL[stage] || stage;
+  raw.append(
+    summaryWithLabel("raw event", `查看${stageLabel}阶段的原始事件数据`),
+    el("pre", "", JSON.stringify(detail, null, 2)),
+  );
   detailWrap.append(raw);
 
   body.append(head, narration, detailWrap);
@@ -1920,8 +1893,15 @@ function applyCandidateExclusionState(docId) {
     card.classList.toggle("is-excluded", excluded);
     const button = card.querySelector(".cand-exclude");
     if (!button) continue;
+    const candidateName = button.dataset.candidateName || card.dataset.candidateId || "该候选人";
     button.textContent = excluded ? "恢复" : "排除";
     button.setAttribute("aria-pressed", String(excluded));
+    button.setAttribute(
+      "aria-label",
+      excluded
+        ? `恢复 ${candidateName} 到后续检索范围`
+        : `排除 ${candidateName}，不再参与后续搜索`,
+    );
     button.title = excluded ? "恢复到后续检索范围" : "在后续检索中排除此人";
   }
 }
@@ -2232,7 +2212,10 @@ function buildCandidateTooltip(item, rank, explanation, groups, showRawMatchExpl
   );
   if (showRawMatchExplanation) {
     const raw = el("details", "candidate-tooltip-raw");
-    raw.append(el("summary", "", "raw matchExplanation"), el("pre", "", JSON.stringify(explanation, null, 2)));
+    raw.append(
+      summaryWithLabel("raw matchExplanation", "查看原始匹配解释数据"),
+      el("pre", "", JSON.stringify(explanation, null, 2)),
+    );
     explain.append(raw);
   }
 
@@ -2247,6 +2230,7 @@ function renderCandidate(
 ) {
   const li = el("li", "candidate");
   const docId = String(item.docId || "");
+  const candidateName = item.name || item.docId || "该候选人";
   const resumeUrl = docId ? candidateResumeUrl(item, rank, resumeToken) : "";
   const excluded = state.excludedCandidateIds.has(docId);
   li.dataset.candidateId = docId;
@@ -2255,7 +2239,7 @@ function renderCandidate(
   const who = el("div", "cand-id");
   const name = el("h3");
   if (resumeUrl) {
-    const nameLink = el("a", "candidate-name-link", item.name || item.docId);
+    const nameLink = el("a", "candidate-name-link", candidateName);
     nameLink.href = resumeUrl;
     nameLink.target = "_blank";
     nameLink.rel = "noopener noreferrer";
@@ -2274,9 +2258,12 @@ function renderCandidate(
   if (meta.childElementCount) who.append(meta);
   const scoreText = Number(item.score || 0).toFixed(2);
   const score = el("div", "score-block");
-  score.title = "排序分用于同一结果集内排序，不表示绝对通过率。";
-  score.setAttribute("aria-label", `排序分 ${scoreText}，用于同一结果集内排序，不表示绝对通过率`);
-  score.append(el("span", "score-label", "排序分"), el("span", "score", scoreText));
+  score.title = "相关度仅作同层参考，不表示通过率或匹配率。";
+  score.setAttribute(
+    "aria-label",
+    `相关度 ${scoreText}，仅作同层参考，不表示通过率或匹配率`,
+  );
+  score.append(el("span", "score-label", "相关度"), el("span", "score", scoreText));
   const control = el("div", "cand-control");
   control.append(score);
   if (resumeUrl) {
@@ -2292,7 +2279,14 @@ function renderCandidate(
   if (state.conversationId && docId) {
     const excludeButton = el("button", "cand-exclude", excluded ? "恢复" : "排除");
     excludeButton.type = "button";
+    excludeButton.dataset.candidateName = candidateName;
     excludeButton.setAttribute("aria-pressed", String(excluded));
+    excludeButton.setAttribute(
+      "aria-label",
+      excluded
+        ? `恢复 ${candidateName} 到后续检索范围`
+        : `排除 ${candidateName}，不再参与后续搜索`,
+    );
     excludeButton.title = excluded ? "恢复到后续检索范围" : "在后续检索中排除此人";
     excludeButton.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -2719,6 +2713,7 @@ async function runSearch(query, topK) {
   state.startedAt = performance.now();
   timelineHint.textContent = "连接中…";
   setAgentState("running", "正在接管任务", "Agent 正在解析岗位简报并准备检索策略。");
+  announceAgentStatus("Search Agent 已开始分析招聘需求。");
   addMission(query, topK);
   addWaiting();
 
@@ -2843,6 +2838,14 @@ async function runSearch(query, topK) {
                   ? `已交付 ${Number(payload.total || 0)} 位候选人；执行过程中触发降级：${payload.debug.degradedReason}`
                   : `已交付 ${Number(payload.total || 0)} 位候选人，匹配证据与来源路径已同步。`,
           );
+          const overview = deliveryOverview(payload);
+          announceAgentStatus(
+            sawCancelled
+              ? "已请求停止，当前阶段结束后会停止后续工作。"
+              : needsClarification
+                ? "需要补充岗位方向后继续检索。"
+                : `检索完成。目标 ${overview.target} 人，实际交付 ${overview.delivered} 人，缺口 ${overview.gap} 人。${payload.debug?.degradedReason ? "本轮执行发生降级，请复核结果。" : ""}`,
+          );
         } else if (event === "error") {
           sawError = true;
           showError(`Agent 执行失败：${payload.message || "unknown error"}`);
@@ -2867,6 +2870,7 @@ async function runSearch(query, topK) {
     if (err.name === "AbortError") {
       runHint.textContent = "已请求停止：当前阶段结束后不会再发起新的检索或模型调用。";
       setAgentState("stopped", "正在停止", "当前阶段结束后不会再发起新的检索或模型调用。");
+      announceAgentStatus("已请求停止，当前阶段结束后会停止后续工作。");
       if (state.activeRun?.chatRun) {
         setChatStatus(state.activeRun.chatRun.status, "停止中", "stopped");
       }
@@ -2950,6 +2954,12 @@ function setSidebarVisible(visible, { persist = true, moveFocus = false } = {}) 
     const hidden = mobile && !expanded;
     agentSidebar.setAttribute("aria-hidden", String(hidden));
     if ("inert" in agentSidebar) agentSidebar.inert = hidden;
+  }
+  if (agentMain) {
+    const hiddenFromInteraction = mobile && expanded;
+    if ("inert" in agentMain) agentMain.inert = hiddenFromInteraction;
+    if (hiddenFromInteraction) agentMain.setAttribute("aria-hidden", "true");
+    else agentMain.removeAttribute("aria-hidden");
   }
   if (sidebarContent) {
     sidebarContent.setAttribute("aria-hidden", String(collapsed));
