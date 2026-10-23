@@ -145,9 +145,9 @@ See **[Deployment](docs/DEPLOYMENT.md)** for the full Docker stack, Redis setup,
 
 The default view is a conversational agent workspace: recent conversations on the left, requirement parsing and live execution evidence in the center, and the delivered shortlist on the right. The sidebar can collapse into a narrow rail with a vertical Expand conversations control, then restore the full list when clicked. Narrow screens use a drawer for the same sidebar and keep a conversation entry in the top bar. Another top-bar switch opens the execution-observability view with actual stages, retrieval paths, metrics, and raw trace. Both views share the same SSE run and switching does not rerun the search.
 
-[![62-second full-online demo: 8 stages, 2 retrieval rounds, 50 delivered candidates](docs/demo-poster.png)](docs/demo.mp4)
+https://github.com/user-attachments/assets/058130c9-098d-4746-8535-1457ff141344
 
-[Play the full demo](docs/demo.mp4) · [Delivered candidates](docs/console-run.png) · [Execution observability](docs/console-observe.png)
+[Delivered candidates](docs/console-run.png) · [Execution observability](docs/console-observe.png)
 
 The demo runs against the real LLM + Hybrid V2 + Elasticsearch stack and completes all eight stages: `understand → plan → execute → judge → evaluate → reflect → revise → finalize`, with two retrieval rounds and 50 delivered candidates. Model wait time is shown at 4× speed.
 
