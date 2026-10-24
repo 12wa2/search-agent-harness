@@ -457,8 +457,8 @@ def test_root_serves_the_web_console(client: TestClient) -> None:
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
     assert "Search Agent" in resp.text
-    assert "app.js?v=8" in resp.text
-    assert "styles.css?v=10" in resp.text
+    assert "app.js?v=9" in resp.text
+    assert "styles.css?v=11" in resp.text
     assert 'id="agent-view"' in resp.text
     assert 'id="sidebar-toggle"' in resp.text
     assert 'class="topbar-leading"' in resp.text
@@ -528,6 +528,21 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "onlineModeDialog.showModal" in script.text
     assert "tool-call" in script.text
     assert "agent-delivery" in script.text
+    assert "function renderAgentWorkbench" in script.text
+    assert "function attachCandidateTooltip" in script.text
+    assert "function formatWorkbenchScore" in script.text
+    assert "function updateChatPager(payload = null)" in script.text
+    assert "function toggleWorkbenchShortlist" in script.text
+    assert "function openWorkbenchComparison" in script.text
+    assert "function buildCompareModel" in script.text
+    assert "function renderCompareOverview" in script.text
+    assert "function renderCompareMatrix" in script.text
+    assert "function renderCompareCandidate(candidate, model)" in script.text
+    assert "hardConditionsAligned" in script.text
+    assert "未核验" in script.text
+    assert "建议优先查看" in script.text
+    assert "正在打开对比" in script.text
+    assert "candidate-compare-dialog" in script.text
     assert "chat-progress-item" in script.text
     assert "renderChatResult" in script.text
     assert "agent-session-list" in script.text
@@ -578,6 +593,13 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "快速演示" in index.text
     assert 'id="composer-mode"' in index.text
     assert 'id="delivery-overview"' in index.text
+    assert 'id="candidate-compare-dialog"' in index.text
+    assert 'id="candidate-compare-overview"' in index.text
+    assert 'id="candidate-compare-matrix"' in index.text
+    assert 'data-compare-view="diff"' in index.text
+    assert 'data-compare-view="all"' in index.text
+    assert "仅看差异" in index.text
+    assert "全部信息" in index.text
     assert 'id="candidate-method-note"' in index.text
     assert 'id="route-summary"' in index.text
     assert 'id="route-intent"' in index.text
@@ -610,6 +632,22 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert ".intro-grid" in styles.text
     assert ".candidate-name-link" in styles.text
     assert ".cand-resume" in styles.text
+    assert ".agent-workbench" in styles.text
+    assert ".aw-workspace-grid" in styles.text
+    assert ".aw-card-action.is-shortlist" in styles.text
+    assert ".aw-candidate.has-candidate-tooltip" in styles.text
+    assert ".aw-stat.is-score" in styles.text
+    assert ".aw-compare-score" in styles.text
+    assert ".aw-compare-button.is-ready" in styles.text
+    assert ".candidate-compare-dialog" in styles.text
+    assert ".candidate-compare-body" in styles.text
+    assert ".compare-verdict" in styles.text
+    assert ".compare-snapshot" in styles.text
+    assert ".compare-matrix-table" in styles.text
+    assert ".compare-matrix-row.is-different" in styles.text
+    assert ".compare-matrix-note" in styles.text
+    assert ".aw-compare-leader-badge" in styles.text
+    assert ".aw-compare-hard-value.is-na" in styles.text
     assert ".chat-run-details" not in styles.text
     assert ".raw > summary" in styles.text
 

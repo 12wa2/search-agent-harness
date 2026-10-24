@@ -36,6 +36,10 @@ const STAGE_META = {
   finalize: { kind: "DELIVER", glyph: "◆" },
 };
 const PAGE_SIZE = 5;
+const COMPARE_LIMIT = 4;
+const COMPARE_VIEW_DIFF = "diff";
+const COMPARE_VIEW_ALL = "all";
+const DEFAULT_CHAT_PLACEHOLDER = "描述目标岗位、必备能力、城市与排除条件…";
 const CONVERSATION_KEY = "search-agent:conversation";
 const VIEW_KEY = "search-agent:view";
 const SIDEBAR_KEY = "search-agent:sidebar";
@@ -65,6 +69,8 @@ const state = {
   controller: null,
   startedAt: 0,
   activeRun: null,
+  activeWorkbench: null,
+  workbenchSequence: 0,
   routeMeta: null,
   lastResult: null,
   runEvents: [],
@@ -210,6 +216,13 @@ const chatStopBtn = $("chat-stop");
 const chatNewBtn = $("chat-new");
 const composerMode = $("composer-mode");
 const composerNote = $("composer-note");
+const compareDialog = $("candidate-compare-dialog");
+const compareGrid = $("candidate-compare-grid");
+const compareCopy = $("candidate-compare-copy");
+const compareOverview = $("candidate-compare-overview");
+const compareMatrix = $("candidate-compare-matrix");
+const compareCloseBtn = $("candidate-compare-close");
+const compareViewButtons = document.querySelectorAll("[data-compare-view]");
 const agentLiveStatus = $("agent-live-status");
 const modeChip = $("mode-chip");
 const modeLabel = $("mode-label");
@@ -225,6 +238,18 @@ function defaultComposerNote() {
 function setComposerNote(text, { error = false } = {}) {
   composerNote.textContent = text;
   composerNote.classList.toggle("is-error", error);
+}
+
+function setAgentResultMode(active) {
+  const enabled = Boolean(active);
+  if (agentMain) agentMain.classList.toggle("has-agent-result", enabled);
+  if (chatQueryInput) {
+    chatQueryInput.rows = enabled ? 1 : 2;
+    chatQueryInput.placeholder = enabled
+      ? "继续追问，或补充城市、经验与排除条件…"
+      : DEFAULT_CHAT_PLACEHOLDER;
+  }
+  if (!enabled && compareDialog?.open) compareDialog.close();
 }
 
 function announceAgentStatus(message) {
@@ -745,6 +770,7 @@ function configureChatRoute(run, detail = {}) {
 
 function addChatStage(stage, detail = {}) {
   const run = beginChatRun();
+  if (detail.jobTitle && !run.jobTitle) run.jobTitle = detail.jobTitle;
   if (stage === "understand" || stage === "direct_search") {
     configureChatRoute(run, detail);
     if (stage === "direct_search") {
@@ -799,6 +825,15 @@ function addChatCandidateCards(run, items, offset = 0) {
 }
 
 function replaceChatCandidateCards(items, offset = 0) {
+  const workbench = state.activeWorkbench;
+  if (workbench) {
+    workbench.pageEntries = items.map((item, index) =>
+      workbenchCandidateEntry(item, offset + index + 1, workbench.token),
+    );
+    renderWorkbenchList(workbench);
+    updateWorkbenchChrome(workbench);
+    return;
+  }
   const run = state.activeRun?.chatRun;
   if (!run?.resultList) return;
   run.resultList.replaceChildren();
@@ -809,13 +844,36 @@ function replaceChatCandidateCards(items, offset = 0) {
   });
 }
 
-function updateChatPager(payload = {}) {
+function updateChatPager(payload = null) {
   const run = state.activeRun?.chatRun;
   if (!run?.resultPager) return;
-  const totalPages = Number(payload.totalPages || payload.page?.totalPages || 1);
-  const currentPage = Number(payload.currentPage || payload.page?.currentPage || 1);
-  const total = Number(payload.total ?? payload.page?.total ?? 0);
-  const hasMore = Boolean(payload.hasMore ?? payload.page?.hasMore);
+  const page = payload?.page && typeof payload.page === "object"
+    ? payload.page
+    : payload ?? {
+        offset: state.pageOffset,
+        limit: state.pageLimit,
+        total: state.pageTotal,
+        currentPage: state.pageCurrent,
+        totalPages: state.pageTotalPages,
+        hasMore: state.pageHasMore,
+      };
+  const totalPages = Math.max(1, Number(page.totalPages ?? 1));
+  const currentPage = Math.max(1, Number(page.currentPage ?? 1));
+  const total = Math.max(0, Number(page.total ?? 0));
+  const hasMore = Boolean(page.hasMore);
+  const workbench = state.activeWorkbench;
+  if (workbench && workbench.pager === run.resultPager) {
+    workbench.page = {
+      offset: Number(page.offset ?? 0),
+      limit: Number(page.limit ?? PAGE_SIZE),
+      total,
+      currentPage,
+      totalPages,
+      hasMore,
+    };
+    syncWorkbenchPager(workbench);
+    return;
+  }
   run.resultPager.hidden = totalPages <= 1;
   if (totalPages <= 1) return;
   run.resultPageState.textContent = `第 ${currentPage} / ${totalPages} 页 · 共 ${total} 人`;
@@ -837,6 +895,1482 @@ function createChatPager() {
   });
   pagerNode.append(prev, stateLabel, next);
   return { pagerNode, prev, next, stateLabel };
+}
+
+function workbenchCandidateKey(item, rank) {
+  const explicit = item?.docId || item?.candidateProfileId || item?.id;
+  return explicit ? String(explicit) : `candidate-${rank}`;
+}
+
+function workbenchCandidateEntry(item, rank, token) {
+  return {
+    key: workbenchCandidateKey(item, rank),
+    item,
+    rank,
+    token,
+  };
+}
+
+function workbenchSkillNames(item, limit = 3) {
+  const names = [];
+  const seen = new Set();
+  for (const skill of Array.isArray(item?.skills) ? item.skills : []) {
+    const name = String(skill?.name || "").trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+    if (names.length >= limit) break;
+  }
+  return names;
+}
+
+function workbenchCandidateInitial(item) {
+  const name = String(item?.name || "").trim();
+  return name ? Array.from(name)[0] : "候";
+}
+
+function workbenchMetaText(item) {
+  const parts = [];
+  if (item?.workYears != null) parts.push(`${item.workYears} 年经验`);
+  if (item?.currentResidence) parts.push(String(item.currentResidence));
+  const skills = workbenchSkillNames(item);
+  if (skills.length) parts.push(skills.join(" / "));
+  return parts.join(" · ");
+}
+
+function workbenchMatchData(item) {
+  const explanation =
+    item?.matchExplanation && typeof item.matchExplanation === "object"
+      ? item.matchExplanation
+      : {};
+  const matchedAbilities = Array.isArray(explanation.matchedAbilities)
+    ? explanation.matchedAbilities.filter(Boolean)
+    : [];
+  const missingAbilities = Array.isArray(explanation.missingAbilities)
+    ? explanation.missingAbilities.filter(Boolean)
+    : [];
+  const hardMatches = Array.isArray(explanation.hardMatches)
+    ? explanation.hardMatches.filter(Boolean)
+    : [];
+  const pathRationale = Array.isArray(explanation.pathRationale)
+    ? explanation.pathRationale.filter(Boolean)
+    : [];
+  return {
+    matchedAbilities,
+    missingAbilities,
+    hardMatches,
+    pathRationale,
+    hardPassed: hardMatches.filter((hard) => hard?.matched).length,
+    abilityTotal: matchedAbilities.length + missingAbilities.length,
+  };
+}
+
+function formatWorkbenchValues(values) {
+  if (Array.isArray(values)) {
+    const joined = values.map((value) => String(value ?? "").trim()).filter(Boolean).join(" / ");
+    return joined || "—";
+  }
+  if (values === null || values === undefined || values === "") return "—";
+  return String(values);
+}
+
+function formatWorkbenchHard(hard) {
+  const field = CONDITION_LABEL[hard?.field] || hard?.field || hard?.text || "条件";
+  const values = formatWorkbenchValues(hard?.values ?? hard?.value);
+  return `${field}：${values} ${hard?.matched ? "满足" : "未满足"}`;
+}
+
+function formatWorkbenchScore(item) {
+  if (item?.score === null || item?.score === undefined || item?.score === "") return "";
+  const score = Number(item.score);
+  return Number.isFinite(score) ? score.toFixed(2) : "";
+}
+
+function formatWorkbenchPercent(value, fallback = "—") {
+  if (value === null || value === undefined || value === "") return fallback;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return `${Math.round(numeric * 100)}%`;
+}
+
+function computeWorkbenchPageCoverage(entries) {
+  let hardPassed = 0;
+  let hardTotal = 0;
+  let matched = 0;
+  let abilityTotal = 0;
+  for (const entry of entries) {
+    const data = workbenchMatchData(entry.item);
+    hardPassed += data.hardPassed;
+    hardTotal += data.hardMatches.length;
+    matched += data.matchedAbilities.length;
+    abilityTotal += data.abilityTotal;
+  }
+  return {
+    hardRate: hardTotal ? hardPassed / hardTotal : null,
+    abilityCoverage: abilityTotal ? matched / abilityTotal : null,
+  };
+}
+
+function workbenchEvidenceLines(item) {
+  const summary = String(item?.summary || "").replace(/\s+/g, " ").trim();
+  const sentences = summary
+    .split(/[。；;]+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  if (sentences.length) return sentences.slice(0, 2);
+
+  const works = Array.isArray(item?.workExperiences) ? item.workExperiences : [];
+  return works
+    .slice(0, 2)
+    .map((work) => {
+      const role = work?.job_title || work?.jobTitle || work?.position || work?.title || "";
+      const company = work?.company_name || work?.companyName || work?.company || "";
+      return [role, company].map((part) => String(part || "").trim()).filter(Boolean).join(" · ");
+    })
+    .filter(Boolean);
+}
+
+function renderWorkbenchEvidence(item) {
+  const list = el("ul", "aw-evidence");
+  const lines = workbenchEvidenceLines(item);
+  if (!lines.length) {
+    list.append(el("li", "is-empty", "暂无履历摘要，打开完整档案查看工作经历。"));
+    return list;
+  }
+  for (const line of lines) {
+    const itemNode = el("li");
+    const labelled = line.match(/^([^：:]{2,28})[：:]\s*(.+)$/);
+    if (labelled) {
+      itemNode.append(el("strong", "", `${labelled[1]}：`), document.createTextNode(labelled[2]));
+    } else {
+      itemNode.textContent = line;
+    }
+    list.append(itemNode);
+  }
+  return list;
+}
+
+function workbenchStatusPill(item, data) {
+  if (data.hardMatches.length) {
+    const passed = data.hardPassed === data.hardMatches.length;
+    return {
+      text: passed ? "硬条件通过" : `硬条件 ${data.hardPassed}/${data.hardMatches.length}`,
+      tone: passed ? "is-good" : "is-warning",
+    };
+  }
+  if (data.matchedAbilities.length) {
+    return { text: `${data.matchedAbilities.length} 项能力命中`, tone: "is-neutral" };
+  }
+  return { text: "待核验", tone: "is-neutral" };
+}
+
+function openExecutionConsole() {
+  viewConsoleBtn?.click();
+}
+
+function buildWorkbenchTaskHead(wb, payload, run, overview) {
+  const metrics = payload.debug?.agentMetrics || {};
+  const iterations = Number(metrics.rounds?.iterations ?? run?.visitedStages?.size ?? 0);
+  const elapsedMs = Number(metrics.meta?.elapsedMs || 0);
+  const route = payload.debug?.difficultyRoute || run?.route || "";
+  const kicker = el("div", "aw-task-kicker");
+  kicker.append(el("span", "aw-status-dot"));
+  const pace = route === "direct_search" ? "直连检索" : `${Math.max(1, iterations)} 轮`;
+  const duration = elapsedMs > 0
+    ? ` · ${elapsedMs < 10000 ? `${(elapsedMs / 1000).toFixed(1)} 秒` : `${Math.round(elapsedMs / 1000)} 秒`}`
+    : "";
+  kicker.append(document.createTextNode(`检索完成 · ${pace}${duration}`));
+
+  const taskTop = el("div", "aw-task-top");
+  const titleBlock = el("div", "aw-task-title");
+  const title = String(run?.jobTitle || wb.jobTitle || "").trim() || "本轮候选人结果";
+  titleBlock.append(el("h1", "", title));
+  if (wb.query) titleBlock.append(el("p", "", wb.query));
+
+  const actions = el("div", "aw-task-actions");
+  const runButton = el("button", "aw-task-action");
+  runButton.type = "button";
+  runButton.append(
+    document.createTextNode("查看运行记录"),
+    el("span", "aw-task-action-icon", "↗"),
+  );
+  runButton.addEventListener("click", openExecutionConsole);
+  actions.append(runButton);
+  taskTop.append(titleBlock, actions);
+
+  const summary = el("div", "aw-summary-strip");
+  const addMetric = (value, label) => {
+    const metric = el("span", "aw-metric");
+    metric.append(el("strong", "", value), el("span", "", label));
+    summary.append(metric);
+  };
+  addMetric(overview.delivered, "交付候选人");
+  if (overview.target > 0) addMetric(overview.target, "目标人数");
+  if (overview.gap > 0) {
+    const gap = el("span", "aw-gap-pill");
+    gap.append(el("i"), document.createTextNode(`缺口 ${overview.gap} 人`));
+    summary.append(gap);
+  }
+
+  const side = el("div", "aw-summary-side");
+  const hardRate = metrics.match?.hardMatchHitRate;
+  if (Number.isFinite(Number(hardRate))) {
+    side.append(el("span", "", `硬条件命中 ${formatWorkbenchPercent(hardRate)}`));
+  }
+  const judged = Number(metrics.recall?.judged || 0);
+  if (judged > 0) side.append(el("span", "", `${judged} 人通过判定`));
+  if (side.childElementCount) summary.append(side);
+
+  const head = el("header", "aw-task-head");
+  head.append(kicker, taskTop, summary);
+  return head;
+}
+
+function buildWorkbenchRunPanel(wb, payload, run, overview) {
+  const metrics = payload.debug?.agentMetrics || {};
+  const hasMetrics = Boolean(payload.debug?.agentMetrics);
+  const pageCoverage = computeWorkbenchPageCoverage(wb.pageEntries);
+  const iterations = Number(metrics.rounds?.iterations ?? run?.visitedStages?.size ?? 0);
+  const judged = Number(metrics.recall?.judged || 0);
+  const hardRate = hasMetrics ? metrics.match?.hardMatchHitRate : pageCoverage.hardRate;
+  const abilityCoverage = hasMetrics ? metrics.match?.abilityCoverage : pageCoverage.abilityCoverage;
+  const stageCount = Number(
+    payload.debug?.executedStages?.length || state.runEvents.length || run?.visitedStages?.size || 0,
+  );
+
+  const panel = el("aside", "aw-run-panel");
+  panel.setAttribute("aria-label", "本次运行摘要");
+
+  const head = el("div", "aw-run-head");
+  const heading = el("div");
+  heading.append(el("span", "aw-rail-kicker", "本次运行"), el("h2", "", "结果摘要"));
+  const status = el("span", "aw-run-status");
+  status.append(el("i"), document.createTextNode("已完成"));
+  head.append(heading, status);
+
+  const body = el("div", "aw-run-body");
+  const hitTarget = overview.target > 0 && overview.delivered >= overview.target;
+  const gapTitle = overview.target <= 0
+    ? "本轮检索已完成"
+    : hitTarget
+      ? "目标交付已达成"
+      : `距目标还差 ${overview.gap} 位`;
+  const h3 = el("h3", "", gapTitle);
+  if (!hitTarget && overview.gap > 0) h3.append(el("span", "", ""));
+  body.append(h3);
+  body.append(
+    el(
+      "p",
+      "",
+      hitTarget || overview.target <= 0
+        ? `已交付 ${overview.delivered} 位候选人，完成 ${Math.max(1, iterations)} 轮检索。可以继续追问，或调整条件发起下一轮。`
+        : `已交付 ${overview.delivered} 位候选人，完成 ${Math.max(1, iterations)} 轮检索。当前仍有数量缺口，可补充或放宽条件后再次检索。`,
+    ),
+  );
+  const progress = el("div", "aw-progress");
+  progress.setAttribute("role", "progressbar");
+  progress.setAttribute("aria-label", "目标交付完成度");
+  progress.setAttribute("aria-valuemin", "0");
+  progress.setAttribute("aria-valuemax", "100");
+  const percent = overview.target > 0
+    ? Math.min(100, Math.round((overview.delivered / overview.target) * 100))
+    : 100;
+  progress.setAttribute("aria-valuenow", String(percent));
+  const progressFill = el("i");
+  progressFill.style.width = `${percent}%`;
+  progress.append(progressFill);
+  const progressMeta = el("div", "aw-progress-meta");
+  progressMeta.append(
+    el("span", "", overview.target > 0 ? `${overview.delivered} / ${overview.target} 人` : `${overview.delivered} 人交付`),
+    el("span", "", `${percent}%`),
+  );
+  body.append(progress, progressMeta);
+
+  if (overview.gap > 0) {
+    const nextStep = el("div", "aw-next-step");
+    nextStep.append(
+      el("span", "aw-next-step-label", "下一步建议"),
+      el("strong", "", "补充或放宽城市、经验与技能条件，再发起一轮检索。"),
+    );
+    const adjust = el("button", "", "调整条件再搜 →");
+    adjust.type = "button";
+    adjust.addEventListener("click", () => {
+      setComposerNote("可以补充或放宽条件后再次检索。");
+      chatQueryInput.focus();
+    });
+    nextStep.append(adjust);
+    body.append(nextStep);
+  }
+  panel.append(head, body);
+
+  const coverage = el("section", "aw-run-section");
+  coverage.append(el("div", "aw-rail-label", "覆盖情况"));
+  const coverageList = el("div", "aw-coverage");
+  const addCoverage = (label, value, tone = "is-good") => {
+    const row = el("div", "aw-coverage-row");
+    row.append(
+      el("span", `aw-coverage-icon ${tone}`.trim(), tone === "is-warning" ? "!" : "✓"),
+      el("span", "", label),
+      el("strong", "", value),
+    );
+    coverageList.append(row);
+  };
+  const rateTone = (value) => {
+    if (value === null || value === undefined) return "is-neutral";
+    return Number(value) >= 0.65 ? "is-good" : "is-warning";
+  };
+  addCoverage(
+    hasMetrics ? "硬条件命中率" : "本页硬条件",
+    formatWorkbenchPercent(hardRate),
+    rateTone(hardRate),
+  );
+  addCoverage(
+    hasMetrics ? "能力覆盖" : "本页能力覆盖",
+    formatWorkbenchPercent(abilityCoverage),
+    rateTone(abilityCoverage),
+  );
+  addCoverage(
+    hasMetrics ? "通过判定" : "本页候选人",
+    hasMetrics ? (judged > 0 ? `${judged} 人` : "—") : `${wb.pageEntries.length} 人`,
+    "is-good",
+  );
+  coverage.append(coverageList);
+  panel.append(coverage);
+
+  const ledger = el("section", "aw-run-section");
+  ledger.append(el("div", "aw-rail-label", "运行账本"));
+  const ledgerGrid = el("div", "aw-ledger");
+  const addLedger = (value, label) => {
+    const item = el("div");
+    item.append(el("strong", "", value), el("span", "", label));
+    ledgerGrid.append(item);
+  };
+  addLedger(String(Math.max(1, iterations)), "检索轮次");
+  addLedger(stageCount > 0 ? String(stageCount) : "—", "执行阶段");
+  addLedger(judged > 0 ? String(judged) : "—", "通过判定");
+  ledger.append(ledgerGrid);
+  panel.append(ledger);
+
+  const decision = el("details", "aw-decision");
+  const decisionSummary = el("summary", "aw-decision-summary");
+  decisionSummary.append(
+    el("span", "", "为什么在这里结束"),
+    el("small", "", "展开真实结束依据"),
+  );
+  const decisionBody = el("div", "aw-decision-body");
+  appendChatReasoning(decisionBody, payload);
+  if (!decisionBody.querySelector(".chat-reasoning")) {
+    decisionBody.append(
+      el("p", "", overview.reason || "本轮已完成检索并收敛现有结果。"),
+    );
+  }
+  decision.append(decisionSummary, decisionBody);
+  panel.append(decision);
+
+  const sort = el("details", "aw-sort");
+  const sortSummary = el("summary", "aw-sort-summary");
+  sortSummary.append(
+    el("span", "", "排序依据"),
+    el("small", "", "硬条件 › 能力 › 证据"),
+  );
+  sort.append(
+    sortSummary,
+    el("p", "", "综合顺位优先依据硬条件、能力覆盖与路径证据；相关度仅作同层参考，不代表通过率或匹配率。"),
+  );
+  panel.append(sort);
+
+  const audit = el("button", "aw-audit-link");
+  audit.type = "button";
+  const auditMeta = [
+    stageCount > 0 ? `${stageCount} 阶段` : "",
+    judged > 0 ? `${judged} 人通过判定` : "",
+    wb.total > 0 ? `${wb.total} 人交付` : "",
+  ].filter(Boolean).join(" · ");
+  audit.append(el("span", "", "查看完整运行记录"), el("small", "", auditMeta || "执行观测 ↗"));
+  audit.addEventListener("click", openExecutionConsole);
+  panel.append(audit);
+  return panel;
+}
+
+function compareText(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function compareCandidateName(entry) {
+  return compareText(entry?.item?.name || entry?.item?.docId) || "该候选人";
+}
+
+function describeCompareHard(hard, index) {
+  const field = compareText(hard?.field || hard?.text || hard?.label) || `condition-${index + 1}`;
+  return {
+    field,
+    label: compareText(hard?.fieldLabel || CONDITION_LABEL[hard?.field] || hard?.text || hard?.label || field) || "条件",
+    operator: compareText(hard?.operator) || "eq",
+    expected: formatWorkbenchValues(hard?.expectedValues ?? hard?.values ?? hard?.value),
+    actual: formatWorkbenchValues(
+      hard?.actualValues ?? hard?.matchedValues ?? hard?.values ?? hard?.value,
+    ),
+    matched: Boolean(hard?.matched),
+  };
+}
+
+function compareHardSignature(hard) {
+  return `${hard.field}|${hard.operator}|${hard.expected}`;
+}
+
+function compareAbilityKey(value) {
+  return compareText(value).toLocaleLowerCase("zh-CN");
+}
+
+function buildCompareCandidate(entry, index) {
+  const data = workbenchMatchData(entry.item);
+  const hardRows = [];
+  const hardMap = new Map();
+  data.hardMatches.forEach((hard, hardIndex) => {
+    const row = describeCompareHard(hard, hardIndex);
+    const baseKey = compareHardSignature(row);
+    let key = baseKey;
+    let duplicate = 2;
+    while (hardMap.has(key)) {
+      key = `${baseKey}#${duplicate}`;
+      duplicate += 1;
+    }
+    hardMap.set(key, { ...row, key });
+    hardRows.push({ ...row, key });
+  });
+
+  const abilities = new Map();
+  data.matchedAbilities.forEach((ability) => {
+    abilities.set(compareAbilityKey(ability), { label: compareText(ability), state: "matched" });
+  });
+  data.missingAbilities.forEach((ability) => {
+    const key = compareAbilityKey(ability);
+    if (!abilities.has(key)) abilities.set(key, { label: compareText(ability), state: "missing" });
+  });
+
+  const score = Number(entry.item?.score);
+  const evidenceLines = workbenchEvidenceLines(entry.item);
+  return {
+    entry,
+    index,
+    item: entry.item,
+    name: compareCandidateName(entry),
+    data,
+    hardRows,
+    hardMap,
+    abilities,
+    score: Number.isFinite(score) ? score : null,
+    evidenceLines,
+    evidenceKey: evidenceLines.map(compareText).join(" | "),
+    pathKey: data.pathRationale.map(compareText).join(" | "),
+  };
+}
+
+function compareCandidateMetrics(candidate) {
+  const hardTotal = candidate.data.hardMatches.length;
+  return {
+    hardTotal,
+    hardPassed: candidate.data.hardPassed,
+    hardRate: hardTotal ? candidate.data.hardPassed / hardTotal : null,
+    matched: candidate.data.matchedAbilities.length,
+    missing: candidate.data.missingAbilities.length,
+    score: candidate.score,
+  };
+}
+
+function compareCoreEqual(left, right, hardAligned = true) {
+  const hardEqual = !hardAligned || (
+    left.metrics.hardRate === right.metrics.hardRate &&
+    left.metrics.hardPassed === right.metrics.hardPassed
+  );
+  return (
+    hardEqual &&
+    left.metrics.matched === right.metrics.matched &&
+    left.metrics.missing === right.metrics.missing
+  );
+}
+
+function compareCandidatesByEvidence(left, right, hardAligned = true) {
+  if (hardAligned) {
+    const leftRate = left.metrics.hardRate ?? -1;
+    const rightRate = right.metrics.hardRate ?? -1;
+    if (leftRate !== rightRate) return rightRate - leftRate;
+    if (left.metrics.hardPassed !== right.metrics.hardPassed) {
+      return right.metrics.hardPassed - left.metrics.hardPassed;
+    }
+  }
+  if (left.metrics.matched !== right.metrics.matched) {
+    return right.metrics.matched - left.metrics.matched;
+  }
+  if (left.metrics.missing !== right.metrics.missing) {
+    return left.metrics.missing - right.metrics.missing;
+  }
+  const leftScore = left.metrics.score ?? -Infinity;
+  const rightScore = right.metrics.score ?? -Infinity;
+  if (leftScore !== rightScore) return rightScore - leftScore;
+  return left.index - right.index;
+}
+
+function compareLeaderReason(leader, candidates, hardAligned = true) {
+  const metrics = leader.metrics;
+  const others = candidates.filter((candidate) => candidate !== leader).map((candidate) => candidate.metrics);
+  if (hardAligned) {
+    if (
+      metrics.hardTotal > 0 &&
+      metrics.hardRate === 1 &&
+      others.every((other) => other.hardRate === null || other.hardRate < 1)
+    ) {
+      return `可核验硬条件全部满足（${metrics.hardPassed}/${metrics.hardTotal}）`;
+    }
+    if (
+      metrics.hardRate !== null &&
+      others.every((other) => (other.hardRate ?? -1) < metrics.hardRate)
+    ) {
+      return `硬条件通过数领先（${metrics.hardPassed}/${metrics.hardTotal}）`;
+    }
+  }
+  if (metrics.matched > 0 && others.every((other) => other.matched < metrics.matched)) {
+    return `能力命中最多（${metrics.matched} 项）`;
+  }
+  if (others.every((other) => other.missing > metrics.missing)) {
+    return `能力缺口更少（${metrics.missing} 项）`;
+  }
+  if (
+    metrics.score !== null &&
+    others.every((other) => other.score === null || other.score < metrics.score)
+  ) {
+    return `本轮相关度最高（${metrics.score.toFixed(2)}）`;
+  }
+  return "本轮证据相对更完整";
+}
+
+function selectCompareLeader(model) {
+  const ranked = [...model.candidates].sort(
+    (left, right) => compareCandidatesByEvidence(left, right, model.hardConditionsAligned),
+  );
+  const top = ranked[0];
+  const tied = ranked.filter((candidate) =>
+    compareCoreEqual(candidate, top, model.hardConditionsAligned));
+  if (tied.length === 1) {
+    return {
+      kind: "leader",
+      candidate: top,
+      reason: compareLeaderReason(top, model.candidates, model.hardConditionsAligned),
+    };
+  }
+
+  const scored = tied.filter((candidate) => candidate.metrics.score !== null);
+  if (scored.length) {
+    const topScore = Math.max(...scored.map((candidate) => candidate.metrics.score));
+    const scoreLeaders = scored.filter((candidate) => candidate.metrics.score === topScore);
+    if (scoreLeaders.length === 1) {
+      return {
+        kind: "leader",
+        candidate: scoreLeaders[0],
+        reason: `本轮相关度最高（${topScore.toFixed(2)}）`,
+      };
+    }
+  }
+
+  const hasEvidence = tied.some((candidate) => {
+    const metrics = candidate.metrics;
+    return metrics.hardTotal > 0 || metrics.matched > 0 || metrics.missing > 0;
+  });
+  return { kind: hasEvidence ? "tie" : "limited", candidates: tied };
+}
+
+function buildCompareModel(entries) {
+  const candidates = entries.map(buildCompareCandidate);
+  candidates.forEach((candidate) => {
+    candidate.metrics = compareCandidateMetrics(candidate);
+  });
+
+  const hardRows = [];
+  const seenHardRows = new Set();
+  for (const candidate of candidates) {
+    for (const row of candidate.hardRows) {
+      if (seenHardRows.has(row.key)) continue;
+      seenHardRows.add(row.key);
+      hardRows.push({
+        key: row.key,
+        label: row.label,
+        expected: row.expected,
+        cells: candidates.map((item) => item.hardMap.get(row.key) || null),
+      });
+    }
+  }
+  for (const row of hardRows) {
+    row.differs = new Set(
+      row.cells.map((cell) => (cell ? `${cell.matched ? "1" : "0"}|${cell.actual}|${cell.expected}` : "missing")),
+    ).size > 1;
+    row.allMatched = row.cells.every((cell) => cell?.matched === true);
+    row.allMissed = row.cells.every((cell) => cell?.matched === false);
+  }
+
+  const abilityRows = [];
+  const seenAbilities = new Set();
+  for (const candidate of candidates) {
+    for (const [key, ability] of candidate.abilities) {
+      if (seenAbilities.has(key)) continue;
+      seenAbilities.add(key);
+      abilityRows.push({
+        key,
+        label: ability.label,
+        cells: candidates.map((item) => item.abilities.get(key) || null),
+      });
+    }
+  }
+  for (const row of abilityRows) {
+    row.differs = new Set(row.cells.map((cell) => cell?.state || "unknown")).size > 1;
+    row.allMatched = row.cells.every((cell) => cell?.state === "matched");
+    row.allMissing = row.cells.every((cell) => cell?.state === "missing");
+  }
+
+  const model = {
+    candidates,
+    hardRows,
+    abilityRows,
+    differingHardRows: hardRows.filter((row) => row.differs),
+    differingAbilityRows: abilityRows.filter((row) => row.differs),
+    sharedAbilities: abilityRows.filter((row) => row.allMatched),
+    sharedGaps: abilityRows.filter((row) => row.allMissing),
+    hardCoverage: candidates.filter((candidate) => candidate.metrics.hardTotal > 0).length,
+    hardFullyPassed: candidates.filter((candidate) => {
+      const total = candidate.metrics.hardTotal;
+      return total > 0 && candidate.metrics.hardPassed === total;
+    }).length,
+    hardConditionsAligned: new Set(
+      candidates.map((candidate) => candidate.hardRows.map((row) => row.key).sort().join("|")),
+    ).size === 1,
+    evidenceDiffers: new Set(candidates.map((candidate) => candidate.evidenceKey)).size > 1,
+    pathDiffers: new Set(candidates.map((candidate) => candidate.pathKey)).size > 1,
+  };
+  model.differingCount = model.differingHardRows.length + model.differingAbilityRows.length;
+  model.leader = selectCompareLeader(model);
+  return model;
+}
+
+function compareCandidateEvidenceCopy(candidate) {
+  const metrics = candidate.metrics;
+  const parts = [];
+  if (metrics.hardTotal) parts.push(`硬条件 ${metrics.hardPassed}/${metrics.hardTotal}`);
+  if (metrics.matched || metrics.missing) parts.push(`能力命中 ${metrics.matched} 项`);
+  if (metrics.missing) parts.push(`缺口 ${metrics.missing} 项`);
+  if (candidate.score !== null) parts.push(`相关度 ${candidate.score.toFixed(2)}`);
+  return parts.join("，") || "本轮可比较的信号有限";
+}
+
+function renderCompareOverview(model) {
+  if (!compareOverview) return;
+  const verdict = el("article", "compare-verdict");
+  const leader = model.leader;
+  const titleLine = el("div", "compare-verdict-title");
+  let badge = "证据提示";
+  let title = "本轮对比摘要";
+  let copy = "对比内容全部来自本轮检索结果。";
+  let note = model.hardConditionsAligned
+    ? "建议只用于确定查看顺序，不替代面试与人工判断。"
+    : "候选人硬条件覆盖范围不同；建议只用于确定查看顺序，不替代面试与人工判断。";
+
+  if (leader.kind === "leader") {
+    verdict.classList.add("is-suggested");
+    badge = "优先查看";
+    title = `建议优先查看 ${leader.candidate.name}`;
+    copy = `${leader.reason}；${compareCandidateEvidenceCopy(leader.candidate)}。`;
+  } else if (leader.kind === "tie") {
+    verdict.classList.add("is-tie");
+    badge = "证据接近";
+    const names = leader.candidates.map((candidate) => candidate.name).join("、");
+    title = `${names} 证据接近`;
+    copy = "本轮硬条件与能力覆盖没有拉开明显差距，建议结合履历与面试判断。";
+  } else {
+    verdict.classList.add("is-limited");
+    badge = "人工判断";
+    title = "本轮证据不足以形成优先建议";
+    copy = "缺少可对齐的硬条件或能力判定，相关度只能作为查看顺序的参考。";
+  }
+
+  titleLine.append(el("span", "compare-verdict-badge", badge), el("h3", "", title));
+  verdict.append(
+    el("span", "compare-verdict-kicker", "证据提示"),
+    titleLine,
+    el("p", "compare-verdict-copy", copy),
+    el("small", "compare-verdict-note", note),
+  );
+
+  const snapshot = el("div", "compare-snapshot");
+  const addSnapshot = (label, value, detail, tone = "") => {
+    const item = el("div", `compare-snapshot-item ${tone}`.trim());
+    item.append(
+      el("span", "compare-snapshot-label", label),
+      el("strong", "", value),
+      el("small", "", detail),
+    );
+    snapshot.append(item);
+  };
+  addSnapshot(
+    "关键差异",
+    `${model.differingCount} 项`,
+    `硬条件 ${model.differingHardRows.length} · 能力 ${model.differingAbilityRows.length}`,
+  );
+  addSnapshot(
+    "共同能力",
+    `${model.sharedAbilities.length} 项`,
+    model.sharedGaps.length ? `共同缺口 ${model.sharedGaps.length} 项` : "未发现共同缺口",
+    model.sharedAbilities.length ? "is-good" : "",
+  );
+  addSnapshot(
+    "各自硬条件",
+    model.hardCoverage ? `${model.hardFullyPassed}/${model.hardCoverage}` : "—",
+    model.hardRows.length
+      ? model.hardCoverage < model.candidates.length
+        ? `${model.candidates.length - model.hardCoverage} 人缺少硬条件证据`
+        : "按各自可核验条件统计"
+      : "本轮没有可核验硬条件",
+    model.hardFullyPassed ? "is-good" : "is-warning",
+  );
+  compareOverview.replaceChildren(verdict, snapshot);
+}
+
+function renderCompareMatrix(model) {
+  if (!compareMatrix) return;
+  const hardRows = compareViewMode === COMPARE_VIEW_ALL ? model.hardRows : model.differingHardRows;
+  const abilityRows = compareViewMode === COMPARE_VIEW_ALL ? model.abilityRows : model.differingAbilityRows;
+  const rowCount = hardRows.length + abilityRows.length;
+
+  const header = el("div", "compare-section-head");
+  const heading = el("div");
+  heading.append(
+    el("span", "compare-section-kicker", "关键条件"),
+    el("h3", "", "条件矩阵"),
+  );
+  header.append(
+    heading,
+    el(
+      "span",
+      "compare-matrix-count",
+      compareViewMode === COMPARE_VIEW_ALL ? `全部 ${rowCount} 项` : `${rowCount} 项差异`,
+    ),
+  );
+
+  if (!rowCount) {
+    const hasComparisonRows = model.hardRows.length + model.abilityRows.length > 0;
+    const empty = el("div", "compare-matrix-empty");
+    empty.append(
+      el("strong", "", hasComparisonRows ? "本轮已核验条件一致" : "本轮没有可对比的条件证据"),
+      el(
+        "p",
+        "",
+        hasComparisonRows
+          ? "切换到「全部信息」可以查看共同硬条件与能力证据。"
+          : "候选人结果中没有返回可核验的硬条件或能力判定。",
+      ),
+    );
+    compareMatrix.replaceChildren(header, empty);
+    compareMatrix.hidden = false;
+    return;
+  }
+
+  const scroll = el("div", "compare-matrix-scroll");
+  const table = el("table", "compare-matrix-table");
+  table.append(el("caption", "sr-only", "候选人的关键条件与能力覆盖矩阵"));
+  const thead = el("thead");
+  const headRow = el("tr");
+  const corner = el("th", "", "对比项");
+  corner.setAttribute("scope", "col");
+  headRow.append(corner);
+  for (const candidate of model.candidates) {
+    const candidateHead = el("th");
+    candidateHead.setAttribute("scope", "col");
+    const scoreText = formatWorkbenchScore(candidate.item);
+    candidateHead.append(el("span", "", candidate.name));
+    if (scoreText) candidateHead.append(el("small", "", `相关度 ${scoreText}`));
+    headRow.append(candidateHead);
+  }
+  thead.append(headRow);
+  table.append(thead);
+
+  const tbody = el("tbody");
+  const appendGroup = (label, count) => {
+    const row = el("tr", "compare-matrix-group");
+    const cell = el("th");
+    cell.setAttribute("scope", "rowgroup");
+    cell.colSpan = model.candidates.length + 1;
+    cell.append(el("span", "", label), el("small", "", `${count} 项`));
+    row.append(cell);
+    tbody.append(row);
+  };
+
+  if (hardRows.length) {
+    appendGroup("硬条件", hardRows.length);
+    for (const row of hardRows) {
+      const tableRow = el("tr", `compare-matrix-row ${row.differs ? "is-different" : ""}`.trim());
+      const label = el("th", "compare-matrix-label");
+      label.setAttribute("scope", "row");
+      label.append(el("span", "compare-row-title", row.label));
+      if (row.expected && row.expected !== "—") {
+        label.append(el("small", "compare-row-detail", `要求 ${row.expected}`));
+      }
+      if (row.differs) label.append(el("span", "compare-diff-mark", "差异"));
+      tableRow.append(label);
+      for (const cell of row.cells) {
+        const value = el("td", "compare-matrix-cell");
+        if (!cell) {
+          value.append(el("span", "compare-status is-na", "未核验"));
+        } else {
+          const actual = cell.actual && cell.actual !== "—"
+            ? cell.actual
+            : cell.matched ? "已满足" : "未满足";
+          value.append(
+            el(
+              "span",
+              `compare-status ${cell.matched ? "is-met" : "is-miss"}`.trim(),
+              `${cell.matched ? "✓" : "×"} ${actual}`,
+            ),
+          );
+        }
+        tableRow.append(value);
+      }
+      tbody.append(tableRow);
+    }
+  }
+
+  if (abilityRows.length) {
+    appendGroup("能力覆盖", abilityRows.length);
+    for (const row of abilityRows) {
+      const tableRow = el("tr", `compare-matrix-row ${row.differs ? "is-different" : ""}`.trim());
+      const label = el("th", "compare-matrix-label");
+      label.setAttribute("scope", "row");
+      label.append(el("span", "compare-row-title", row.label));
+      if (row.differs) label.append(el("span", "compare-diff-mark", "差异"));
+      tableRow.append(label);
+      for (const cell of row.cells) {
+        const value = el("td", "compare-matrix-cell");
+        if (!cell) {
+          value.append(el("span", "compare-status is-na", "· 未提及"));
+        } else if (cell.state === "matched") {
+          value.append(el("span", "compare-status is-met", "✓ 命中"));
+        } else if (cell.state === "missing") {
+          value.append(el("span", "compare-status is-miss", "× 缺口"));
+        } else {
+          value.append(el("span", "compare-status is-na", "· 未提及"));
+        }
+        tableRow.append(value);
+      }
+      tbody.append(tableRow);
+    }
+  }
+
+  table.append(tbody);
+  scroll.append(table);
+  const nodes = [header];
+  if (!model.hardConditionsAligned) {
+    nodes.push(
+      el(
+        "p",
+        "compare-matrix-note",
+        "候选人可核验的硬条件范围不同；“未核验”表示本轮没有该项证据，不代表未满足。",
+      ),
+    );
+  }
+  nodes.push(scroll);
+  compareMatrix.replaceChildren(...nodes);
+  compareMatrix.hidden = false;
+}
+
+function compareSectionHeading(title, count = 0) {
+  const heading = el("h4");
+  heading.append(document.createTextNode(title));
+  if (count > 0) heading.append(el("span", "aw-compare-section-count", `${count} 项不同`));
+  return heading;
+}
+
+function renderCompareCandidate(candidate, model) {
+  const data = candidate.data;
+  const scoreText = formatWorkbenchScore(candidate.item);
+  const isLeader = model.leader.kind === "leader" && model.leader.candidate === candidate;
+  const card = el("article", `aw-compare-person ${isLeader ? "is-suggested" : ""}`.trim());
+  card.dataset.candidateKey = candidate.entry.key;
+  const head = el("div", "aw-compare-person-head");
+  const avatar = el("span", "aw-avatar", workbenchCandidateInitial(candidate.item));
+  avatar.setAttribute("aria-hidden", "true");
+  const identity = el("div", "aw-compare-identity");
+  identity.append(
+    el("h3", "", candidate.name),
+    el("p", "", workbenchMetaText(candidate.item)),
+  );
+  if (scoreText) identity.append(el("span", "aw-compare-score", `相关度 ${scoreText}`));
+  head.append(avatar, identity);
+  if (isLeader) {
+    const badge = el("span", "aw-compare-leader-badge", "优先查看");
+    badge.title = "按本轮硬条件与能力证据推荐的查看顺序";
+    head.append(badge);
+  }
+  card.append(head);
+
+  const stats = el("div", "aw-compare-stats");
+  const addStat = (value, label, tone = "") => {
+    const item = el("span", `aw-compare-stat ${tone}`.trim());
+    item.append(el("strong", "", value), el("small", "", label));
+    stats.append(item);
+  };
+  if (data.hardMatches.length) {
+    addStat(
+      `${data.hardPassed}/${data.hardMatches.length}`,
+      "硬条件",
+      data.hardPassed === data.hardMatches.length ? "is-good" : "is-warning",
+    );
+  }
+  if (data.abilityTotal) addStat(`${data.matchedAbilities.length}/${data.abilityTotal}`, "能力覆盖");
+  if (data.missingAbilities.length) addStat(`${data.missingAbilities.length}`, "能力缺口", "is-warning");
+  if (stats.childElementCount) card.append(stats);
+
+  const visibleHardRows = model.hardRows.filter(
+    (row) => compareViewMode === COMPARE_VIEW_ALL || row.differs,
+  );
+  const hardSection = el("section", "aw-compare-section");
+  const hiddenHardCount = Math.max(0, data.hardMatches.length - visibleHardRows.length);
+  if (visibleHardRows.length) {
+    hardSection.classList.add("is-different");
+    hardSection.append(compareSectionHeading("硬条件", model.differingHardRows.length));
+    const list = el("ul", "aw-compare-list");
+    for (const row of visibleHardRows) {
+      const cell = candidate.hardMap.get(row.key);
+      const actual = cell?.actual && cell.actual !== "—"
+        ? cell.actual
+        : cell ? cell.matched ? "已满足" : "未满足" : "未核验";
+      const tone = cell ? cell.matched ? "is-met" : "is-miss" : "is-na";
+      const status = cell ? `${actual} · ${cell.matched ? "满足" : "未满足"}` : "本轮未核验";
+      const item = el("li", "aw-compare-hard-row");
+      item.append(
+        el("span", "aw-compare-hard-label", row.label),
+        el(
+          "span",
+          `aw-compare-hard-value ${tone}`.trim(),
+          status,
+        ),
+      );
+      list.append(item);
+    }
+    hardSection.append(list);
+  } else {
+    hardSection.append(el("h4", "", "硬条件"));
+    hardSection.append(
+      el(
+        "p",
+        "aw-compare-empty",
+        data.hardMatches.length
+          ? hiddenHardCount
+            ? `本轮硬条件组合与其他候选人一致，${hiddenHardCount} 项已收起。`
+            : "本轮硬条件组合与其他候选人一致。"
+          : "本轮没有可核验的硬条件。",
+      ),
+    );
+  }
+  if (visibleHardRows.length && compareViewMode === COMPARE_VIEW_DIFF && hiddenHardCount) {
+    hardSection.append(el("p", "aw-compare-common-note", `另有 ${hiddenHardCount} 项硬条件一致，已收起。`));
+  }
+  card.append(hardSection);
+
+  const visibleAbilityRows = model.abilityRows.filter(
+    (row) => compareViewMode === COMPARE_VIEW_ALL || row.differs,
+  );
+  const hiddenAbilityCount = model.abilityRows.filter(
+    (row) => !visibleAbilityRows.includes(row) && candidate.abilities.has(row.key),
+  ).length;
+  const abilitySection = el("section", "aw-compare-section");
+  const matchedAbilities = [];
+  const missingAbilities = [];
+  const unknownAbilities = [];
+  for (const row of visibleAbilityRows) {
+    const state = candidate.abilities.get(row.key)?.state;
+    if (state === "matched") matchedAbilities.push(row.label);
+    else if (state === "missing") missingAbilities.push(row.label);
+    else unknownAbilities.push(row.label);
+  }
+  const appendAbilityGroup = (label, abilities, tone) => {
+    if (!abilities.length) return;
+    const group = el("div", `aw-compare-ability-group ${tone}`.trim());
+    const tags = el("div", "aw-compare-tags");
+    for (const ability of abilities) tags.append(el("span", "aw-compare-tag", ability));
+    group.append(el("span", "aw-compare-ability-label", label), tags);
+    abilitySection.append(group);
+  };
+  if (matchedAbilities.length || missingAbilities.length || unknownAbilities.length) {
+    abilitySection.classList.add("is-different");
+    abilitySection.append(compareSectionHeading("能力证据", model.differingAbilityRows.length));
+    appendAbilityGroup("命中", matchedAbilities, "is-match");
+    appendAbilityGroup("缺口", missingAbilities, "is-missing");
+    appendAbilityGroup("未提及", unknownAbilities, "is-neutral");
+  } else {
+    abilitySection.append(el("h4", "", "能力证据"));
+    abilitySection.append(
+      el(
+        "p",
+        "aw-compare-empty",
+        data.abilityTotal
+          ? hiddenAbilityCount
+            ? `能力命中与缺口组合与其他候选人一致，${hiddenAbilityCount} 项共同能力已收起。`
+            : "能力命中与缺口组合与其他候选人一致。"
+          : "本轮没有能力判定明细。",
+      ),
+    );
+  }
+  if (
+    visibleAbilityRows.length &&
+    compareViewMode === COMPARE_VIEW_DIFF &&
+    hiddenAbilityCount
+  ) {
+    abilitySection.append(el("p", "aw-compare-common-note", `另有 ${hiddenAbilityCount} 项共同能力信号已收起。`));
+  }
+  card.append(abilitySection);
+
+  if (compareViewMode === COMPARE_VIEW_ALL || model.evidenceDiffers) {
+    const evidenceSection = el("section", "aw-compare-section");
+    evidenceSection.append(el("h4", "", "履历摘要"));
+    const evidenceList = renderWorkbenchEvidence(candidate.item);
+    evidenceList.classList.add("aw-compare-evidence");
+    evidenceSection.append(evidenceList);
+    card.append(evidenceSection);
+  }
+
+  if (compareViewMode === COMPARE_VIEW_ALL || model.pathDiffers) {
+    const pathSection = el("section", "aw-compare-section");
+    pathSection.append(el("h4", "", "来源路径"));
+    if (data.pathRationale.length) {
+      const list = el("ul", "aw-compare-list");
+      for (const rationale of data.pathRationale) list.append(el("li", "", rationale));
+      pathSection.append(list);
+    } else {
+      pathSection.append(el("p", "aw-compare-empty", "本轮没有路径说明。"));
+    }
+    card.append(pathSection);
+  }
+  return card;
+}
+
+function renderCompareCards(model) {
+  if (!compareGrid) return;
+  compareGrid.classList.toggle("is-all", compareViewMode === COMPARE_VIEW_ALL);
+  compareGrid.replaceChildren(
+    ...model.candidates.map((candidate) => renderCompareCandidate(candidate, model)),
+  );
+  compareGrid.style.setProperty("--compare-count", String(model.candidates.length));
+}
+
+function syncCompareViewButtons() {
+  for (const button of compareViewButtons) {
+    const active = button.dataset.compareView === compareViewMode;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+}
+
+function updateCompareCopy(model) {
+  if (!compareCopy) return;
+  if (compareViewMode === COMPARE_VIEW_DIFF) {
+    compareCopy.textContent = model.differingCount
+      ? `已选择 ${model.candidates.length} 位候选人，正在聚焦 ${model.differingCount} 项差异，一致项已收起。`
+      : `已选择 ${model.candidates.length} 位候选人，本轮已核验条件一致，当前展示全部信息。`;
+    return;
+  }
+  compareCopy.textContent = `已选择 ${model.candidates.length} 位候选人，展示全部硬条件、能力证据与履历信息。`;
+}
+
+function renderCompareContent(model = compareModel) {
+  if (!model) return;
+  syncCompareViewButtons();
+  renderCompareOverview(model);
+  renderCompareMatrix(model);
+  renderCompareCards(model);
+  updateCompareCopy(model);
+}
+
+function setCompareView(view) {
+  if (view !== COMPARE_VIEW_DIFF && view !== COMPARE_VIEW_ALL) return;
+  compareViewMode = view;
+  renderCompareContent();
+}
+
+let compareDialogTrigger = null;
+let compareModel = null;
+let compareViewMode = COMPARE_VIEW_DIFF;
+
+function openWorkbenchComparison(wb) {
+  hideCandidateTooltip();
+  const entries = [...wb.compare.values()];
+  if (entries.length < 2 || !compareDialog || !compareGrid) return;
+  compareModel = buildCompareModel(entries);
+  compareViewMode = compareModel.differingCount ? COMPARE_VIEW_DIFF : COMPARE_VIEW_ALL;
+  renderCompareContent(compareModel);
+  compareDialogTrigger = wb.compareButton || null;
+  if (typeof compareDialog.showModal === "function") compareDialog.showModal();
+  else compareDialog.setAttribute("open", "");
+  announceAgentStatus(
+    `已打开 ${entries.length} 位候选人的对比视图，识别到 ${compareModel.differingCount} 项关键差异。`,
+  );
+}
+
+function setWorkbenchFeedback(wb, text, { warning = false } = {}) {
+  if (!wb.feedback) return;
+  wb.feedback.textContent = text;
+  wb.feedback.classList.toggle("is-warning", warning);
+  wb.feedback.classList.toggle("is-visible", Boolean(text));
+}
+
+function renderWorkbenchList(wb) {
+  hideCandidateTooltip();
+  const entries = wb.filter === "shortlisted"
+    ? [...wb.shortlisted.values()]
+    : wb.pageEntries;
+  wb.list.replaceChildren();
+  if (entries.length) {
+    wb.list.append(...entries.map((entry) => renderWorkbenchCandidate(wb, entry)));
+    wb.empty.hidden = true;
+  } else {
+    wb.empty.hidden = false;
+    if (wb.filter === "shortlisted") {
+      wb.emptyStrong.textContent = "还没有加入入围的候选人";
+      wb.emptyCopy.textContent = "在候选人行点击「加入入围」，即可在这里集中查看。";
+    } else {
+      wb.emptyStrong.textContent = "本页没有候选人";
+      wb.emptyCopy.textContent = "可以补充或放宽检索条件后重新运行。";
+    }
+  }
+  wb.countBadge.textContent = String(
+    wb.filter === "shortlisted" ? wb.shortlisted.size : wb.total,
+  );
+}
+
+function syncWorkbenchPager(wb) {
+  if (!wb.pager) return;
+  if (wb.filter !== "all" || !wb.page) {
+    wb.pager.hidden = true;
+    return;
+  }
+  const totalPages = Math.max(1, Number(wb.page.totalPages || 1));
+  const currentPage = Math.max(1, Number(wb.page.currentPage || 1));
+  const total = Math.max(0, Number(wb.page.total || wb.total || 0));
+  wb.pager.hidden = totalPages <= 1;
+  if (totalPages <= 1) return;
+  wb.pageState.textContent = `第 ${currentPage} / ${totalPages} 页 · 共 ${total} 人`;
+  wb.prev.disabled = state.pageLoading || currentPage <= 1;
+  wb.next.disabled = state.pageLoading || !wb.page.hasMore;
+}
+
+function updateWorkbenchChrome(wb) {
+  wb.allTab.textContent = `全部 ${wb.total}`;
+  wb.shortlistTab.textContent = `已入围 ${wb.shortlisted.size}`;
+  wb.allTab.classList.toggle("is-active", wb.filter === "all");
+  wb.shortlistTab.classList.toggle("is-active", wb.filter === "shortlisted");
+  wb.allTab.setAttribute("aria-pressed", String(wb.filter === "all"));
+  wb.shortlistTab.setAttribute("aria-pressed", String(wb.filter === "shortlisted"));
+  wb.countBadge.textContent = String(
+    wb.filter === "shortlisted" ? wb.shortlisted.size : wb.total,
+  );
+  wb.compareCount.textContent = String(wb.compare.size);
+  wb.compareLabel.textContent = wb.compare.size >= 2 ? "开始比较 " : "比较 ";
+  wb.compareButton.disabled = wb.compare.size < 2;
+  wb.compareButton.classList.toggle("is-ready", wb.compare.size >= 2);
+  wb.compareButton.setAttribute(
+    "aria-label",
+    wb.compare.size >= 2
+      ? `开始比较已选择的 ${wb.compare.size} 位候选人`
+      : "选择至少 2 位候选人后开始比较",
+  );
+  wb.compareButton.title = wb.compare.size >= 2
+    ? "打开候选人对比"
+    : "选择 2–4 位候选人后查看对比";
+  syncWorkbenchPager(wb);
+}
+
+function setWorkbenchFilter(wb, filter) {
+  if (filter !== "all" && filter !== "shortlisted") return;
+  wb.filter = filter;
+  renderWorkbenchList(wb);
+  updateWorkbenchChrome(wb);
+}
+
+function toggleWorkbenchShortlist(wb, entry) {
+  const name = entry.item?.name || entry.item?.docId || "该候选人";
+  if (wb.shortlisted.has(entry.key)) {
+    wb.shortlisted.delete(entry.key);
+    setWorkbenchFeedback(wb, `已将 ${name} 移出本轮入围。`);
+    announceAgentStatus(`已将 ${name} 移出本轮入围。`);
+  } else {
+    wb.shortlisted.set(entry.key, entry);
+    setWorkbenchFeedback(wb, `已将 ${name} 加入入围，共 ${wb.shortlisted.size} 人。`);
+    announceAgentStatus(`已将 ${name} 加入入围。`);
+  }
+  renderWorkbenchList(wb);
+  updateWorkbenchChrome(wb);
+}
+
+function toggleWorkbenchCompare(wb, entry) {
+  const name = entry.item?.name || entry.item?.docId || "该候选人";
+  if (wb.compare.has(entry.key)) {
+    wb.compare.delete(entry.key);
+    const remaining = wb.compare.size;
+    setWorkbenchFeedback(
+      wb,
+      remaining > 0
+        ? `已将 ${name} 移出比较，当前还剩 ${remaining} 人。`
+        : `已将 ${name} 移出比较。`,
+    );
+    renderWorkbenchList(wb);
+    updateWorkbenchChrome(wb);
+    announceAgentStatus(`当前已选择 ${remaining} 位候选人用于对比。`);
+    return;
+  } else if (wb.compare.size >= COMPARE_LIMIT) {
+    setWorkbenchFeedback(wb, `最多选择 ${COMPARE_LIMIT} 位候选人进行对比。`, { warning: true });
+    return;
+  }
+  wb.compare.set(entry.key, entry);
+  const count = wb.compare.size;
+  const shouldOpen = count === 2;
+  setWorkbenchFeedback(
+    wb,
+    shouldOpen
+      ? "已选择 2 人，正在打开对比。"
+      : count === 1
+        ? `已将 ${name} 加入比较，再选 1 位即可查看对比。`
+        : `已选择 ${count} 人，点击「开始比较」查看。`,
+  );
+  renderWorkbenchList(wb);
+  updateWorkbenchChrome(wb);
+  announceAgentStatus(`当前已选择 ${count} 位候选人用于对比。`);
+  if (shouldOpen) {
+    window.requestAnimationFrame(() => openWorkbenchComparison(wb));
+  }
+}
+
+function renderWorkbenchCandidate(wb, entry) {
+  const item = entry.item;
+  const data = workbenchMatchData(item);
+  const key = entry.key;
+  const shortlisted = wb.shortlisted.has(key);
+  const compared = wb.compare.has(key);
+  const candidateName = item?.name || item?.docId || "该候选人";
+  const node = el("li", "aw-candidate");
+  node.dataset.candidateKey = key;
+  node.classList.toggle("is-shortlisted", shortlisted);
+  node.classList.toggle("is-compared", compared);
+
+  const top = el("div", "aw-candidate-top");
+  const avatar = el("span", "aw-avatar", workbenchCandidateInitial(item));
+  avatar.setAttribute("aria-hidden", "true");
+  const person = el("div", "aw-person");
+  const nameLine = el("div", "aw-name-line");
+  const name = el("h3", "", candidateName);
+  name.setAttribute("aria-label", `结果排序第 ${entry.rank} 位：${candidateName}`);
+  const status = workbenchStatusPill(item, data);
+  nameLine.append(name, el("span", `aw-match-pill ${status.tone}`.trim(), status.text));
+  const meta = el("p", "aw-person-meta", workbenchMetaText(item));
+  person.append(nameLine, meta);
+  top.append(avatar, person);
+  node.append(top, renderWorkbenchEvidence(item));
+
+  const foot = el("div", "aw-candidate-foot");
+  const stats = el("div", "aw-stats");
+  const addStat = (text, tone = "") => {
+    stats.append(el("span", `aw-stat ${tone}`.trim(), text));
+  };
+  const scoreText = formatWorkbenchScore(item);
+  if (scoreText) {
+    const scoreStat = el("span", "aw-stat is-score");
+    scoreStat.title = "相关度仅作同层参考，不表示通过率或匹配率。";
+    scoreStat.setAttribute(
+      "aria-label",
+      `相关度 ${scoreText}，仅作同层参考，不表示通过率或匹配率`,
+    );
+    scoreStat.append(el("span", "aw-score-label", "相关度"), el("b", "", scoreText));
+    stats.append(scoreStat);
+  }
+  if (data.hardMatches.length) {
+    addStat(
+      `硬条件 ${data.hardPassed}/${data.hardMatches.length}`,
+      data.hardPassed === data.hardMatches.length ? "is-good" : "is-warning",
+    );
+  }
+  if (data.abilityTotal) {
+    addStat(`能力 ${data.matchedAbilities.length}/${data.abilityTotal}`);
+  }
+  if (data.pathRationale.length) {
+    addStat(`路径证据 ${data.pathRationale.length}`);
+  }
+  if (!stats.childElementCount) addStat("已进入候选名单");
+
+  const actions = el("div", "aw-card-actions");
+  const compareLabel = compared
+    ? wb.compare.size >= 2 ? "已选比较" : "已选 · 还需 1 人"
+    : "比较";
+  const compareButton = el("button", "aw-card-action is-compare", compareLabel);
+  compareButton.type = "button";
+  compareButton.setAttribute("aria-pressed", String(compared));
+  compareButton.setAttribute(
+    "aria-label",
+    compared
+      ? `取消比较 ${candidateName}`
+      : wb.compare.size >= COMPARE_LIMIT
+        ? `最多选择 ${COMPARE_LIMIT} 位候选人`
+        : `选择 ${candidateName} 进行对比`,
+  );
+  compareButton.disabled = !compared && wb.compare.size >= COMPARE_LIMIT;
+  compareButton.title = compared
+    ? wb.compare.size >= 2 ? "从对比中移除" : "已加入比较，再选择 1 位候选人"
+    : wb.compare.size >= COMPARE_LIMIT
+      ? `最多选择 ${COMPARE_LIMIT} 位候选人`
+      : `选择 ${candidateName} 进行对比`;
+  compareButton.addEventListener("click", () => toggleWorkbenchCompare(wb, entry));
+
+  const docId = String(item?.docId || "");
+  let resumeLink = null;
+  if (docId) {
+    resumeLink = el("a", "aw-card-action is-resume", "查看档案");
+    resumeLink.href = candidateResumeUrl(item, entry.rank, entry.token);
+    resumeLink.target = "_blank";
+    resumeLink.rel = "noopener noreferrer";
+    resumeLink.title = `查看 ${candidateName} 的完整档案`;
+    resumeLink.setAttribute("aria-label", `查看 ${candidateName} 的完整档案（新标签页）`);
+    bindCandidateResumeLink(resumeLink, item, entry.rank, entry.token);
+  }
+
+  const shortlistButton = el(
+    "button",
+    `aw-card-action is-shortlist ${shortlisted ? "is-active" : ""}`.trim(),
+    shortlisted ? "已入围" : "加入入围",
+  );
+  shortlistButton.type = "button";
+  shortlistButton.setAttribute("aria-pressed", String(shortlisted));
+  shortlistButton.title = shortlisted ? "从本轮入围中移出" : "加入本轮入围";
+  shortlistButton.addEventListener("click", () => toggleWorkbenchShortlist(wb, entry));
+  actions.append(compareButton);
+  if (resumeLink) actions.append(resumeLink);
+  actions.append(shortlistButton);
+  foot.append(stats, actions);
+  node.append(foot);
+  attachCandidateTooltip(node, item, entry.rank, {
+    matchedAbilities: data.matchedAbilities,
+    missingAbilities: data.missingAbilities,
+    hardMatches: data.hardMatches,
+    pathRationale: data.pathRationale,
+  });
+  return node;
+}
+
+function renderAgentWorkbench(container, payload, run, options = {}) {
+  const items = Array.isArray(options.items) ? options.items : [];
+  const offset = Math.max(0, Number(options.offset || 0));
+  const token = options.token ?? payload.queryToken ?? state.queryToken ?? null;
+  const total = Math.max(
+    0,
+    Number(payload.page?.total ?? payload.total ?? items.length),
+  );
+  const sequence = ++state.workbenchSequence;
+  const wb = {
+    id: `agent-workbench-${sequence}`,
+    payload,
+    run,
+    token,
+    query: String(options.query || payload.query || "").trim(),
+    jobTitle: String(options.jobTitle || run?.jobTitle || "").trim(),
+    restored: Boolean(options.restored),
+    total,
+    filter: "all",
+    pageEntries: items.map((item, index) => workbenchCandidateEntry(item, offset + index + 1, token)),
+    page: payload.page ? { ...payload.page, total } : null,
+    shortlisted: new Map(),
+    compare: new Map(),
+  };
+  state.activeWorkbench = wb;
+
+  const overview = deliveryOverview(payload);
+  const root = el("section", "agent-workbench");
+  root.id = wb.id;
+  root.dataset.workbenchId = wb.id;
+  root.append(buildWorkbenchTaskHead(wb, payload, run, overview));
+
+  const grid = el("div", "aw-workspace-grid");
+  const candidatePanel = el("section", "aw-candidate-panel");
+  const toolbar = el("div", "aw-candidate-toolbar");
+  const candidateTitle = el("div", "aw-candidate-title");
+  const countBadge = el("span", "aw-count-badge", String(total));
+  candidateTitle.append(el("h2", "", "候选人"), countBadge);
+  const tabs = el("div", "aw-tabs");
+  tabs.setAttribute("role", "group");
+  tabs.setAttribute("aria-label", "候选人筛选");
+  const allTab = el("button", "aw-tab is-active", `全部 ${total}`);
+  allTab.type = "button";
+  allTab.setAttribute("aria-pressed", "true");
+  const shortlistTab = el("button", "aw-tab", "已入围 0");
+  shortlistTab.type = "button";
+  shortlistTab.setAttribute("aria-pressed", "false");
+  allTab.addEventListener("click", () => setWorkbenchFilter(wb, "all"));
+  shortlistTab.addEventListener("click", () => setWorkbenchFilter(wb, "shortlisted"));
+  tabs.append(allTab, shortlistTab);
+  const feedback = el("span", "aw-toolbar-feedback");
+  feedback.setAttribute("role", "status");
+  feedback.setAttribute("aria-live", "polite");
+  const toolbarActions = el("div", "aw-toolbar-actions");
+  const compareButton = el("button", "aw-compare-button");
+  compareButton.type = "button";
+  compareButton.disabled = true;
+  const compareCount = el("strong", "", "0");
+  const compareLabel = document.createTextNode("比较 ");
+  compareButton.append(compareLabel, compareCount);
+  compareButton.addEventListener("click", () => openWorkbenchComparison(wb));
+  toolbarActions.append(compareButton);
+  toolbar.append(candidateTitle, tabs, feedback, toolbarActions);
+
+  const candidateBody = el("div", "aw-candidate-body");
+  const list = el("ul", "aw-candidate-list");
+  const empty = el("div", "aw-candidate-empty");
+  empty.hidden = true;
+  const emptyStrong = el("strong");
+  const emptyCopy = el("span");
+  empty.append(emptyStrong, emptyCopy);
+  const pagerParts = createChatPager();
+  pagerParts.pagerNode.classList.add("aw-pager");
+  candidateBody.append(empty, list, pagerParts.pagerNode);
+  candidatePanel.append(toolbar, candidateBody);
+
+  Object.assign(wb, {
+    list,
+    empty,
+    emptyStrong,
+    emptyCopy,
+    countBadge,
+    allTab,
+    shortlistTab,
+    feedback,
+    compareButton,
+    compareLabel,
+    compareCount,
+    pager: pagerParts.pagerNode,
+    pageState: pagerParts.stateLabel,
+    prev: pagerParts.prev,
+    next: pagerParts.next,
+  });
+
+  grid.append(candidatePanel, buildWorkbenchRunPanel(wb, payload, run, overview));
+  root.append(grid);
+  container.append(root);
+  container.closest(".chat-result-message")?.classList.add("is-workbench");
+
+  renderWorkbenchList(wb);
+  updateWorkbenchChrome(wb);
+  setAgentResultMode(true);
+
+  if (run) {
+    run.resultList = list;
+    run.resultPager = pagerParts.pagerNode;
+    run.resultPrevBtn = pagerParts.prev;
+    run.resultNextBtn = pagerParts.next;
+    run.resultPageState = pagerParts.stateLabel;
+    if (payload.page) updateChatPager(payload.page);
+    else syncWorkbenchPager(wb);
+  }
+  return wb;
 }
 
 function appendChatDeliveryOverview(container, payload) {
@@ -1089,6 +2623,7 @@ function renderChatResult(payload) {
     message.body.append(note);
   }
 
+  let workbench = null;
   if (clarification) {
     const clarify = el("div", "chat-clarification");
     clarify.append(el("strong", "", "还需要补充一些信息"));
@@ -1097,6 +2632,14 @@ function renderChatResult(payload) {
     clarify.append(list);
     appendClarificationOptions(clarify, payload.clarification.options || []);
     message.body.append(clarify);
+  } else if (!cancelled && items.length) {
+    workbench = renderAgentWorkbench(message.body, payload, run, {
+      items,
+      offset: Number(payload.page?.offset || 0),
+      token: payload.queryToken || state.queryToken || null,
+      query: state.activeRun?.query || payload.query || "",
+      jobTitle: run.jobTitle || "",
+    });
   } else {
     if (!cancelled) {
       appendChatDeliveryOverview(message.body, payload);
@@ -1116,6 +2659,7 @@ function renderChatResult(payload) {
     if (!items.length) message.body.append(el("p", "chat-no-results", "本轮没有找到符合条件的候选人，可以补充或放宽条件后重试。"));
   }
   run.resultArticle = message.article;
+  if (workbench) run.article.hidden = true;
   if (!clarification && !cancelled) compactCompletedChatRun(run);
   scrollChatToNode(message.article);
 }
@@ -1162,7 +2706,9 @@ function resetChatView() {
   chatTranscript.replaceChildren();
   chatIntro.hidden = false;
   chatQueryInput.value = "";
+  setAgentResultMode(false);
   state.activeRun = null;
+  state.activeWorkbench = null;
   state.lastResult = null;
   state.runEvents = [];
   if (state.viewMode === "agent") chatScroll.scrollTop = 0;
@@ -1409,21 +2955,36 @@ function renderRestoredConversation(memory) {
   if (!turns.length) return;
   chatIntro.hidden = true;
 
-  for (const turn of turns) {
+  const lastTurnIndex = turns.length - 1;
+  for (let turnIndex = 0; turnIndex < turns.length; turnIndex += 1) {
+    const turn = turns[turnIndex];
     appendChatUserMessage(turn.query || "");
-    const message = createChatMessage("agent", "chat-result-message agent-delivery restored-conversation-message");
     const cancelled = turn.status === "cancelled";
     const clarification = Boolean(turn.clarification?.needClarification);
     const routed = turn.status === "reply";
+    const items = Array.isArray(turn.resultItems) ? turn.resultItems : [];
+    const useWorkbench =
+      turnIndex === lastTurnIndex &&
+      turn.status === "completed" &&
+      !cancelled &&
+      !clarification &&
+      !routed &&
+      items.length > 0;
+    const message = createChatMessage(
+      "agent",
+      `chat-result-message agent-delivery restored-conversation-message${useWorkbench ? " is-workbench" : ""}`,
+    );
     const tone = routed ? "complete" : cancelled ? "stopped" : clarification ? "clarify" : turn.status === "degraded" ? "degraded" : "complete";
     const label = routed
       ? INTENT_LABEL[turn.route] || "意图回复"
       : cancelled ? "已停止" : clarification ? "需补充" : turn.status === "degraded" ? "已降级" : "已完成";
     setChatStatus(message.status, label, tone);
-    message.body.append(
-      el("h3", "", routed ? "会话回复" : "历史检索结果"),
-      el("p", "chat-result-copy", turn.assistantSummary || "本轮对话已恢复。"),
-    );
+    if (!useWorkbench) {
+      message.body.append(
+        el("h3", "", routed ? "会话回复" : "历史检索结果"),
+        el("p", "chat-result-copy", turn.assistantSummary || "本轮对话已恢复。"),
+      );
+    }
 
     if (clarification) {
       const questions = (turn.clarification.questions || []).filter(Boolean);
@@ -1434,18 +2995,38 @@ function renderRestoredConversation(memory) {
       }
     }
 
-    const items = Array.isArray(turn.resultItems) ? turn.resultItems : [];
     if (items.length) {
-      appendScoreMethodNote(message.body);
-      const list = el("ul", "chat-candidates");
-      items.forEach((item, index) => {
-        const card = renderCandidate(item, index + 1, {
-          resumeToken: turn.queryToken || null,
+      if (useWorkbench) {
+        const workbenchPayload = {
+          query: turn.query || "",
+          total: Number(turn.resultCount || items.length),
+          topK: Number(turn.topK || 0),
+          items,
+          clarification: null,
+          queryToken: turn.queryToken || null,
+          page: null,
+          debug: {},
+        };
+        renderAgentWorkbench(message.body, workbenchPayload, null, {
+          items,
+          offset: 0,
+          token: turn.queryToken || null,
+          query: turn.query || "",
+          jobTitle: turn.jobProfileSummary?.title || "",
+          restored: true,
         });
-        card.classList.add("chat-candidate");
-        list.append(card);
-      });
-      message.body.append(list);
+      } else {
+        appendScoreMethodNote(message.body);
+        const list = el("ul", "chat-candidates");
+        items.forEach((item, index) => {
+          const card = renderCandidate(item, index + 1, {
+            resumeToken: turn.queryToken || null,
+          });
+          card.classList.add("chat-candidate");
+          list.append(card);
+        });
+        message.body.append(list);
+      }
     }
   }
 
@@ -2150,6 +3731,7 @@ document.addEventListener("keydown", (event) => {
 
 function buildCandidateTooltip(item, rank, explanation, groups, showRawMatchExplanation) {
   const { matchedAbilities, missingAbilities, hardMatches, pathRationale } = groups;
+  const scoreText = formatWorkbenchScore(item);
   const hasDetails = Boolean(
     item.summary ||
       matchedAbilities.length ||
@@ -2164,13 +3746,18 @@ function buildCandidateTooltip(item, rank, explanation, groups, showRawMatchExpl
   const head = el("div", "candidate-tooltip-head");
   const title = el("div", "candidate-tooltip-title");
   title.append(
-    el("span", "candidate-tooltip-kicker", `结果 ${formatCandidateRank(rank)} · 匹配依据`),
+    el(
+      "span",
+      "candidate-tooltip-kicker",
+      `结果 ${formatCandidateRank(rank)} · 匹配依据${scoreText ? ` · 相关度 ${scoreText}` : ""}`,
+    ),
     el("strong", "", item.name || item.docId || "候选人"),
   );
   head.append(title);
 
   const explain = el("div", "explain candidate-tooltip-explain");
   const description = ["匹配依据"];
+  if (scoreText) description.push(`相关度 ${scoreText}`);
   if (item.summary) {
     explain.append(el("p", "candidate-tooltip-summary", item.summary));
     description.push(item.summary);
@@ -2221,6 +3808,31 @@ function buildCandidateTooltip(item, rank, explanation, groups, showRawMatchExpl
 
   content.append(head, explain);
   return { content, description: description.join("。") };
+}
+
+function attachCandidateTooltip(
+  trigger,
+  item,
+  rank,
+  groups,
+  showRawMatchExplanation = false,
+) {
+  const tooltipDetail = buildCandidateTooltip(
+    item,
+    rank,
+    item?.matchExplanation || {},
+    groups,
+    showRawMatchExplanation,
+  );
+  if (!tooltipDetail) return null;
+  const description = el("span", "sr-only");
+  description.id = `candidate-evidence-${++candidateTooltipSequence}`;
+  description.textContent = tooltipDetail.description;
+  trigger.setAttribute("aria-describedby", description.id);
+  candidateTooltipContent.set(trigger, tooltipDetail.content);
+  trigger.append(description);
+  bindCandidateTooltip(trigger);
+  return tooltipDetail;
 }
 
 function renderCandidate(
@@ -2372,22 +3984,13 @@ function renderCandidate(
 
   li.append(top);
   if (evidence.childElementCount) li.append(evidence);
-  const tooltipDetail = buildCandidateTooltip(
+  attachCandidateTooltip(
+    li,
     item,
     rank,
-    explanation,
     { matchedAbilities, missingAbilities, hardMatches, pathRationale },
     showRawMatchExplanation,
   );
-  if (tooltipDetail) {
-    const description = el("span", "sr-only");
-    description.id = `candidate-evidence-${++candidateTooltipSequence}`;
-    description.textContent = tooltipDetail.description;
-    li.setAttribute("aria-describedby", description.id);
-    candidateTooltipContent.set(li, tooltipDetail.content);
-    li.append(description);
-    bindCandidateTooltip(li);
-  }
   return li;
 }
 
@@ -2694,6 +4297,7 @@ function renderAssistantReply(payload) {
 async function runSearch(query, topK) {
   if (state.running) return;
   resetUI();
+  setAgentResultMode(false);
   queryInput.value = query;
   chatQueryInput.value = query;
   topKInput.value = topK;
@@ -3122,6 +4726,19 @@ function bindEvents() {
 
   nextPageBtn.addEventListener("click", () => {
     if (state.pageHasMore) loadSessionPage(state.pageOffset + state.pageLimit);
+  });
+
+  compareCloseBtn?.addEventListener("click", () => compareDialog?.close());
+  compareViewButtons.forEach((button) => {
+    button.addEventListener("click", () => setCompareView(button.dataset.compareView));
+  });
+  compareDialog?.addEventListener("click", (event) => {
+    if (event.target === compareDialog) compareDialog.close();
+  });
+  compareDialog?.addEventListener("close", () => {
+    compareDialogTrigger?.focus?.();
+    compareDialogTrigger = null;
+    compareModel = null;
   });
 }
 
