@@ -1,0 +1,187 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='1600' height='1080' viewBox='0 0 1600 1080' role='img' aria-labelledby='title desc' lang='zh-CN'>
+<title id='title'>一次 Query 的主链路</title>
+<desc id='desc'>Search Agent Harness 一屏总览：从 Query 进入，经 Web Console、意图路由、受控 Agent、SearchTool、Hybrid V2 检索，最终交付候选人和证据。</desc>
+<defs>
+<style type='text/css'><![CDATA[
+text { font-family: Aptos, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+svg { fill: #e7f1ec; }
+.mono { font-family: 'Cascadia Mono', Consolas, monospace; }
+.kicker { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 9.8px; font-weight: 650; fill: #7bd4ad; letter-spacing: 1.5px; }
+.h1 { font-size: 40px; font-weight: 650; fill: #f4faf6; }
+.sub { font-size: 15px; fill: #9bb0a5; }
+.legend { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 7.2px; fill: #82998e; }
+.nNum { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 10px; font-weight: 650; fill: #7bd4ad; letter-spacing: .8px; }
+.nTitle { font-size: 17px; font-weight: 650; fill: #eff7f2; }
+.nSub { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 8.4px; fill: #93a99e; }
+.nMono { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 7.6px; fill: #71877c; }
+.sideTitle { font-size: 12.5px; font-weight: 650; fill: #e7f1ec; }
+.sideBody { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 7.9px; fill: #8fa69b; }
+.label { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 7.1px; font-weight: 650; fill: #7bd4ad; letter-spacing: .9px; }
+.center { text-anchor: middle; }
+.end { text-anchor: end; }
+.node { fill: #0b1d16; stroke: #355148; stroke-width: 1.2; }
+.nodeMain { fill: #0c2119; stroke: #47705f; stroke-width: 1.3; }
+.nodeLLM { fill: #151a16; stroke: #8b523d; stroke-width: 1.2; }
+.nodeTool { fill: #0c2019; stroke: #3d7a64; stroke-width: 1.2; }
+.nodeFinal { fill: #1b1b12; stroke: #8a783c; stroke-width: 1.2; }
+.side { fill: #091912; stroke: #294238; stroke-width: 1; }
+.lineMain { stroke: #729083; stroke-width: 1.4; fill: none; }
+.hairline { stroke: #223a31; stroke-width: 1; }
+.chip rect { fill: #0d211a; stroke: #355148; stroke-width: 1; }
+.chip text { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 7.4px; font-weight: 600; fill: #dce9e3; text-anchor: middle; }
+.chip.llm rect { fill: #1a1713; stroke: #8b523d; }
+.chip.llm text { fill: #ff9e79; }
+.chip.tool rect { fill: #0c211a; stroke: #3d7a64; }
+.chip.tool text { fill: #8ee0bd; }
+.chip.rule rect { fill: #0e1c22; stroke: #3b6379; }
+.chip.rule text { fill: #9bcae7; }
+.tag { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 6.7px; font-weight: 650; letter-spacing: .5px; }
+]]></style>
+<pattern id='dotGrid' width='24' height='24' patternUnits='userSpaceOnUse'><circle cx='1' cy='1' r='.9' fill='#203a30' opacity='.55'/></pattern>
+<marker id='arrow' viewBox='0 0 10 10' refX='8' refY='5' markerWidth='6.5' markerHeight='6.5' orient='auto-start-reverse'><path d='M 0 0 L 10 5 L 0 10 z' fill='#729083'/></marker>
+<marker id='arrowMint' viewBox='0 0 10 10' refX='8' refY='5' markerWidth='6.5' markerHeight='6.5' orient='auto-start-reverse'><path d='M 0 0 L 10 5 L 0 10 z' fill='#7bd4ad'/></marker>
+<marker id='arrowOrange' viewBox='0 0 10 10' refX='8' refY='5' markerWidth='6.5' markerHeight='6.5' orient='auto-start-reverse'><path d='M 0 0 L 10 5 L 0 10 z' fill='#ff8a5b'/></marker>
+</defs>
+<rect width='1600' height='1080' fill='#07140f'/>
+<rect width='1600' height='1080' fill='url(#dotGrid)'/>
+<rect x='64' y='42' width='30' height='4' rx='2' fill='#ff8a5b'/>
+<text x='64' y='69' class='kicker'>SEARCH AGENT HARNESS / QUERY FLOW · OVERVIEW</text>
+<text x='64' y='111' class='h1'>一次 Query 的主链路</text>
+<text x='64' y='140' class='sub'>从招聘需求，到可解释的候选人名单；只保留必须理解的七个节点</text>
+<text x='1132' y='70' class='label'>LEGEND</text>
+<line x1='1132' y1='87' x2='1168' y2='87' class='lineMain' marker-end='url(#arrow)'/>
+<text x='1178' y='90' class='legend'>主路径</text>
+<line x1='1244' y1='87' x2='1280' y2='87' stroke='#ff8a5b' stroke-width='1.2' stroke-dasharray='4 4' marker-end='url(#arrowOrange)'/>
+<text x='1290' y='90' class='legend'>分支 / 反馈</text>
+<circle cx='1392' cy='87' r='3.6' fill='#ff8a5b'/>
+<text x='1402' y='90' class='legend'>LLM</text>
+<circle cx='1450' cy='87' r='3.6' fill='#7bd4ad'/>
+<text x='1460' y='90' class='legend'>工具 / 证据</text>
+<line x1='64' y1='166' x2='1536' y2='166' class='hairline'/>
+
+<!-- main spine -->
+<circle cx='800' cy='194' r='3.6' fill='#7bd4ad'/>
+<text x='812' y='197' class='nMono'>START</text>
+<path d='M 800 200 V 216' class='lineMain' marker-end='url(#arrow)'/>
+<rect x='560' y='216' width='480' height='60' rx='4' class='nodeTool'/>
+<text x='580' y='240' class='nNum'>01</text>
+<text x='612' y='241' class='nTitle'>用户 Query</text>
+<text x='580' y='259' class='nSub'>自然语言：岗位 · 能力 · 年限 · 城市 · 偏好</text>
+<text x='1020' y='241' class='tag end' fill='#7bd4ad'>INPUT</text>
+<path d='M 800 276 V 294' class='lineMain' marker-end='url(#arrow)'/>
+<rect x='560' y='294' width='480' height='60' rx='4' class='nodeMain'/>
+<text x='580' y='318' class='nNum'>02</text>
+<text x='612' y='319' class='nTitle'>Web Console + FastAPI</text>
+<text x='580' y='337' class='nSub'>Agent 体验 · 执行观测 · 会话恢复 · REST + SSE</text>
+<text x='1020' y='319' class='tag end' fill='#86b9d8'>HTTP</text>
+<path d='M 800 354 V 372' class='lineMain' marker-end='url(#arrow)'/>
+<rect x='560' y='372' width='480' height='68' rx='4' class='nodeMain'/>
+<text x='580' y='396' class='nNum'>03</text>
+<text x='612' y='397' class='nTitle'>意图与入口路由</text>
+<text x='580' y='416' class='nSub'>IntentRouter → EntryRouter：先分流，再决定搜索方式</text>
+<text x='1020' y='397' class='tag end' fill='#9bcae7'>RULE</text>
+<path d='M 800 440 V 458' class='lineMain' marker-end='url(#arrow)'/>
+<rect x='560' y='458' width='480' height='104' rx='4' class='nodeLLM'/>
+<text x='580' y='482' class='nNum'>04</text>
+<text x='612' y='483' class='nTitle'>受控 Agent 编排</text>
+<text x='580' y='503' class='nSub'>3 / 5 / 8 自适应路径 · 预算 · 防重 · 降级 · 取消</text>
+<text x='580' y='524' class='nMono'>understand → plan → execute → judge → evaluate</text>
+<text x='580' y='540' class='nMono'>→ reflect → revise → finalize</text>
+<text x='1020' y='483' class='tag end' fill='#ff8a5b'>LLM + TOOL</text>
+<path d='M 800 562 V 580' class='lineMain' marker-end='url(#arrow)'/>
+<rect x='560' y='580' width='480' height='66' rx='4' class='nodeTool'/>
+<text x='580' y='604' class='nNum'>05</text>
+<text x='612' y='605' class='nTitle'>SearchTool</text>
+<text x='580' y='624' class='nSub'>search_with_intent()  ·  rerank_pool()</text>
+<text x='1020' y='605' class='tag end' fill='#7bd4ad'>PROTOCOL</text>
+<path d='M 800 646 V 664' class='lineMain' marker-end='url(#arrow)'/>
+<rect x='560' y='664' width='480' height='90' rx='4' class='nodeTool'/>
+<text x='580' y='688' class='nNum'>06</text>
+<text x='612' y='689' class='nTitle'>Hybrid V2 混合检索</text>
+<text x='580' y='709' class='nSub'>NL → IR · 硬过滤 · BM25 + kNN · RRF / rerank</text>
+<text x='580' y='727' class='nSub'>每个结果同时返回 hardMatches 与来源证据</text>
+<text x='1020' y='689' class='tag end' fill='#7bd4ad'>ES 8</text>
+<path d='M 800 754 V 772' class='lineMain' marker-end='url(#arrow)'/>
+<rect x='560' y='772' width='480' height='82' rx='4' class='nodeFinal'/>
+<text x='580' y='796' class='nNum'>07</text>
+<text x='612' y='797' class='nTitle'>候选人名单 + 证据</text>
+<text x='580' y='817' class='nSub'>score · hardMatches · sourceId · highlight · traceId</text>
+<text x='580' y='834' class='nSub'>下一步：入围 · 比较 · 查看档案 · 继续追问</text>
+<text x='1020' y='797' class='tag end' fill='#e6c66f'>OUTPUT</text>
+
+<!-- router branch -->
+<path d='M 1040 406 H 1100' stroke='#ff8a5b' stroke-width='1' stroke-dasharray='3 4' fill='none'/>
+<rect x='1100' y='356' width='400' height='146' rx='4' class='side'/>
+<text x='1120' y='382' class='sideTitle'>路由分支</text>
+<g class='chip rule' transform='translate(1120,396)'><rect width='44' height='20' rx='3'/><text x='22' y='14'>reply</text></g>
+<text x='1174' y='410' class='sideBody'>问好 / 帮助 / 越界 → 终止回复</text>
+<g class='chip tool' transform='translate(1120,422)'><rect width='92' height='20' rx='3'/><text x='46' y='14'>direct_search</text></g>
+<text x='1222' y='436' class='sideBody'>结构化条件明确 → 跳过 Agent 循环</text>
+<g class='chip llm' transform='translate(1120,448)'><rect width='50' height='20' rx='3'/><text x='25' y='14'>agent</text></g>
+<text x='1180' y='462' class='sideBody'>需要能力判断或多轮探索 → 进入 3 / 5 / 8</text>
+<text x='1120' y='488' class='nMono'>reply 路径不调用 LLM，也不访问 SearchTool。</text>
+
+<!-- agent loop -->
+<path d='M 500 510 H 560' stroke='#ff8a5b' stroke-width='1' stroke-dasharray='3 4' fill='none'/>
+<rect x='100' y='448' width='400' height='120' rx='4' class='side'/>
+<text x='120' y='474' class='sideTitle'>复杂需求的闭环</text>
+<text x='120' y='497' class='sideBody'>evaluate → reflect → revise → plan</text>
+<path d='M 372 503 C 372 518, 196 518, 196 503' stroke='#ff8a5b' stroke-width='1.1' stroke-dasharray='3 4' fill='none' marker-end='url(#arrowOrange)'/>
+<text x='282' y='528' class='nMono center'>下一轮 · 仅在预算内继续</text>
+<text x='120' y='548' class='sideBody'>达标或预算耗尽 → finalize；否则继续探索。</text>
+<text x='120' y='563' class='nMono'>light 5 阶段 · reflective 8 阶段</text>
+
+<!-- LLM gateway -->
+<path d='M 1040 520 H 1100' stroke='#ff8a5b' stroke-width='1' stroke-dasharray='3 4' fill='none'/>
+<rect x='1100' y='520' width='400' height='98' rx='4' class='side'/>
+<text x='1120' y='546' class='sideTitle'>LLM Gateway</text>
+<text x='1120' y='566' class='sideBody'>openai-compatible · primary → fallback</text>
+<g class='chip llm' transform='translate(1120,578)'><rect width='64' height='20' rx='3'/><text x='32' y='14'>understand</text></g>
+<g class='chip llm' transform='translate(1190,578)'><rect width='40' height='20' rx='3'/><text x='20' y='14'>plan</text></g>
+<g class='chip llm' transform='translate(1236,578)'><rect width='40' height='20' rx='3'/><text x='20' y='14'>judge</text></g>
+<g class='chip llm' transform='translate(1282,578)'><rect width='48' height='20' rx='3'/><text x='24' y='14'>reflect</text></g>
+<g class='chip llm' transform='translate(1336,578)'><rect width='54' height='20' rx='3'/><text x='27' y='14'>finalize</text></g>
+<text x='1120' y='610' class='nMono'>structured JSON · usage / latency accounted</text>
+
+<!-- fact boundary -->
+<path d='M 500 625 H 560' stroke='#7bd4ad' stroke-width='1' stroke-dasharray='3 4' fill='none'/>
+<rect x='100' y='578' width='400' height='94' rx='4' class='side'/>
+<text x='120' y='604' class='sideTitle'>事实边界</text>
+<text x='120' y='624' class='sideBody'>LLM 负责判断；候选事实来自 SearchTool。</text>
+<text x='120' y='642' class='sideBody'>hardMatches / 简历快照不由模型补写。</text>
+<text x='120' y='660' class='nMono'>换检索后端 = 换一个实现类</text>
+
+<!-- evidence -->
+<path d='M 1040 706 H 1100' stroke='#7bd4ad' stroke-width='1' stroke-dasharray='3 4' fill='none'/>
+<rect x='1100' y='660' width='400' height='110' rx='4' class='side'/>
+<text x='1120' y='686' class='sideTitle'>证据包随结果返回</text>
+<text x='1120' y='706' class='sideBody'>sourceType · sourceId · chunkId</text>
+<text x='1120' y='722' class='sideBody'>score · title · highlight · traceId</text>
+<g class='chip tool' transform='translate(1120,734)'><rect width='104' height='20' rx='3'/><text x='52' y='14'>hardMatches</text></g>
+<text x='1234' y='748' class='nMono'>每个结论都能回到原始字段</text>
+
+<!-- delivery actions -->
+<path d='M 500 812 H 560' stroke='#ff8a5b' stroke-width='1' stroke-dasharray='3 4' fill='none'/>
+<rect x='100' y='760' width='400' height='110' rx='4' class='side'/>
+<text x='120' y='786' class='sideTitle'>交付不是终点</text>
+<text x='120' y='806' class='sideBody'>入围 · 比较 · 查看档案 · 继续追问</text>
+<text x='120' y='824' class='sideBody'>会话内复用上下文；分页读取快照。</text>
+<text x='120' y='842' class='nMono'>查看与比较不触发重新检索</text>
+<!-- cross-cutting -->
+<path d='M 800 854 V 900' stroke='#729083' stroke-width='1.1' stroke-dasharray='4 5' fill='none' marker-end='url(#arrow)'/>
+<text x='812' y='879' class='nMono'>events / state</text>
+<rect x='64' y='900' width='1472' height='60' rx='4' class='side'/>
+<rect x='84' y='918' width='3' height='24' rx='1.5' fill='#ff8a5b'/>
+<text x='100' y='930' class='label'>CROSS-CUTTING</text>
+<text x='100' y='947' class='nMono'>运行上下文贯穿全链路</text>
+<text x='404' y='927' class='mono' font-size='9' font-weight='650' fill='#e7f1ec'>会话</text>
+<text x='404' y='945' class='nMono'>L1 / L2 / L3 · Redis 或进程内降级</text>
+<text x='684' y='927' class='mono' font-size='9' font-weight='650' fill='#e7f1ec'>观测</text>
+<text x='684' y='945' class='nMono'>SSE stage events · agentTrace · 指标</text>
+<text x='964' y='927' class='mono' font-size='9' font-weight='650' fill='#e7f1ec'>治理</text>
+<text x='964' y='945' class='nMono'>预算 · 签名防重 · 降级 · 取消</text>
+<text x='1244' y='927' class='mono' font-size='9' font-weight='650' fill='#e7f1ec'>评估</text>
+<text x='1244' y='945' class='nMono'>A/B · baseline · 置信区间</text>
+<text x='64' y='1002' class='mono' font-size='9.2' fill='#8fa69b'>搜索能力是底座，策略决策才是 Agent。每个判断都有证据，每次运行都能回放。</text>
+<text x='1536' y='1002' class='mono end' font-size='7.4' fill='#6f857a'>search-agent-harness · architecture overview</text>
+</svg>

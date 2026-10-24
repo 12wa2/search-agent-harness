@@ -53,13 +53,13 @@ Search Agent Harness adds a controlled policy loop on top of deterministic retri
 
 ## Architecture
 
-<a href="docs/architecture.en.svg"><img src="docs/architecture.en.svg" alt="Search Agent Harness end-to-end architecture" width="100%"></a>
+<a href="docs/query-flow.en.svg"><img src="docs/query-flow.en.svg" alt="Search Agent Harness query flow overview" width="100%"></a>
 
-Click the image for full resolution · see [detailed architecture](docs/ARCHITECTURE.md) for the state machine and budgets.
+Click the image for full resolution · query flow for the big picture; see [detailed architecture](docs/ARCHITECTURE.md) for the state machine, budgets, degradation, and finalize.
 
 A request enters FastAPI/SSE from the Web Console. `IntentRouter` first removes non-search requests, then `EntryRouter` chooses the direct path or the agent. The agent runs an adaptive 3 / 5 / 8-stage state machine while the engineering layer owns budgets, signature deduplication, degradation, cancellation, and trace. Retrieval crosses the two-method `SearchTool` contract into Hybrid V2, and `finalize` converges on an explainable shortlist.
 
-> Direct search skips agent orchestration stages, but the Hybrid V2 parser may still call a model; actual stages are reported by SSE events. See [Architecture](docs/ARCHITECTURE.md) for the state machine, budgets, and degradation matrix.
+> Direct search skips agent orchestration stages, but the Hybrid V2 parser may still call a model; actual stages are reported by SSE events. See [Architecture](docs/ARCHITECTURE.md) for the state machine, budgets, and degradation matrix, or the [implementation architecture](docs/architecture.en.svg) for system boundaries.
 
 ## Execution model
 

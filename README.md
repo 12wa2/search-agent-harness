@@ -53,13 +53,13 @@ Search Agent Harness 在确定性检索之上增加一层受控的策略循环�
 
 ## 架构总览
 
-<a href="docs/architecture.zh.svg"><img src="docs/architecture.zh.svg" alt="Search Agent Harness 端到端系统架构" width="100%"></a>
+<a href="docs/query-flow.zh.svg"><img src="docs/query-flow.zh.svg" alt="Search Agent Harness Query 主链路总览" width="100%"></a>
 
-点击图片查看原始尺寸 · 状态机和预算细节见 [详细架构设计](docs/ARCHITECTURE.md)。
+点击图片查看原始尺寸 · 查询主链路看全局；状态机、预算、降级和 finalize 见 [详细架构设计](docs/ARCHITECTURE.md)。
 
 一次请求从 Web Console 进入 FastAPI/SSE，先在 `IntentRouter` 过滤非搜索请求，再由 `EntryRouter` 选择直连或 Agent。Agent 侧由显式状态机驱动 3 / 5 / 8 阶段，工程层统一管理预算、签名防重、降级、取消和 Trace；检索通过 `SearchTool` 协议进入 Hybrid V2，最终由 `finalize` 收敛为可解释的候选人名单。
 
-> 直连路径不执行 Agent 编排阶段，但 Hybrid V2 parser 仍可能调用模型；实际执行阶段以 SSE 事件为准。状态机、预算和降级矩阵见 [架构设计](docs/ARCHITECTURE.md)。
+> 直连路径不执行 Agent 编排阶段，但 Hybrid V2 parser 仍可能调用模型；实际执行阶段以 SSE 事件为准。状态机、预算和降级矩阵见 [架构设计](docs/ARCHITECTURE.md)；实现级系统架构见 [architecture.zh.svg](docs/architecture.zh.svg)。
 
 ## 执行模型
 

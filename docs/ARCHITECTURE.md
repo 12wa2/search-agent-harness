@@ -5,9 +5,17 @@
 
 ## 0. 系统总览
 
+### 0.1 查询主链路
+
+![Search Agent Harness Query 主链路总览](query-flow.zh.svg)
+
+> 图源：`docs/query-flow.zh.svg`。README 首图展示同一张总览图；本图只保留从 Query 到候选人名单的 7 个核心节点，便于先看整体。
+
+### 0.2 实现架构
+
 ![Search Agent Harness 端到端系统架构](architecture.zh.svg)
 
-> 图源：`docs/architecture.zh.svg`。中英文图由 `node scripts/generate-architecture-svg.mjs` 从同一布局生成。README 展示同一张总览图；本文后续章节进一步拆解状态机、预算、降级、合并和 finalize。
+> 图源：`docs/architecture.zh.svg`。中英文图由 `node scripts/generate-architecture-svg.mjs` 从同一布局生成；本图保留实现级边界，后续章节进一步拆解状态机、预算、降级、合并和 finalize。
 
 一次复杂请求的端到端时序如下（以 `POST /search/stream` 为例）：
 
