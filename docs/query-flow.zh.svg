@@ -12,7 +12,7 @@ svg { fill: #26342e; }
 .legend { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 8.3px; font-weight: 500; fill: #5d6963; }
 .nNum { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 10px; font-weight: 650; fill: #2a7663; letter-spacing: .8px; }
 .nTitle { font-size: 17px; font-weight: 650; fill: #1d2b25; }
-.nSub { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 9.4px; font-weight: 500; fill: #4f5b55; }
+.nSub { font-family: Aptos, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; font-size: 10.8px; font-weight: 500; fill: #43514a; letter-spacing: .1px; }
 .nMono { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 8.7px; font-weight: 500; fill: #55625b; }
 .crossText { font-size: 8.2px; }
 .sideTitle { font-size: 12.5px; font-weight: 650; fill: #26342e; }
@@ -36,7 +36,7 @@ svg { fill: #26342e; }
 .chip.tool text { fill: #226b57; }
 .chip.rule rect { fill: #eff5f8; stroke: #9ab5c5; }
 .chip.rule text { fill: #356983; }
-.tag { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 7.5px; font-weight: 700; letter-spacing: .5px; }
+.tag { font-family: Aptos, 'Segoe UI', sans-serif; font-size: 9.4px; font-weight: 700; letter-spacing: .7px; }
 ]]></style>
 <pattern id='dotGrid' width='24' height='24' patternUnits='userSpaceOnUse'><circle cx='1' cy='1' r='.9' fill='#d7d1c4' opacity='.55'/></pattern>
 <marker id='arrow' viewBox='0 0 10 10' refX='8' refY='5' markerWidth='6.5' markerHeight='6.5' orient='auto-start-reverse'><path d='M 0 0 L 10 5 L 0 10 z' fill='#7d968c'/></marker>
