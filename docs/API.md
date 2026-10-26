@@ -71,10 +71,38 @@ curl -s http://127.0.0.1:8000/search \
 |---|---|
 | `query` / `total` / `topK` | 查询文本、交付总数和目标人数 |
 | `items` | 候选人列表，包含匹配证据、技能、经历和分数 |
+| `hardConditionSummary` | 完整结果池的硬条件三态摘要；违规和待核实候选不会被删除 |
 | `debug` | Agent 指标、Trace、路由、降级原因；仅 `details=true` 时需要 |
 | `clarification` | 需要用户补充信息时的问题与可选项 |
 | `conversationId` / `conversationTurns` | 会话标识与轮次数 |
 | `queryToken` / `page` | 结果池分页令牌与当前页信息 |
+
+`hardConditionSummary` 示例：
+
+```json
+{
+  "status": "review_required",
+  "delivered": 20,
+  "satisfied": 16,
+  "violated": 2,
+  "unverified": 2,
+  "affected": 4,
+  "conditionCount": 3
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `status` | `clear` / `review_required` / `not_applicable` |
+| `delivered` | 软门控后的完整交付人数，不受 `pageSize` 影响 |
+| `satisfied` / `violated` / `unverified` | 按候选人统计的硬条件三态；一人只计入一个状态 |
+| `affected` | `violated + unverified`，表示需要 HR 复核的人数 |
+| `conditionCount` | 本轮岗位硬条件数量 |
+
+软门控只改变顺序，不改变名单成员或人数。`violated` 表示工具返回了明确不匹配的实际值；
+`unverified` 表示缺少实际值或该条件未在候选人事实中出现，**不能理解为违规**。候选人卡片的
+`matchExplanation.hardMatches` 同时提供 `expectedValues`、可选 `actualValues` 和 `status`。
+违规与待核实候选人会排在满足条件的候选人之后，但仍保留在 `items`、分页结果和会话快照中。
 
 ## 4. SSE 搜索
 
@@ -144,6 +172,7 @@ curl -s -X PATCH \
 ```
 
 会话按 `companyId` 与 `hrId` 校验作用域；不匹配时返回 `404`。L1/L2/L3 记忆语义见 [架构设计](ARCHITECTURE.md)。
+每轮 L2 快照同时保存 `hardConditionSummary`，因此恢复会话后仍能区分违规、待核实与满足状态。
 
 ## 6. 结果分页
 
@@ -154,6 +183,7 @@ curl -s "http://127.0.0.1:8000/sessions/<queryToken>?offset=20&limit=20&companyI
 ```
 
 分页结果默认保留 1 小时；Redis 未配置或运行期不可用时回退到进程内存储。开启 `SEARCH_AGENT_REQUIRE_PERMISSION=1` 后，`companyId` 为必填，且必须与 token 创建时的 `(companyId, hrId)` 作用域一致。
+`hardConditionSummary` 描述的是完整结果池；翻页只改变当前页 `items`，不会缩小摘要的 `delivered` 或重新计算硬条件计数。
 
 ## 7. 运行时模式
 

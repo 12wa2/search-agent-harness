@@ -32,12 +32,80 @@ def _ir():
     )
 
 
+def _hard_ir():
+    return CandidateSearchIR(
+        where=WhereNode(
+            type="and",
+            children=[
+                WhereNode(
+                    type="leaf",
+                    condition=StructuredConditionIR(
+                        field="skill",
+                        operator="any",
+                        values=["Python"],
+                    ),
+                ),
+                WhereNode(
+                    type="leaf",
+                    condition=StructuredConditionIR(
+                        field="work_years",
+                        operator="gte",
+                        values=[5],
+                    ),
+                ),
+                WhereNode(
+                    type="leaf",
+                    condition=StructuredConditionIR(
+                        field="city",
+                        operator="any",
+                        values=["上海"],
+                    ),
+                ),
+            ],
+        )
+    )
+
+
 def _candidate(doc_id, score=0.8):
     return ToolCandidate(
         doc_id=doc_id,
         score=score,
         item=CandidateItem(docId=doc_id, score=score, name=f"Candidate {doc_id}"),
         hard_matches=[{"field": "skill", "matched": True}],
+    )
+
+
+def _hard_candidate(doc_id, score=0.8, *, satisfied=True):
+    return ToolCandidate(
+        doc_id=doc_id,
+        score=score,
+        item=CandidateItem(docId=doc_id, score=score, name=f"Candidate {doc_id}"),
+        hard_matches=[
+            {
+                "field": "skill",
+                "operator": "any",
+                "expectedValues": ["Python"],
+                "actualValues": ["Python"],
+                "matched": True,
+                "required": True,
+            },
+            {
+                "field": "work_years",
+                "operator": "gte",
+                "expectedValues": [5],
+                "actualValues": [7 if satisfied else 2],
+                "matched": satisfied,
+                "required": True,
+            },
+            {
+                "field": "city",
+                "operator": "any",
+                "expectedValues": ["上海"],
+                "actualValues": ["上海" if satisfied else "北京"],
+                "matched": satisfied,
+                "required": True,
+            },
+        ],
     )
 
 
@@ -117,6 +185,52 @@ def test_service_returns_search_response_with_items():
     assert resp.debug is not None
     assert "agentTrace" in resp.debug
     assert resp.debug["agentTrace"]["final"]["rerankUsed"] is True
+
+
+def test_service_summary_covers_full_pool_and_persists_hard_condition_gap():
+    conversations = ConversationStore(connect_redis=False)
+    candidates = [_hard_candidate(f"d{i}", 0.7 - i * 0.01) for i in range(4)]
+    candidates.append(_hard_candidate("violating", 0.99, satisfied=False))
+    svc = SearchAgentService(
+        tool=_FakeTool(candidates),
+        llm_client=_llm({"hybrid_search_v2_ir": _hard_ir().model_dump()}),
+        runner=LoopRunner(),
+        conversation_store=conversations,
+        session_store=AgentSessionStore(connect_redis=False),
+    )
+
+    resp = svc.search(
+        SearchRequest(
+            query="帮我找 5 年以上 Python 工程师，上海",
+            companyId=39978,
+            hrId=7,
+            topK=5,
+            pageSize=2,
+            details=True,
+        )
+    )
+
+    assert resp.debug["difficultyRoute"] == "direct_search"
+    assert resp.total == 5
+    assert len(resp.items) == 2
+    assert resp.items[0].docId != "violating"
+    assert resp.hardConditionSummary is not None
+    assert resp.hardConditionSummary.model_dump() == {
+        "status": "review_required",
+        "delivered": 5,
+        "satisfied": 4,
+        "violated": 1,
+        "unverified": 0,
+        "affected": 1,
+        "conditionCount": 3,
+    }
+    assert resp.debug["hardConditionSummary"]["delivered"] == 5
+
+    memory = conversations.load(resp.conversationId)
+    assert memory is not None
+    turn = memory.turns[-1]
+    assert turn.hard_condition_summary == resp.debug["hardConditionSummary"]
+    assert "硬条件缺口" in turn.assistant_summary
 
 
 def test_service_skips_entry_llm_for_strong_direct_query():

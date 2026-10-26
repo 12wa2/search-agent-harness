@@ -24,6 +24,11 @@ from search_agent.contract.tool import (
     ToolCandidate,
 )
 from search_agent.core.degrade import degrade
+from search_agent.core.hard_conditions import (
+    apply_hard_condition_soft_gate,
+    candidate_violation_count,
+    hard_condition_fact_status,
+)
 from search_agent.core.merge import merge_into
 from search_agent.models.artifacts import PathResult
 from search_agent.models.ir import (
@@ -60,15 +65,8 @@ def _dedupe_candidates(*groups: list[ToolCandidate]) -> list[ToolCandidate]:
 
 
 def _hard_required_violations(tc: ToolCandidate) -> int:
-    """Count explicit required hard-condition failures on a candidate."""
-    hard = tc.hard_matches or (tc.match_explanation or {}).get("hardMatches") or []
-    if not isinstance(hard, list):
-        return 0
-    return sum(
-        1
-        for hm in hard
-        if isinstance(hm, dict) and hm.get("matched") is False and hm.get("required", True)
-    )
+    """Count explicit required failures; missing evidence is not a violation."""
+    return candidate_violation_count(tc)
 
 
 _ABILITY_EVIDENCE_SYNONYMS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
@@ -349,7 +347,11 @@ def _validate_output(final_items: list[ToolCandidate], state: dict[str, Any]) ->
         hard = tc.match_explanation.get("hardMatches") if tc.match_explanation else None
         if isinstance(hard, list):
             for hm in hard:
-                if isinstance(hm, dict) and hm.get("matched") is False and hm.get("required", True):
+                if (
+                    isinstance(hm, dict)
+                    and hard_condition_fact_status(hm) == "violated"
+                    and hm.get("required", True)
+                ):
                     issues.append(f"hard_violation:{tc.doc_id}:{hm.get('field', '?')}")
                     break
     return issues
@@ -560,6 +562,11 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
         final_items = [_enrich(tc, accumulated, path_rationale) for tc in final_items[:top_k]]
         final_items.sort(key=lambda tc: _selection_key(tc, accumulated, _must_abilities))
 
+    hard_constraints = list(state["job_profile"].hard_constraints or [])
+    final_items, hard_condition_summary = apply_hard_condition_soft_gate(
+        final_items,
+        hard_constraints,
+    )
     validation_issues = _validate_output(final_items, state)
 
     return {
@@ -573,6 +580,7 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
         "final_search_total": final_search_total,
         "final_search_semantic": converged_semantic,
         "final_judged": final_judged,
+        "hard_condition_summary": hard_condition_summary,
         "phase": "done",
     }
 

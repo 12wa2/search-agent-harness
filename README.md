@@ -14,7 +14,7 @@
 ![Pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
 ![Elasticsearch](https://img.shields.io/badge/Elasticsearch-8-005571)
 ![Web UI](https://img.shields.io/badge/Web_UI-zero--build-2f6f61)
-![Tests](https://img.shields.io/badge/tests-540-brightgreen)
+![Tests](https://img.shields.io/badge/tests-550-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 <img src="docs/console.png" alt="Search Agent 对话式人才搜索界面" width="100%">
@@ -47,9 +47,10 @@ Search Agent Harness 在确定性检索之上增加一层受控的策略循环�
 
 - **自适应执行**：结构化查询执行 3 阶段直连；明确需求执行 5 阶段轻量 Agent；复杂需求最多执行 8 阶段反思循环。
 - **证据优先**：Judge 使用工具返回的候选人事实；卡片展示命中能力、缺口、硬条件与来源路径。
+- **人数优先的硬条件软门控**：硬条件区分“满足 / 违规 / 待核实”，违规与待核实者后置展示但不从名单删除，交付摘要显式暴露复核缺口。
 - **受控循环**：显式状态机、迭代/路径/LLM/Token/墙钟预算、签名防重，以及阶段级降级。
 - **可观测与会话**：SSE 阶段事件、实际执行阶段、原始 Trace；L1 最近上下文、L2 会话归档、L3 候选人排除。
-- **可插拔且可复现**：内存、SQLite/FTS5、Elasticsearch、Hybrid V2 共用同一契约；540 项测试与零 Key 演示可直接运行。
+- **可插拔且可复现**：内存、SQLite/FTS5、Elasticsearch、Hybrid V2 共用同一契约；550 项测试与零 Key 演示可直接运行。
 
 ## 架构总览
 
@@ -224,7 +225,7 @@ class SearchTool(Protocol):
 
 ## 质量与边界
 
-- 测试集当前共 `540` 项；本地完整环境为 `540 passed`，CI 会在独立作业中执行 ES 集成用例。
+- 测试集当前共 `550` 项；本地完整环境为 `550 passed`，CI 会在独立作业中执行 ES 集成用例。
 - CI 包含 Ruff、pytest、前端语法、Web 资源校验、Demo 冒烟、评测门禁、Elasticsearch 集成与 Docker 运行时依赖冒烟。
 - 仓库未部署到生产环境，不包含真实简历、企业数据、内部主机或凭据；演示数据均为虚构。
 - 不同模型提供方的质量、成本和延迟差异很大，接入真实数据前应重新评测。

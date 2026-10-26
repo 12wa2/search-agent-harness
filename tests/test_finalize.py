@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
+
 from search_agent.contract.tool import SearchToolRequest, SearchToolResult, ToolCandidate
 from search_agent.core.budget import BudgetState
 from search_agent.models.api import CandidateItem
@@ -62,6 +64,14 @@ class _FinalV2PoolTool(_PoolTool):
         by_id = {candidate.doc_id: candidate for candidate in req.candidates}
         order = ["noise-a", "relevant", "noise-b"]
         ordered = [by_id[doc_id] for doc_id in order if doc_id in by_id]
+        return SearchToolResult(items=ordered[: req.top_k], total=len(ordered), quality="rich")
+
+
+class _SoftGatePoolTool(_PoolTool):
+    """Keep the pre-gate order score-first so the soft gate is observable."""
+
+    def rerank_pool(self, req):
+        ordered = sorted(req.candidates, key=lambda candidate: candidate.score, reverse=True)
         return SearchToolResult(items=ordered[: req.top_k], total=len(ordered), quality="rich")
 
 
@@ -242,6 +252,69 @@ def test_judge_gate_policy_keeps_search_rerank_and_prefers_must_match(monkeypatc
     assert result["final_items"][0].doc_id == "relevant"
     assert result["rerank_used"] is True
     assert llm.calls == 1
+
+
+@pytest.mark.parametrize("policy", ["current", "final_v2"])
+def test_soft_gate_keeps_violating_candidate_and_full_headcount(
+    monkeypatch,
+    policy: str,
+) -> None:
+    if policy == "current":
+        monkeypatch.delenv("SEARCH_AGENT_FINAL_SELECTION_POLICY", raising=False)
+    else:
+        monkeypatch.setenv("SEARCH_AGENT_FINAL_SELECTION_POLICY", policy)
+    violating = _candidate("violating", 0.99, has_python=True).model_copy(
+        update={
+            "hard_matches": [
+                {
+                    "field": "work_years",
+                    "operator": "gte",
+                    "expectedValues": [5],
+                    "actualValues": [2],
+                    "matched": False,
+                    "required": True,
+                }
+            ]
+        }
+    )
+    compliant = _candidate("compliant", 0.1, has_python=False).model_copy(
+        update={
+            "hard_matches": [
+                {
+                    "field": "work_years",
+                    "operator": "gte",
+                    "expectedValues": [5],
+                    "actualValues": [6],
+                    "matched": True,
+                    "required": True,
+                }
+            ]
+        }
+    )
+    tool = _SoftGatePoolTool([violating, compliant])
+    llm = _SelectiveJudge("violating")
+    deps = Deps(
+        llm=llm,
+        tool=tool,
+        budget_state=BudgetState(budget=Budget(max_llm_calls=20, time_budget_sec=120.0)),
+    )
+    state = _policy_state()
+    state.update({"top_k": 2, "recall_pool_size": 2})
+
+    result = run_finalize(state, deps)
+
+    assert [item.doc_id for item in result["final_items"]] == ["compliant", "violating"]
+    assert result["final_total"] == 2
+    assert result["hard_condition_summary"] == {
+        "status": "review_required",
+        "delivered": 2,
+        "satisfied": 1,
+        "violated": 1,
+        "unverified": 0,
+        "affected": 1,
+        "conditionCount": 1,
+    }
+    assert "hard_violation:violating:work_years" in result["validation_issues"]
 
 
 def test_judge_gate_v2_keeps_gate_above_v2_order(monkeypatch) -> None:

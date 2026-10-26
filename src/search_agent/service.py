@@ -27,6 +27,7 @@ from search_agent.core.cancellation import (
     mark_cancelled,
 )
 from search_agent.core.experience import ExperienceStore, attribute_qualified, query_family
+from search_agent.core.hard_conditions import apply_hard_condition_soft_gate
 from search_agent.direct_search import (
     DIRECT_SEARCH_ROUTE,
     DirectSearchPlan,
@@ -35,7 +36,13 @@ from search_agent.direct_search import (
 from search_agent.entry_router import EntryRouteDecision, choose_entry_route
 from search_agent.hybrid_v2.parser import parse_query_to_ir
 from search_agent.llm.client import LlmClient, MeteredLlmClient, OpenAILlmClient
-from search_agent.models.api import CandidateItem, PageInfo, SearchRequest, SearchResponse
+from search_agent.models.api import (
+    CandidateItem,
+    HardConditionSummary,
+    PageInfo,
+    SearchRequest,
+    SearchResponse,
+)
 from search_agent.models.artifacts import Budget
 from search_agent.runner import HarnessRunner, LoopRunner
 from search_agent.session import AgentSessionStore
@@ -476,7 +483,16 @@ class SearchAgentService:
     def _build_completed_response(
         self, req: SearchRequest, state: dict[str, Any]
     ) -> SearchResponse:
-        final_items = state.get("final_items", [])
+        final_items = list(state.get("final_items", []))
+        job = state.get("job_profile")
+        hard_constraints = list(getattr(job, "hard_constraints", []) or [])
+        final_items, hard_condition_summary = apply_hard_condition_soft_gate(
+            final_items,
+            hard_constraints,
+        )
+        state["final_items"] = final_items
+        state["final_total"] = len(final_items)
+        state["hard_condition_summary"] = hard_condition_summary
         items = [self._to_candidate_item(tc) for tc in final_items]
         query_token: str | None = None
         page_info: PageInfo | None = None
@@ -505,6 +521,7 @@ class SearchAgentService:
             query=req.query,
             total=state.get("final_total", len(items)),
             items=items,
+            hardConditionSummary=HardConditionSummary.model_validate(hard_condition_summary),
             debug=self._build_debug(state, req),
             queryToken=query_token,
             page=page_info,
@@ -588,6 +605,8 @@ class SearchAgentService:
         debug["agentMetrics"] = state.get("agent_metrics", {})
         if state.get("validation_issues"):
             debug["validationIssues"] = state["validation_issues"]
+        if state.get("hard_condition_summary"):
+            debug["hardConditionSummary"] = state["hard_condition_summary"]
         if state.get("finalize_reason"):
             debug["finalizeReason"] = state["finalize_reason"]
         debug["difficultyRoute"] = state.get("difficulty_route")
@@ -666,6 +685,8 @@ class SearchAgentService:
         top_names = [tc.item.name for tc in final_items[:3] if tc.item.name]
         top_ids = [tc.doc_id for tc in final_items]
         snapshots = [self._snapshot_candidate(tc) for tc in final_items[:10]]
+        hard_summary = state.get("hard_condition_summary")
+        hard_summary = dict(hard_summary) if isinstance(hard_summary, dict) else None
         cancelled = bool(state.get("cancelled"))
         fallback = bool(state.get("fallback_baseline"))
         clarification = response.clarification
@@ -686,6 +707,9 @@ class SearchAgentService:
         elif final_items:
             status = "completed"
             assistant_summary = f"本轮检索完成，交付 {len(final_items)} 位候选人。"
+            affected = int((hard_summary or {}).get("affected") or 0)
+            if affected > 0:
+                assistant_summary += f" 其中 {affected} 人存在硬条件缺口，请复核。"
         else:
             status = "completed"
             assistant_summary = "本轮检索完成，未找到符合条件的新候选人。"
@@ -701,6 +725,7 @@ class SearchAgentService:
             assistant_summary=assistant_summary,
             job_profile_summary=summary,
             result_count=response.total,
+            hard_condition_summary=hard_summary,
             top_candidate_names=top_names,
             top_candidate_ids=top_ids,
             result_items=snapshots,

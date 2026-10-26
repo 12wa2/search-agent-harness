@@ -6,6 +6,8 @@ service. camelCase aliases are preserved for JSON round-tripping.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
@@ -89,6 +91,20 @@ class CandidateItem(BaseModel):
     matchExplanation: dict | None = None
 
 
+class HardConditionSummary(BaseModel):
+    """Delivery-level hard-condition status; counts are per candidate."""
+
+    model_config = ConfigDict(populate_by_name=True, alias_generator=to_camel)
+
+    status: Literal["clear", "review_required", "not_applicable"] = "not_applicable"
+    delivered: int = 0
+    satisfied: int = 0
+    violated: int = 0
+    unverified: int = 0
+    affected: int = 0
+    conditionCount: int = 0
+
+
 class SearchResponse(BaseModel):
     """Search response, camelCase on the wire."""
 
@@ -98,6 +114,7 @@ class SearchResponse(BaseModel):
     total: int
     topK: int = 0
     items: list[CandidateItem]
+    hardConditionSummary: HardConditionSummary | None = None
     debug: dict | None = None
     clarification: dict | None = None
     conversationId: str | None = None
@@ -106,4 +123,11 @@ class SearchResponse(BaseModel):
     page: PageInfo | None = None
 
 
-__all__ = ["CandidateItem", "PageInfo", "PermissionContext", "SearchRequest", "SearchResponse"]
+__all__ = [
+    "CandidateItem",
+    "HardConditionSummary",
+    "PageInfo",
+    "PermissionContext",
+    "SearchRequest",
+    "SearchResponse",
+]

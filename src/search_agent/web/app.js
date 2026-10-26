@@ -416,14 +416,33 @@ function deliveryOverview(payload) {
   const gap = Math.max(0, target - delivered);
   const reached = target > 0 && delivered >= target;
   const reasonCode = payload.debug?.finalizeReason || "";
+  const hardSummary = payload.hardConditionSummary || payload.debug?.hardConditionSummary || {};
+  const hardViolated = Math.max(0, Number(hardSummary.violated || 0));
+  const hardUnverified = Math.max(0, Number(hardSummary.unverified || 0));
+  const hardAffected = Math.max(
+    hardViolated + hardUnverified,
+    Number(hardSummary.affected || 0),
+  );
   return {
     target,
     delivered,
     gap,
     reached,
+    hardStatus: hardSummary.status || "not_applicable",
+    hardViolated,
+    hardUnverified,
+    hardAffected,
+    hasHardGap: hardAffected > 0,
     reasonCode,
     reason: FINALIZE_REASON_COPY[reasonCode] || "",
   };
+}
+
+function hardGapBreakdown(overview) {
+  const parts = [];
+  if (overview.hardViolated > 0) parts.push(`违规 ${overview.hardViolated} 人`);
+  if (overview.hardUnverified > 0) parts.push(`待核实 ${overview.hardUnverified} 人`);
+  return parts.join("、");
 }
 
 function fillClarificationQuery(option) {
@@ -596,6 +615,13 @@ const CONDITION_LABEL = {
   age: "年龄",
   language: "语言",
   certificate: "证书",
+};
+
+const HARD_CONDITION_LABELS = {
+  satisfied: "满足",
+  violated: "违规",
+  unverified: "待核实",
+  not_applicable: "未核验",
 };
 
 function formatCondition(condition = {}) {
@@ -938,6 +964,56 @@ function workbenchMetaText(item) {
   return parts.join(" · ");
 }
 
+function hardExpectedValues(hard) {
+  return hard?.expectedValues ?? hard?.expected_values ?? hard?.values ?? hard?.value;
+}
+
+function hardActualValues(hard) {
+  if (hard?.actualValues !== undefined) return hard.actualValues;
+  if (hard?.actual_values !== undefined) return hard.actual_values;
+  if (hard?.actual !== undefined) return hard.actual;
+  return null;
+}
+
+function hasHardValue(values) {
+  const rows = Array.isArray(values) ? values : values === null || values === undefined ? [] : [values];
+  return rows.some((value) => value !== null && value !== undefined && String(value).trim() !== "");
+}
+
+function hardConditionState(hard) {
+  if (["satisfied", "violated", "unverified"].includes(hard?.status)) return hard.status;
+  if (hard?.matched === true) return "satisfied";
+  if (hard?.matched === false && hasHardValue(hardActualValues(hard))) return "violated";
+  return "unverified";
+}
+
+function summarizeHardConditions(hardMatches) {
+  const counts = { satisfied: 0, violated: 0, unverified: 0 };
+  for (const hard of Array.isArray(hardMatches) ? hardMatches : []) {
+    if (hard?.required === false) continue;
+    const state = hardConditionState(hard);
+    counts[state] += 1;
+  }
+  const applicable = counts.satisfied + counts.violated + counts.unverified;
+  const status = counts.violated
+    ? "violated"
+    : counts.unverified
+      ? "unverified"
+      : applicable
+        ? "satisfied"
+        : "not_applicable";
+  return { ...counts, applicable, status };
+}
+
+function candidateHardConditionState(explanation, hardMatches) {
+  const summary = summarizeHardConditions(hardMatches);
+  if (summary.applicable) return summary.status;
+  const explicit = String(explanation?.hardConditionStatus || "");
+  return ["satisfied", "violated", "unverified", "not_applicable"].includes(explicit)
+    ? explicit
+    : summary.status;
+}
+
 function workbenchMatchData(item) {
   const explanation =
     item?.matchExplanation && typeof item.matchExplanation === "object"
@@ -955,12 +1031,17 @@ function workbenchMatchData(item) {
   const pathRationale = Array.isArray(explanation.pathRationale)
     ? explanation.pathRationale.filter(Boolean)
     : [];
+  const hardSummary = summarizeHardConditions(hardMatches);
   return {
     matchedAbilities,
     missingAbilities,
     hardMatches,
     pathRationale,
-    hardPassed: hardMatches.filter((hard) => hard?.matched).length,
+    hardPassed: hardSummary.satisfied,
+    hardViolated: hardSummary.violated,
+    hardUnverified: hardSummary.unverified,
+    hardApplicable: hardSummary.applicable,
+    hardStatus: candidateHardConditionState(explanation, hardMatches),
     abilityTotal: matchedAbilities.length + missingAbilities.length,
   };
 }
@@ -976,8 +1057,11 @@ function formatWorkbenchValues(values) {
 
 function formatWorkbenchHard(hard) {
   const field = CONDITION_LABEL[hard?.field] || hard?.field || hard?.text || "条件";
-  const values = formatWorkbenchValues(hard?.values ?? hard?.value);
-  return `${field}：${values} ${hard?.matched ? "满足" : "未满足"}`;
+  const expected = formatWorkbenchValues(hardExpectedValues(hard));
+  const actual = formatWorkbenchValues(hardActualValues(hard));
+  const state = hardConditionState(hard);
+  const actualText = actual === "—" ? "实际值未提供" : `当前 ${actual}`;
+  return `${field}：期望 ${expected} · ${actualText} · ${HARD_CONDITION_LABELS[state]}`;
 }
 
 function formatWorkbenchScore(item) {
@@ -1051,12 +1135,19 @@ function renderWorkbenchEvidence(item) {
 }
 
 function workbenchStatusPill(item, data) {
-  if (data.hardMatches.length) {
-    const passed = data.hardPassed === data.hardMatches.length;
-    return {
-      text: passed ? "硬条件通过" : `硬条件 ${data.hardPassed}/${data.hardMatches.length}`,
-      tone: passed ? "is-good" : "is-warning",
-    };
+  if (data.hardApplicable > 0) {
+    if (data.hardStatus === "violated") {
+      return {
+        text: data.hardUnverified > 0
+          ? `硬条件违规 ${data.hardViolated} · 待核实 ${data.hardUnverified}`
+          : `硬条件违规 ${data.hardViolated}`,
+        tone: "is-warning",
+      };
+    }
+    if (data.hardStatus === "unverified") {
+      return { text: `硬条件待核实 ${data.hardUnverified}`, tone: "is-warning" };
+    }
+    return { text: "硬条件满足", tone: "is-good" };
   }
   if (data.matchedAbilities.length) {
     return { text: `${data.matchedAbilities.length} 项能力命中`, tone: "is-neutral" };
@@ -1114,8 +1205,12 @@ function buildWorkbenchTaskHead(wb, payload, run, overview) {
 
   const side = el("div", "aw-summary-side");
   const hardRate = metrics.match?.hardMatchHitRate;
-  if (Number.isFinite(Number(hardRate))) {
-    side.append(el("span", "", `硬条件命中 ${formatWorkbenchPercent(hardRate)}`));
+  if (overview.hasHardGap) {
+    side.append(el("span", "is-warning", `硬条件${hardGapBreakdown(overview)}`));
+  } else if (overview.hardStatus === "clear") {
+    side.append(el("span", "is-good", "硬条件均满足"));
+  } else if (Number.isFinite(Number(hardRate))) {
+    side.append(el("span", "", `硬条件覆盖 ${formatWorkbenchPercent(hardRate)}`));
   }
   const judged = Number(metrics.recall?.judged || 0);
   if (judged > 0) side.append(el("span", "", `${judged} 人通过判定`));
@@ -1153,7 +1248,9 @@ function buildWorkbenchRunPanel(wb, payload, run, overview) {
   const gapTitle = overview.target <= 0
     ? "本轮检索已完成"
     : hitTarget
-      ? "目标交付已达成"
+      ? overview.hasHardGap
+        ? `目标人数已达成，${overview.hardAffected} 人需复核`
+        : "目标交付已达成"
       : `距目标还差 ${overview.gap} 位`;
   const h3 = el("h3", "", gapTitle);
   if (!hitTarget && overview.gap > 0) h3.append(el("span", "", ""));
@@ -1163,7 +1260,9 @@ function buildWorkbenchRunPanel(wb, payload, run, overview) {
       "p",
       "",
       hitTarget || overview.target <= 0
-        ? `已交付 ${overview.delivered} 位候选人，完成 ${Math.max(1, iterations)} 轮检索。可以继续追问，或调整条件发起下一轮。`
+        ? overview.hasHardGap
+          ? `已交付 ${overview.delivered} 位候选人，其中硬条件${hardGapBreakdown(overview)}，请优先复核。`
+          : `已交付 ${overview.delivered} 位候选人，完成 ${Math.max(1, iterations)} 轮检索。可以继续追问，或调整条件发起下一轮。`
         : `已交付 ${overview.delivered} 位候选人，完成 ${Math.max(1, iterations)} 轮检索。当前仍有数量缺口，可补充或放宽条件后再次检索。`,
     ),
   );
@@ -1219,11 +1318,17 @@ function buildWorkbenchRunPanel(wb, payload, run, overview) {
     if (value === null || value === undefined) return "is-neutral";
     return Number(value) >= 0.65 ? "is-good" : "is-warning";
   };
-  addCoverage(
-    hasMetrics ? "硬条件命中率" : "本页硬条件",
-    formatWorkbenchPercent(hardRate),
-    rateTone(hardRate),
-  );
+  if (overview.hasHardGap) {
+    addCoverage("硬条件缺口", hardGapBreakdown(overview), "is-warning");
+  } else if (overview.hardStatus === "clear") {
+    addCoverage("硬条件", "交付名单均满足", "is-good");
+  } else {
+    addCoverage(
+      hasMetrics ? "硬条件覆盖" : "本页硬条件",
+      formatWorkbenchPercent(hardRate),
+      rateTone(hardRate),
+    );
+  }
   addCoverage(
     hasMetrics ? "能力覆盖" : "本页能力覆盖",
     formatWorkbenchPercent(abilityCoverage),
@@ -1302,15 +1407,15 @@ function compareCandidateName(entry) {
 
 function describeCompareHard(hard, index) {
   const field = compareText(hard?.field || hard?.text || hard?.label) || `condition-${index + 1}`;
+  const status = hardConditionState(hard);
   return {
     field,
     label: compareText(hard?.fieldLabel || CONDITION_LABEL[hard?.field] || hard?.text || hard?.label || field) || "条件",
     operator: compareText(hard?.operator) || "eq",
-    expected: formatWorkbenchValues(hard?.expectedValues ?? hard?.values ?? hard?.value),
-    actual: formatWorkbenchValues(
-      hard?.actualValues ?? hard?.matchedValues ?? hard?.values ?? hard?.value,
-    ),
-    matched: Boolean(hard?.matched),
+    expected: formatWorkbenchValues(hardExpectedValues(hard)),
+    actual: formatWorkbenchValues(hardActualValues(hard)),
+    status,
+    matched: status === "satisfied",
   };
 }
 
@@ -1368,9 +1473,20 @@ function buildCompareCandidate(entry, index) {
 
 function compareCandidateMetrics(candidate) {
   const hardTotal = candidate.data.hardMatches.length;
+  const hardStatusRank = candidate.data.hardStatus === "satisfied"
+    ? 2
+    : candidate.data.hardStatus === "violated"
+      ? 0
+      : candidate.data.hardStatus === "unverified"
+        ? 1
+        : 2;
   return {
     hardTotal,
     hardPassed: candidate.data.hardPassed,
+    hardViolated: candidate.data.hardViolated,
+    hardUnverified: candidate.data.hardUnverified,
+    hardStatus: candidate.data.hardStatus,
+    hardStatusRank,
     hardRate: hardTotal ? candidate.data.hardPassed / hardTotal : null,
     matched: candidate.data.matchedAbilities.length,
     missing: candidate.data.missingAbilities.length,
@@ -1380,6 +1496,7 @@ function compareCandidateMetrics(candidate) {
 
 function compareCoreEqual(left, right, hardAligned = true) {
   const hardEqual = !hardAligned || (
+    left.metrics.hardStatus === right.metrics.hardStatus &&
     left.metrics.hardRate === right.metrics.hardRate &&
     left.metrics.hardPassed === right.metrics.hardPassed
   );
@@ -1392,6 +1509,9 @@ function compareCoreEqual(left, right, hardAligned = true) {
 
 function compareCandidatesByEvidence(left, right, hardAligned = true) {
   if (hardAligned) {
+    if (left.metrics.hardStatusRank !== right.metrics.hardStatusRank) {
+      return right.metrics.hardStatusRank - left.metrics.hardStatusRank;
+    }
     const leftRate = left.metrics.hardRate ?? -1;
     const rightRate = right.metrics.hardRate ?? -1;
     if (leftRate !== rightRate) return rightRate - leftRate;
@@ -1416,6 +1536,12 @@ function compareLeaderReason(leader, candidates, hardAligned = true) {
   const others = candidates.filter((candidate) => candidate !== leader).map((candidate) => candidate.metrics);
   if (hardAligned) {
     if (
+      metrics.hardStatus === "satisfied" &&
+      others.every((other) => other.hardStatus !== "satisfied")
+    ) {
+      return `可核验硬条件全部满足（${metrics.hardPassed}/${metrics.hardTotal}）`;
+    }
+    if (
       metrics.hardTotal > 0 &&
       metrics.hardRate === 1 &&
       others.every((other) => other.hardRate === null || other.hardRate < 1)
@@ -1426,7 +1552,7 @@ function compareLeaderReason(leader, candidates, hardAligned = true) {
       metrics.hardRate !== null &&
       others.every((other) => (other.hardRate ?? -1) < metrics.hardRate)
     ) {
-      return `硬条件通过数领先（${metrics.hardPassed}/${metrics.hardTotal}）`;
+      return `硬条件满足数领先（${metrics.hardPassed}/${metrics.hardTotal}）`;
     }
   }
   if (metrics.matched > 0 && others.every((other) => other.matched < metrics.matched)) {
@@ -1501,10 +1627,10 @@ function buildCompareModel(entries) {
   }
   for (const row of hardRows) {
     row.differs = new Set(
-      row.cells.map((cell) => (cell ? `${cell.matched ? "1" : "0"}|${cell.actual}|${cell.expected}` : "missing")),
+      row.cells.map((cell) => (cell ? `${cell.status}|${cell.actual}|${cell.expected}` : "missing")),
     ).size > 1;
-    row.allMatched = row.cells.every((cell) => cell?.matched === true);
-    row.allMissed = row.cells.every((cell) => cell?.matched === false);
+    row.allMatched = row.cells.every((cell) => cell?.status === "satisfied");
+    row.allMissed = row.cells.every((cell) => cell?.status === "violated");
   }
 
   const abilityRows = [];
@@ -1537,8 +1663,10 @@ function buildCompareModel(entries) {
     hardCoverage: candidates.filter((candidate) => candidate.metrics.hardTotal > 0).length,
     hardFullyPassed: candidates.filter((candidate) => {
       const total = candidate.metrics.hardTotal;
-      return total > 0 && candidate.metrics.hardPassed === total;
+      return total > 0 && candidate.metrics.hardStatus === "satisfied";
     }).length,
+    hardNeedsReview: candidates.filter((candidate) =>
+      ["violated", "unverified"].includes(candidate.metrics.hardStatus)).length,
     hardConditionsAligned: new Set(
       candidates.map((candidate) => candidate.hardRows.map((row) => row.key).sort().join("|")),
     ).size === 1,
@@ -1553,7 +1681,14 @@ function buildCompareModel(entries) {
 function compareCandidateEvidenceCopy(candidate) {
   const metrics = candidate.metrics;
   const parts = [];
-  if (metrics.hardTotal) parts.push(`硬条件 ${metrics.hardPassed}/${metrics.hardTotal}`);
+  if (metrics.hardTotal) {
+    const hardCopy = metrics.hardViolated
+      ? `硬条件违规 ${metrics.hardViolated}${metrics.hardUnverified ? `、待核实 ${metrics.hardUnverified}` : ""}`
+      : metrics.hardUnverified
+        ? `硬条件待核实 ${metrics.hardUnverified}`
+        : "硬条件满足";
+    parts.push(hardCopy);
+  }
   if (metrics.matched || metrics.missing) parts.push(`能力命中 ${metrics.matched} 项`);
   if (metrics.missing) parts.push(`缺口 ${metrics.missing} 项`);
   if (candidate.score !== null) parts.push(`相关度 ${candidate.score.toFixed(2)}`);
@@ -1625,9 +1760,11 @@ function renderCompareOverview(model) {
     model.hardRows.length
       ? model.hardCoverage < model.candidates.length
         ? `${model.candidates.length - model.hardCoverage} 人缺少硬条件证据`
-        : "按各自可核验条件统计"
+        : model.hardNeedsReview
+          ? `${model.hardNeedsReview} 人有违规或待核实项`
+          : "按各自可核验条件统计"
       : "本轮没有可核验硬条件",
-    model.hardFullyPassed ? "is-good" : "is-warning",
+    model.hardNeedsReview ? "is-warning" : "is-good",
   );
   compareOverview.replaceChildren(verdict, snapshot);
 }
@@ -1716,16 +1853,18 @@ function renderCompareMatrix(model) {
       for (const cell of row.cells) {
         const value = el("td", "compare-matrix-cell");
         if (!cell) {
-          value.append(el("span", "compare-status is-na", "未核验"));
+          value.append(el("span", "compare-status is-unverified", "? 待核实"));
         } else {
-          const actual = cell.actual && cell.actual !== "—"
-            ? cell.actual
-            : cell.matched ? "已满足" : "未满足";
+          const state = cell.status || (cell.matched ? "satisfied" : "unverified");
+          const actual = cell.actual && cell.actual !== "—" ? cell.actual : "";
+          const statusLabel = HARD_CONDITION_LABELS[state] || "待核实";
+          const tone = state === "satisfied" ? "is-met" : state === "violated" ? "is-miss" : "is-unverified";
+          const glyph = state === "satisfied" ? "✓" : state === "violated" ? "×" : "?";
           value.append(
             el(
               "span",
-              `compare-status ${cell.matched ? "is-met" : "is-miss"}`.trim(),
-              `${cell.matched ? "✓" : "×"} ${actual}`,
+              `compare-status ${tone}`.trim(),
+              [glyph, actual, statusLabel].filter(Boolean).join(" "),
             ),
           );
         }
@@ -1769,7 +1908,7 @@ function renderCompareMatrix(model) {
       el(
         "p",
         "compare-matrix-note",
-        "候选人可核验的硬条件范围不同；“未核验”表示本轮没有该项证据，不代表未满足。",
+        "候选人可核验的硬条件范围不同；“待核实”表示本轮没有该项证据，不代表违规。",
       ),
     );
   }
@@ -1814,11 +1953,15 @@ function renderCompareCandidate(candidate, model) {
     item.append(el("strong", "", value), el("small", "", label));
     stats.append(item);
   };
-  if (data.hardMatches.length) {
+  if (data.hardApplicable > 0) {
     addStat(
-      `${data.hardPassed}/${data.hardMatches.length}`,
+      data.hardViolated
+        ? `违规 ${data.hardViolated}${data.hardUnverified ? ` · 待核实 ${data.hardUnverified}` : ""}`
+        : data.hardUnverified
+          ? `待核实 ${data.hardUnverified}`
+          : "通过",
       "硬条件",
-      data.hardPassed === data.hardMatches.length ? "is-good" : "is-warning",
+      data.hardStatus === "satisfied" ? "is-good" : "is-warning",
     );
   }
   if (data.abilityTotal) addStat(`${data.matchedAbilities.length}/${data.abilityTotal}`, "能力覆盖");
@@ -1836,11 +1979,12 @@ function renderCompareCandidate(candidate, model) {
     const list = el("ul", "aw-compare-list");
     for (const row of visibleHardRows) {
       const cell = candidate.hardMap.get(row.key);
-      const actual = cell?.actual && cell.actual !== "—"
-        ? cell.actual
-        : cell ? cell.matched ? "已满足" : "未满足" : "未核验";
-      const tone = cell ? cell.matched ? "is-met" : "is-miss" : "is-na";
-      const status = cell ? `${actual} · ${cell.matched ? "满足" : "未满足"}` : "本轮未核验";
+      const state = cell?.status || (cell?.matched ? "satisfied" : "unverified");
+      const actual = cell?.actual && cell.actual !== "—" ? cell.actual : "";
+      const tone = state === "satisfied" ? "is-met" : state === "violated" ? "is-miss" : "is-unverified";
+      const status = cell
+        ? [actual, HARD_CONDITION_LABELS[state]].filter(Boolean).join(" · ")
+        : "本轮待核实";
       const item = el("li", "aw-compare-hard-row");
       item.append(
         el("span", "aw-compare-hard-label", row.label),
@@ -2186,10 +2330,15 @@ function renderWorkbenchCandidate(wb, entry) {
     scoreStat.append(el("span", "aw-score-label", "相关度"), el("b", "", scoreText));
     stats.append(scoreStat);
   }
-  if (data.hardMatches.length) {
+  if (data.hardApplicable > 0) {
+    const hardText = data.hardViolated
+      ? `硬条件违规 ${data.hardViolated}${data.hardUnverified ? ` · 待核实 ${data.hardUnverified}` : ""}`
+      : data.hardUnverified
+        ? `硬条件待核实 ${data.hardUnverified}`
+        : "硬条件满足";
     addStat(
-      `硬条件 ${data.hardPassed}/${data.hardMatches.length}`,
-      data.hardPassed === data.hardMatches.length ? "is-good" : "is-warning",
+      hardText,
+      data.hardStatus === "satisfied" ? "is-good" : "is-warning",
     );
   }
   if (data.abilityTotal) {
@@ -2378,14 +2527,36 @@ function appendChatDeliveryOverview(container, payload) {
   const section = el("section", "chat-delivery-overview");
   section.classList.toggle("is-met", overview.reached);
   section.classList.toggle("is-gap", !overview.reached && overview.gap > 0);
+  section.classList.toggle("is-review", overview.hasHardGap);
 
   const head = el("div", "chat-delivery-head");
   const title = el("div");
   title.append(
-    el("strong", "", overview.reached ? "目标交付已达成" : "本次未达到目标人数"),
-    el("span", "", "目标按你设置的交付人数计算；缺口只表示数量未达标，不代表 Agent 执行失败。"),
+    el(
+      "strong",
+      "",
+      overview.hasHardGap
+        ? `已交付 ${overview.delivered} 人，${overview.hardAffected} 人需复核`
+        : overview.reached
+          ? "目标交付已达成"
+          : "本次未达到目标人数",
+    ),
+    el(
+      "span",
+      "",
+      overview.hasHardGap
+        ? `人数目标优先保证；硬条件${hardGapBreakdown(overview)}，均已保留并明确标注。`
+        : "目标按你设置的交付人数计算；缺口只表示数量未达标，不代表 Agent 执行失败。",
+    ),
   );
-  head.append(title, el("span", "chat-delivery-state", overview.reached ? "已达成" : "有缺口"));
+  head.append(
+    title,
+    el(
+      "span",
+      "chat-delivery-state",
+      overview.hasHardGap ? "需复核" : overview.reached ? "已达成" : "有缺口",
+    ),
+  );
 
   const facts = el("div", "chat-delivery-facts");
   const addFact = (value, label) => {
@@ -2396,6 +2567,7 @@ function appendChatDeliveryOverview(container, payload) {
   addFact(overview.target, "目标人数");
   addFact(overview.delivered, "实际交付");
   addFact(overview.gap, "人数缺口");
+  if (overview.hasHardGap) addFact(overview.hardAffected, "硬条件缺口");
 
   section.append(head, facts);
   if (overview.reason) {
@@ -2606,7 +2778,9 @@ function renderChatResult(payload) {
       stats.append(item);
     };
     const directRoute = payload.debug?.difficultyRoute === "direct_search";
+    const overview = deliveryOverview(payload);
     add(Number(payload.total || 0), "交付候选人");
+    if (overview.hasHardGap) add(overview.hardAffected, "硬条件缺口");
     if (directRoute) {
       add(1, "SearchTool 调用");
       add(metrics.meta?.agentLlmCalls ?? 0, "Agent LLM");
@@ -3005,6 +3179,7 @@ function renderRestoredConversation(memory) {
           clarification: null,
           queryToken: turn.queryToken || null,
           page: null,
+          hardConditionSummary: turn.hardConditionSummary || null,
           debug: {},
         };
         renderAgentWorkbench(message.body, workbenchPayload, null, {
@@ -3037,8 +3212,10 @@ function renderRestoredConversation(memory) {
     topK: Number(last.topK || 0),
     items: Array.isArray(last.resultItems) ? last.resultItems : [],
     clarification: last.clarification || null,
+    hardConditionSummary: last.hardConditionSummary || null,
     debug: {},
   };
+  const restoredOverview = deliveryOverview(restoredPayload);
   state.lastResult = restoredPayload;
   if (last.status === "reply") {
     results.replaceChildren();
@@ -3057,7 +3234,9 @@ function renderRestoredConversation(memory) {
     "历史会话已恢复",
     last.status === "reply"
       ? `共 ${state.conversationTurns} 轮，当前展示最近一次意图回复。`
-      : `共 ${state.conversationTurns} 轮，当前展示最近一轮结果。`,
+      : restoredOverview.hasHardGap
+        ? `共 ${state.conversationTurns} 轮，当前展示最近一轮结果；${restoredOverview.hardAffected} 人存在硬条件缺口，请复核。`
+        : `共 ${state.conversationTurns} 轮，当前展示最近一轮结果。`,
   );
   scrollChatToEnd("auto");
 }
@@ -3365,7 +3544,15 @@ function appendDeliverySummary(payload) {
   );
   const copy = head.lastElementChild;
   copy.append(
-    el("strong", "", overview.reached ? "候选人名单已交付" : "候选人名单已交付，目标人数有缺口"),
+    el(
+      "strong",
+      "",
+      overview.reached
+        ? overview.hasHardGap
+          ? `候选人名单已交付，${overview.hardAffected} 人需复核`
+          : "候选人名单已交付"
+        : "候选人名单已交付，目标人数有缺口",
+    ),
     el(
       "span",
       "",
@@ -3382,6 +3569,7 @@ function appendDeliverySummary(payload) {
   addStat(overview.target, "目标");
   addStat(overview.delivered, "交付");
   addStat(overview.gap, "缺口", overview.gap > 0);
+  if (overview.hasHardGap) addStat(overview.hardAffected, "硬条件缺口", true);
   if (directRoute) {
     addStat(1, "SearchTool 调用");
     addStat(metrics.meta?.agentLlmCalls ?? 0, "Agent LLM");
@@ -3790,10 +3978,13 @@ function buildCandidateTooltip(item, rank, explanation, groups, showRawMatchExpl
   addListSection(
     "硬条件",
     hardMatches.map((hard) => {
-      const values = Array.isArray(hard.values) ? hard.values.join("/") : hard.values;
+      const state = hardConditionState(hard);
+      const expected = formatWorkbenchValues(hardExpectedValues(hard));
+      const actual = formatWorkbenchValues(hardActualValues(hard));
+      const actualText = actual === "—" ? "" : ` · 当前 ${actual}`;
       return {
-        text: `${hard.field || "?"}: ${values ?? "—"} ${hard.matched ? "✓ 满足" : "! 未满足"}`,
-        tone: hard.matched ? "" : "is-warning",
+        text: `${hard.field || "?"}：期望 ${expected}${actualText} · ${HARD_CONDITION_LABELS[state]}`,
+        tone: state === "satisfied" ? "" : "is-warning",
       };
     }),
   );
@@ -3931,15 +4122,15 @@ function renderCandidate(
     addFact("能力命中", `${matchedAbilities.length} 项`);
   }
   if (hardMatches.length) {
-    const passed = hardMatches.filter((hard) => hard.matched).length;
-    const title = hardMatches
-      .map((hard) => {
-        const values = Array.isArray(hard.values) ? hard.values.join("/") : hard.values;
-        return `${hard.field || "?"}: ${values ?? "—"} ${hard.matched ? "满足" : "未满足"}`;
-      })
-      .join("\n");
-    addFact("硬条件", `${passed}/${hardMatches.length}`, {
-      tone: passed < hardMatches.length ? "is-warning" : "",
+    const hardSummary = summarizeHardConditions(hardMatches);
+    const title = hardMatches.map((hard) => formatWorkbenchHard(hard)).join("\n");
+    const hardText = hardSummary.violated
+      ? `违规 ${hardSummary.violated}${hardSummary.unverified ? ` · 待核实 ${hardSummary.unverified}` : ""}`
+      : hardSummary.unverified
+        ? `待核实 ${hardSummary.unverified}`
+        : "满足";
+    addFact("硬条件", hardText, {
+      tone: hardSummary.status === "satisfied" ? "" : "is-warning",
       title,
     });
   }
@@ -4043,14 +4234,36 @@ function renderConsoleDelivery(payload) {
   overviewNode.hidden = false;
   overviewNode.classList.toggle("is-met", overview.reached);
   overviewNode.classList.toggle("is-gap", !overview.reached);
+  overviewNode.classList.toggle("is-review", overview.hasHardGap);
 
   const head = el("div", "delivery-overview-head");
   const copy = el("div");
   copy.append(
-    el("strong", "", overview.reached ? "目标交付已达成" : "目标人数尚未达成"),
-    el("span", "", "缺口只表示数量未达标，不代表 Agent 执行失败。"),
+    el(
+      "strong",
+      "",
+      overview.hasHardGap
+        ? `已交付 ${overview.delivered} 人，${overview.hardAffected} 人需复核`
+        : overview.reached
+          ? "目标交付已达成"
+          : "目标人数尚未达成",
+    ),
+    el(
+      "span",
+      "",
+      overview.hasHardGap
+        ? `名单人数优先保证；硬条件${hardGapBreakdown(overview)}，只做标注与后置，不会删除候选人。`
+        : "缺口只表示数量未达标，不代表 Agent 执行失败。",
+    ),
   );
-  head.append(copy, el("span", "delivery-overview-state", overview.reached ? "已达成" : "有缺口"));
+  head.append(
+    copy,
+    el(
+      "span",
+      "delivery-overview-state",
+      overview.hasHardGap ? "需复核" : overview.reached ? "已达成" : "有缺口",
+    ),
+  );
 
   const facts = el("div", "delivery-overview-facts");
   const addFact = (value, label) => {
@@ -4061,6 +4274,7 @@ function renderConsoleDelivery(payload) {
   addFact(overview.target, "目标");
   addFact(overview.delivered, "交付");
   addFact(overview.gap, "缺口");
+  if (overview.hasHardGap) addFact(overview.hardAffected, "硬条件缺口");
   overviewNode.append(head, facts);
   if (overview.reason) {
     const reason = el("p", "delivery-overview-reason");
@@ -4419,6 +4633,10 @@ async function runSearch(query, topK) {
               ? "等待补充 · 未启动检索"
               : `完成 · ${state.stageCount} 个阶段事件 · ${Math.max(1, state.executeCount)} 轮`;
           setAgentProgress();
+          const overview = deliveryOverview(payload);
+          const hardGapNotice = overview.hasHardGap
+            ? `其中硬条件${hardGapBreakdown(overview)}，均已保留在名单中并按组后置。`
+            : "";
           setAgentState(
             sawCancelled
               ? "stopped"
@@ -4439,16 +4657,17 @@ async function runSearch(query, topK) {
               : needsClarification
                 ? "当前输入缺少岗位方向；选择或补充一条更具体的招聘需求后继续。"
                 : payload.debug?.degradedReason
-                  ? `已交付 ${Number(payload.total || 0)} 位候选人；执行过程中触发降级：${payload.debug.degradedReason}`
-                  : `已交付 ${Number(payload.total || 0)} 位候选人，匹配证据与来源路径已同步。`,
+                  ? `已交付 ${Number(payload.total || 0)} 位候选人；执行过程中触发降级：${payload.debug.degradedReason}${hardGapNotice ? ` ${hardGapNotice}` : ""}`
+                  : overview.hasHardGap
+                    ? `已交付 ${Number(payload.total || 0)} 位候选人，${hardGapNotice}`
+                    : `已交付 ${Number(payload.total || 0)} 位候选人，匹配证据与来源路径已同步。`,
           );
-          const overview = deliveryOverview(payload);
           announceAgentStatus(
             sawCancelled
               ? "已请求停止，当前阶段结束后会停止后续工作。"
               : needsClarification
                 ? "需要补充岗位方向后继续检索。"
-                : `检索完成。目标 ${overview.target} 人，实际交付 ${overview.delivered} 人，缺口 ${overview.gap} 人。${payload.debug?.degradedReason ? "本轮执行发生降级，请复核结果。" : ""}`,
+                : `检索完成。目标 ${overview.target} 人，实际交付 ${overview.delivered} 人，缺口 ${overview.gap} 人。${overview.hasHardGap ? `硬条件${hardGapBreakdown(overview)}，需要复核。` : ""}${payload.debug?.degradedReason ? "本轮执行发生降级，请复核结果。" : ""}`,
           );
         } else if (event === "error") {
           sawError = true;

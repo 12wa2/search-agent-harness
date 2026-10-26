@@ -3798,6 +3798,18 @@ body[data-view="agent"] #version-chip {
   color: var(--success);
 }
 
+.chat-delivery-overview.is-review,
+.delivery-overview.is-review {
+  border-color: #e5d3aa;
+  background: #fff9eb;
+}
+
+.chat-delivery-overview.is-review .chat-delivery-state,
+.delivery-overview.is-review .delivery-overview-state {
+  border-color: #e5d3aa;
+  color: var(--warning);
+}
+
 .delivery-overview-head div {
   display: grid;
   gap: 3px;
@@ -5954,6 +5966,18 @@ body[data-view="console"] .sidebar-toggle {
   background: var(--accent-wash);
 }
 
+.chat-delivery-overview.is-review,
+.delivery-overview.is-review {
+  border-color: #e8d4a9;
+  background: #fffaf0;
+}
+
+.chat-delivery-overview.is-review .chat-delivery-state,
+.delivery-overview.is-review .delivery-overview-state {
+  border-color: #e8d4a9;
+  color: var(--warning);
+}
+
 .chat-delivery-head strong,
 .delivery-overview-head strong {
   font-size: 11.5px;
@@ -7705,6 +7729,14 @@ body[data-view="console"] .sidebar-toggle {
   border-left: 1px solid var(--rule);
 }
 
+.aw-summary-side .is-warning {
+  color: var(--aw-warning);
+}
+
+.aw-summary-side .is-good {
+  color: var(--accent-strong);
+}
+
 .aw-workspace-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 318px;
@@ -8997,7 +9029,13 @@ body[data-view="console"] .sidebar-toggle {
 }
 
 .compare-status.is-miss {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.compare-status.is-unverified {
   color: var(--aw-warning);
+  font-style: italic;
 }
 
 .compare-status.is-na {

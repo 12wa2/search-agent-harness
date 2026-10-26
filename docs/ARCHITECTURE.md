@@ -251,13 +251,33 @@ parser 失败时会重试一次；仍失败则显式回退到本地结构化 IR�
    若 rerank 失败则按 per-path 分数排序（`skip_global_rerank`）。
 
 收尾：不足 `top_k` 时用已判断池补齐；若所有结果都已判断，按「命中 must 能力数、再按分」
-做精度排序；最后 `_validate_output` 做输出校验（硬条件违规、负分、空结果异常等，记录 `validationIssues`）。
+做精度排序；最后 `_validate_output` 做输出校验（明确硬条件违规、负分、空结果异常等，记录
+`validationIssues`）。校验只记录并暴露问题，不删除候选人。
 
 因此最终交付的 `score` 不是统一概率：直连搜索来自 Hybrid V2 的单次检索/重排结果；复杂链路优先按
 `_selection_key` 排序——must 能力覆盖（降序）、缺失 must 能力数（升序）、必需硬条件违规数（升序）、
 简历证据覆盖、证据缺口、是否已判断，以及命中能力总数；后端/重排分数仅在这些主信号之后作为次级
 tie-breaker。`rerank_pool` 失败时则回退到 per-path 分数。排序分只在同一结果集内有意义，不应跨链路、
 跨请求或当作概率/匹配率解释。
+
+### 8.1 硬条件软门控：人数优先，缺口显式暴露
+
+最终名单不因硬条件不满足而缩短。`core/hard_conditions.py::apply_hard_condition_soft_gate`
+把工具返回的硬条件事实统一为三态，并只做稳定重排：
+
+- `satisfied`：`matched=true`，工具确认满足；
+- `violated`：`matched=false` 且存在非空 `actualValues`，工具返回了明确不匹配的实际值；
+- `unverified`：没有足够证据。`matched=false` 但缺少实际值，或岗位条件在候选人事实中缺失，
+  都归入此态，不能当作违规。
+
+`values` / `expectedValues` 是岗位期望值，不能拿来冒充候选人的实际值。软门控按
+`满足或不适用 → 待核实 → 违规` 稳定分组；同组内保持原顺序。返回列表的长度和成员与输入完全一致，
+不会改变 `target_qualified`、停止条件或补位逻辑。Service 在响应边界对直连搜索和 Agent 路径再执行
+一次同一软门控，确保所有交付路径都带 `hardConditionSummary`，并把摘要写入会话轮次与 `debug`。
+
+摘要中的 `delivered` 是完整结果池人数，不受 `pageSize` 分页切片影响；`violated` 与 `unverified`
+分别计数，`affected` 为二者之和。前端据此区分“硬条件违规”和“硬条件待核实”，并明确提示这些
+候选人仍保留在交付人数中。
 
 ## 9. SearchTool 契约
 

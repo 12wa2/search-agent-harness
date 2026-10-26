@@ -355,10 +355,33 @@ def test_finalize_validation_hard_violation():
         doc_id="d1",
         score=0.8,
         item=CandidateItem(docId="d1", score=0.8),
-        match_explanation={"hardMatches": [{"field": "city", "matched": False, "required": True}]},
+        match_explanation={
+            "hardMatches": [
+                {
+                    "field": "city",
+                    "matched": False,
+                    "actualValues": ["北京"],
+                    "required": True,
+                }
+            ]
+        },
     )
     issues = _validate_output([tc], state)
     assert any("hard_violation" in i for i in issues)
+
+
+def test_finalize_validation_missing_hard_evidence_is_not_a_violation():
+    from search_agent.stages.finalize import _validate_output
+
+    state = {"need_clarify": False, "fallback_baseline": False, "accumulated": {"d1": {}}}
+    tc = ToolCandidate(
+        doc_id="d1",
+        score=0.8,
+        item=CandidateItem(docId="d1", score=0.8),
+        match_explanation={"hardMatches": [{"field": "city", "matched": False, "required": True}]},
+    )
+
+    assert _validate_output([tc], state) == []
 
 
 def test_service_debug_includes_metrics():
