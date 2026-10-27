@@ -19,9 +19,7 @@ from typing import Any, Literal, cast
 from search_agent.contract.tool import ToolCandidate
 
 HardConditionStatus = Literal["satisfied", "violated", "unverified"]
-CandidateHardConditionStatus = Literal[
-    "satisfied", "violated", "unverified", "not_applicable"
-]
+CandidateHardConditionStatus = Literal["satisfied", "violated", "unverified", "not_applicable"]
 _STATUS_RANK = {"satisfied": 0, "not_applicable": 0, "unverified": 1, "violated": 2}
 
 
@@ -138,14 +136,18 @@ def _pick_fact(
         return None
 
     index = find(
-        lambda fact: str(fact.get("field") or "").strip() == field
-        and str(fact.get("operator") or "eq").strip() == operator
-        and _canonical_values(_expected_values(fact)) == expected
+        lambda fact: (
+            str(fact.get("field") or "").strip() == field
+            and str(fact.get("operator") or "eq").strip() == operator
+            and _canonical_values(_expected_values(fact)) == expected
+        )
     )
     if index is None:
         index = find(
-            lambda fact: str(fact.get("field") or "").strip() == field
-            and str(fact.get("operator") or "eq").strip() == operator
+            lambda fact: (
+                str(fact.get("field") or "").strip() == field
+                and str(fact.get("operator") or "eq").strip() == operator
+            )
         )
     if index is None:
         index = find(lambda fact: str(fact.get("field") or "").strip() == field)
@@ -160,9 +162,7 @@ def _candidate_facts(
     raw_facts = _fact_pool(tc)
     if not required:
         return [
-            _normalize_fact(fact)
-            for fact in raw_facts
-            if fact.get("required", True) is not False
+            _normalize_fact(fact) for fact in raw_facts if fact.get("required", True) is not False
         ]
 
     remaining = list(raw_facts)
