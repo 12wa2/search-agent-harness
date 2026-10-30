@@ -149,6 +149,23 @@ Qwen、DeepSeek、vLLM 等 OpenAI-compatible 端点可直接接入，但上游�
 
 参考服务不内置用户认证。生产部署应由可信 API 网关注入身份和 permission，不要信任浏览器直接提交的 `companyId` / `hrId` / `permission`。
 
+### 10.1 并发准入
+
+`/search` 和 `/search/stream` 共用进程内准入控制。每个 uvicorn worker 各自持有限额；
+多 worker 或多实例部署不会自动共享全局配额。
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `SEARCH_AGENT_MAX_CONCURRENT_RUNS` | `4` | 同时执行的 Agent 运行数，最小 1 |
+| `SEARCH_AGENT_MAX_QUEUED_RUNS` | `16` | 等待运行名额的最大请求数；`0` 表示不排队 |
+| `SEARCH_AGENT_RUN_QUEUE_TIMEOUT_SEC` | `3.0` | 排队等待秒数；超时返回 `429` 和 `Retry-After` |
+
+超限响应体由 `server.py` 统一生成，`detail.code=server_busy`，`detail.reason` 为
+`queue_full` 或 `timeout`。`GET /healthz` 的 `concurrency` 字段提供 `active`、`queued`、
+`peakActive`、`accepted`、`completed`、`rejected`、`timeouts` 和平均排队时间，便于压测与排障。
+这些限额保护单进程内下游 LLM/ES 资源，不提供跨进程的持久队列或公平调度；需要这些能力时再引入
+共享网关或消息队列。
+
 ## 11. 容器
 
 | 变量 | 默认 | 说明 |

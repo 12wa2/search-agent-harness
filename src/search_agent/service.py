@@ -439,7 +439,11 @@ class SearchAgentService:
                 ),
                 "surfacedDocIds": [tc.doc_id for tc in items],
             },
-            "rounds": {"iterations": 0, "newQualifiedPerRound": []},
+            "rounds": {
+                "iterations": 0,
+                "qualifiedTotalPerRound": [],
+                "newQualifiedPerRound": [],
+            },
             "match": {"abilityCoverage": 0.0, "hardMatchHitRate": 0.0},
             "reasoning": {"sourceConversion": {}},
             "reflection": {"gain": []},
@@ -616,6 +620,11 @@ class SearchAgentService:
             debug["entryRoute"] = state["entry_route"]
         if state.get("direct_search"):
             debug["directSearch"] = state["direct_search"]
+        round_summaries = list(state.get("round_summaries") or [])
+        if round_summaries:
+            debug["roundSummaries"] = round_summaries
+        if state.get("final_search_summary"):
+            debug["finalSearch"] = state["final_search_summary"]
         return debug
 
     @staticmethod

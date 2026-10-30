@@ -289,8 +289,9 @@
       <div class="metric-list">
         <div class="metric"><span id="m-calls">—</span><small>LLM 调用 (Agent+V2)</small></div>
         <div class="metric"><span id="m-tokens">—</span><small>tokens</small></div>
-        <div class="metric"><span id="m-iterations">—</span><small>迭代轮数</small></div>
         <div class="metric"><span id="m-elapsed">—</span><small>耗时</small></div>
+        <div class="metric"><span id="m-rounds">—</span><small>执行轮次</small></div>
+        <div class="metric"><span id="m-iterations">—</span><small>反思迭代</small></div>
         <div class="metric"><span id="m-judged">—</span><small>判定候选</small></div>
         <div class="metric"><span id="m-degraded">—</span><small>降级</small></div>
       </div>
@@ -324,7 +325,7 @@
       </div>
       <div class="agent-runbar-meta" aria-label="执行进度">
         <span><b id="agent-stage-count">0</b> 阶段</span>
-        <span><b id="agent-round">0</b> 轮</span>
+        <span>执行 <b id="agent-round">0</b> 轮</span>
       </div>
     </div>
 

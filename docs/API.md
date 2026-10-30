@@ -24,7 +24,7 @@ search-agent serve --backend hybrid_v2
 | 方法 | 路径 | 作用 |
 |---|---|---|
 | `GET` | `/` | 零构建 Web 控制台 |
-| `GET` | `/healthz` | 当前模式、LLM、后端和在线配置状态 |
+| `GET` | `/healthz` | 当前模式、LLM、后端、在线配置与并发快照 |
 | `POST` | `/runtime/mode` | 在快速演示与完整在线预设之间切换 |
 | `POST` | `/search` | 同步执行一次搜索 |
 | `GET` | `/search/stream` | 通过查询参数启动 SSE 搜索 |
@@ -104,6 +104,30 @@ curl -s http://127.0.0.1:8000/search \
 `matchExplanation.hardMatches` 同时提供 `expectedValues`、可选 `actualValues` 和 `status`。
 违规与待核实候选人会排在满足条件的候选人之后，但仍保留在 `items`、分页结果和会话快照中。
 
+### 轮次策略效果（`debug`）
+
+`details=true` 且实际执行 Agent 策略循环时，`debug` 额外提供逐轮归因：
+
+| 字段 | 说明 |
+|---|---|
+| `roundSummaries[]` | 按完成顺序排列的轮次快照；第一轮是初始策略基线 |
+| `roundSummaries[].round` / `kind` | 轮次序号与类型；路径轮次为 `path` |
+| `newUnique` / `newJudged` / `newMustQualified` | 本轮去重后的新增召回、新判断、命中全部 must 能力的新候选人数 |
+| `uniqueReturned` / `judgedTotal` / `mustQualifiedTotal` | 本轮去重召回、累计判断、累计命中全部 must 能力的人数 |
+| `newPathCount` / `newSoftSignals` / `newSourceHints` | 相对上一轮新增的检索路径、软信号与来源假设 |
+| `gaps` / `actions` | 驱动本轮调整的反思缺口与可执行策略动作 |
+| `llmCallsDelta` / `elapsedMsDelta` | 本轮新增的 LLM 调用数与墙钟耗时 |
+| `next` / `stopReason` | 本轮结束后的去向，以及收敛时的结束原因 |
+| `finalSearch` | 可选的最终收敛检索快照；`kind=final`，成本从 finalize 开始处单独计量 |
+
+所有 `new*` 字段都是相对上一轮完成时的增量，第一轮直接作为基线。`newMustQualified` 只表示
+命中岗位的全部 must 能力，**不等于硬条件合规**；硬条件仍以 `hardConditionSummary` 为准。
+UI 会省略没有新增候选的最终检索区块，但原始数据仍保留在 `debug.finalSearch` 中。
+
+`roundSummaries.length` 表示已完成的检索执行轮次；`agentMetrics.rounds.iterations`
+表示进入并完成 `reflect → revise` 的反思迭代次数。首轮直接收敛时，执行轮次为 `1`、
+反思迭代为 `0`，二者不是同一指标，客户端不应互相替代。
+
 ## 4. SSE 搜索
 
 ### GET /search/stream
@@ -143,6 +167,8 @@ event: result
 data: {"query":"...","total":16,"items":[...],"debug":{...}}
 ```
 
+`evaluate` 与 `revise` 的 `detail.roundSummary` 是最新一轮快照；`result` 的
+`debug.roundSummaries` 是完整数组。`new*` 已经是增量，客户端不应按 SSE 事件再次累加。
 前端应以真实 `stage` 事件为准，不能因为页面存在 8 个阶段轨道就把未执行阶段标记为完成。路由与阶段定义见 [意图路由](INTENT_ROUTING.md)。
 
 ## 5. 会话与候选人排除
@@ -193,9 +219,42 @@ curl -s http://127.0.0.1:8000/runtime/mode \
   -d '{"mode":"online"}'
 ```
 
-`mode` 只能是 `offline` 或 `online`。在线模式未配置 Hybrid V2 / Elasticsearch 时返回 `409`；搜索执行期间切换也会被拒绝。`GET /healthz` 可查看当前模式、LLM 类型、离线/在线后端与 `onlineConfigured`。
+`mode` 只能是 `offline` 或 `online`。在线模式未配置 Hybrid V2 / Elasticsearch 时返回 `409`；搜索执行期间切换也会被拒绝。`GET /healthz` 可查看当前模式、LLM 类型、离线/在线后端、`onlineConfigured`、`activeRuns` 和 `concurrency` 快照。
 
-## 8. 状态码与边界
+## 8. 并发准入与 429
+
+`POST /search`、`GET /search/stream` 和 `POST /search/stream` 在进入搜索前获取一个进程内运行名额。
+活跃运行数和排队数分别受 `SEARCH_AGENT_MAX_CONCURRENT_RUNS` 与
+`SEARCH_AGENT_MAX_QUEUED_RUNS` 限制；排队超过 `SEARCH_AGENT_RUN_QUEUE_TIMEOUT_SEC` 会被拒绝。
+超限不会执行搜索；排队期间会暂时占用运行计数，但被拒绝的请求不会遗留运行时名额。
+
+拒绝响应为 HTTP `429`，并带 `Retry-After` 秒数：
+
+```json
+{
+  "detail": {
+    "code": "server_busy",
+    "reason": "queue_full",
+    "message": "Agent 并发队列已满，请稍后重试。",
+    "retryAfterSec": 3,
+    "concurrency": {
+      "limit": 4,
+      "active": 4,
+      "queued": 16,
+      "maxQueued": 16
+    }
+  }
+}
+```
+
+上例省略了动态快照中的部分字段；实际 `concurrency` 还包含 `peakActive`、`queueTimeoutSec`、
+`accepted`、`completed`、`rejected`、`timeouts` 和 `avgQueueWaitMs`。
+
+`reason=timeout` 表示请求获得了排队位，但在等待窗口内没有拿到运行名额。客户端应遵循
+`Retry-After` 做退避；不要把 `429` 当作空结果或重试风暴。`GET /healthz` 的
+`concurrency` 快照包含 `peakActive`、`rejected` 和 `timeouts`，可用于验收压测。
+
+## 9. 状态码与边界
 
 | 状态码 | 场景 |
 |---|---|
@@ -203,6 +262,7 @@ curl -s http://127.0.0.1:8000/runtime/mode \
 | `403` | 开启 `SEARCH_AGENT_REQUIRE_PERMISSION=1` 后，搜索缺少 `permission`，或 `permission` 与顶层租户字段不一致 |
 | `404` | 会话或分页令牌不存在，或作用域不匹配 |
 | `409` | 在线模式未配置，或运行期间尝试切换模式 |
+| `429` | 活跃运行与排队位已满，或排队等待超时；响应带 `Retry-After` |
 | `503` | 搜索服务暂时不可用 |
 
 完整 JSON Schema 以运行中的 `/openapi.json` 和 `src/search_agent/models/api.py` 为准。

@@ -1,0 +1,60 @@
+{
+  "startedAt": "2026-10-27T14:18:03.664281+00:00",
+  "baseUrl": "http://127.0.0.1:8010",
+  "query": "帮我找 5 年以上 Python 后端工程师，上海优先",
+  "topK": 5,
+  "requests": 100,
+  "clientConcurrency": 25,
+  "timeoutSec": 30.0,
+  "durationSec": 0.845,
+  "rps": 118.35,
+  "successfulRps": 118.35,
+  "counts": {
+    "success": 100,
+    "http429": 0,
+    "networkErrors": 0,
+    "otherHttpErrors": 0
+  },
+  "latencyMs": {
+    "min": 57.3,
+    "mean": 192.5,
+    "p50": 175.0,
+    "p95": 277.1,
+    "p99": 285.0,
+    "max": 288.9
+  },
+  "observed": {
+    "maxActive": 0,
+    "maxQueued": 0,
+    "peakActive": 3
+  },
+  "healthBefore": {
+    "limit": 4,
+    "active": 0,
+    "peakActive": 3,
+    "queued": 0,
+    "maxQueued": 16,
+    "queueTimeoutSec": 3.0,
+    "retryAfterSec": 3,
+    "accepted": 101,
+    "completed": 101,
+    "rejected": 0,
+    "timeouts": 0,
+    "avgQueueWaitMs": 0.0
+  },
+  "healthAfter": {
+    "limit": 4,
+    "active": 0,
+    "peakActive": 3,
+    "queued": 0,
+    "maxQueued": 16,
+    "queueTimeoutSec": 3.0,
+    "retryAfterSec": 3,
+    "accepted": 202,
+    "completed": 202,
+    "rejected": 0,
+    "timeouts": 0,
+    "avgQueueWaitMs": 0.0
+  },
+  "errors": []
+}

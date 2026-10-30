@@ -145,7 +145,7 @@ const copy = {
     evidence: [
       ["会话与状态", "L1 最近上下文 · L2 会话归档 · L3 已看 / 排除", "Redis 热存储 · 内存回退"],
       ["流式与追踪", "SSE 阶段事件 · agentTrace · 指标", "预算 / 降级 / 取消原因"],
-      ["评测与交付", "离线 A/B · baseline · 550 项测试", "排序名单 + 候选人证据"],
+      ["评测与交付", "离线 A/B · baseline · 562 项测试", "排序名单 + 候选人证据"],
     ],
     footer: "确定性负责边界，推理负责策略。",
     version: "search-agent-harness · v0.1.0",
@@ -260,7 +260,7 @@ const copy = {
     evidence: [
       ["Conversation & session", "L1 recent context · L2 archive · L3 exclusions", "Redis hot store · in-memory fallback"],
       ["Streaming & trace", "SSE stage events · agentTrace · metrics", "budget / degrade / cancellation reasons"],
-      ["Evaluation & delivery", "offline A/B · baseline · 550 tests", "ranked shortlist + candidate evidence"],
+      ["Evaluation & delivery", "offline A/B · baseline · 562 tests", "ranked shortlist + candidate evidence"],
     ],
     footer: "Determinism where it matters. Reasoning where it helps.",
     version: "search-agent-harness · v0.1.0",

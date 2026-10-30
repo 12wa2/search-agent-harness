@@ -40,6 +40,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 from starlette.responses import Response
 from starlette.types import Scope
 
@@ -52,6 +53,11 @@ from search_agent.conversation_memory import (
     ConversationSummary,
     ConversationTurn,
     new_conversation_id,
+)
+from search_agent.core.concurrency import (
+    BoundedRunLimiter,
+    ConcurrencyLimitError,
+    RunLease,
 )
 from search_agent.demo import DEMO_DATA, ScriptedLlmClient
 from search_agent.intent_router import Intent, IntentRouter, RouteDecision
@@ -67,6 +73,48 @@ from search_agent.tools.runtime import RuntimeSearchTool
 _WEB_DIR = Path(__file__).resolve().parent / "web"
 _PROCESS_STARTED_AT = time.time()
 logger = logging.getLogger(__name__)
+
+
+class _RuntimeRunGuard:
+    """Release a limiter lease and the runtime run counter exactly once."""
+
+    def __init__(self, runtime: RuntimeLlmRouter, lease: RunLease) -> None:
+        self._runtime = runtime
+        self._lease = lease
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+        try:
+            self._runtime.end_run()
+        finally:
+            self._lease.release()
+
+
+def _acquire_run_guard(
+    runtime: RuntimeLlmRouter,
+    limiter: BoundedRunLimiter,
+) -> _RuntimeRunGuard:
+    """Lock the runtime mode while waiting for, and executing, one run."""
+    runtime.begin_run()
+    try:
+        lease = limiter.acquire()
+    except Exception:
+        runtime.end_run()
+        raise
+    return _RuntimeRunGuard(runtime, lease)
+
+
+def _busy_http_exception(exc: ConcurrencyLimitError) -> HTTPException:
+    return HTTPException(
+        status_code=429,
+        detail=exc.to_payload(),
+        headers={"Retry-After": str(exc.retry_after_sec)},
+    )
 
 
 class _NoCacheStaticFiles(StaticFiles):
@@ -98,6 +146,26 @@ class CandidateExclusionRequest(BaseModel):
     """Toggle one candidate in the conversation's explicit exclusion set."""
 
     excluded: bool
+
+
+def _round_summary_payload(state: dict[str, Any]) -> dict[str, Any] | None:
+    """Latest round snapshot with any later revise outcome applied."""
+    summaries = state.get("round_summaries") or []
+    if not summaries:
+        return None
+    summary = dict(summaries[-1])
+    phase = state.get("phase")
+    if phase == "execute":
+        summary["next"] = "execute"
+        summary["stopReason"] = None
+    elif phase in {"finalize", "done"}:
+        summary["next"] = "finalize"
+        summary["stopReason"] = (
+            state.get("finalize_reason")
+            or ("cancelled" if state.get("cancelled") else None)
+            or state.get("degraded_reason")
+        )
+    return summary
 
 
 def _stage_payload(event: str, state: dict[str, Any]) -> dict[str, Any]:
@@ -158,7 +226,11 @@ def _stage_payload(event: str, state: dict[str, Any]) -> dict[str, Any]:
     if event == "judge":
         return {"qualified": len(state.get("accumulated") or {})}
     if event == "evaluate":
-        return {"next": state.get("phase"), "stopReason": state.get("finalize_reason")}
+        payload = {"next": state.get("phase"), "stopReason": state.get("finalize_reason")}
+        round_summary = _round_summary_payload(state)
+        if round_summary is not None:
+            payload["roundSummary"] = round_summary
+        return payload
     if event == "reflect":
         reflections = state.get("reflections") or []
         if not reflections:
@@ -171,11 +243,15 @@ def _stage_payload(event: str, state: dict[str, Any]) -> dict[str, Any]:
         }
     if event == "revise":
         talent = state.get("talent_profile")
-        return {
+        payload = {
             "softSignals": len(talent.soft_signals) if talent else 0,
             "converged": bool(state.get("profile_converged")),
             "iteration": state.get("iteration"),
         }
+        round_summary = _round_summary_payload(state)
+        if round_summary is not None:
+            payload["roundSummary"] = round_summary
+        return payload
     if event == "finalize":
         return {"total": state.get("final_total"), "searchTotal": state.get("final_search_total")}
     if event.startswith("degrade"):
@@ -231,14 +307,14 @@ async def _stream_reply(
 
 
 async def _tracked_search_events(
-    events: AsyncIterator[str], runtime: RuntimeLlmRouter
+    events: AsyncIterator[str], guard: _RuntimeRunGuard
 ) -> AsyncIterator[str]:
-    """Release the runtime run guard after the SSE generator closes."""
+    """Release the run guard after the SSE generator closes."""
     try:
         async for event in events:
             yield event
     finally:
-        runtime.end_run()
+        guard.close()
 
 
 async def _stream_search(
@@ -314,6 +390,7 @@ def create_app(
     intent_router: IntentRouter | None = None,
     conversation_store: ConversationStore | None = None,
     session_store: AgentSessionStore | None = None,
+    run_limiter: BoundedRunLimiter | None = None,
 ) -> FastAPI:
     """Build the HTTP app. Defaults to the zero-key quick-demo preset.
 
@@ -351,6 +428,7 @@ def create_app(
     router = intent_router or IntentRouter()
     resolved_conversations = conversation_store or ConversationStore()
     resolved_sessions = session_store or AgentSessionStore()
+    resolved_run_limiter = run_limiter or BoundedRunLimiter.from_env()
     service = SearchAgentService(
         tool=runtime_tool,
         llm_client=runtime,
@@ -365,6 +443,7 @@ def create_app(
     )
     app.state.runtime_llm = runtime
     app.state.runtime_tool = runtime_tool
+    app.state.run_limiter = resolved_run_limiter
 
     def runtime_health() -> dict[str, Any]:
         return {
@@ -377,6 +456,8 @@ def create_app(
             "onlineBackend": runtime_tool.online_tool_name,
             "llm": runtime.active_client_name,
             "startedAt": _PROCESS_STARTED_AT,
+            "activeRuns": runtime.active_runs,
+            "concurrency": resolved_run_limiter.snapshot(),
         }
 
     def require_trusted_permission(req: SearchRequest) -> None:
@@ -427,19 +508,27 @@ def create_app(
     @app.post("/search")
     def search(req: SearchRequest) -> SearchResponse:
         require_trusted_permission(req)
-        runtime.begin_run()
         try:
-            return service.search(req)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
+            guard = _acquire_run_guard(runtime, resolved_run_limiter)
+        except ConcurrencyLimitError as exc:
+            raise _busy_http_exception(exc) from exc
+        try:
+            try:
+                return service.search(req)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
         finally:
-            runtime.end_run()
+            guard.close()
 
     def stream_response(req: SearchRequest) -> StreamingResponse:
         decision = router.route(req.query)
+        guard: _RuntimeRunGuard | None = None
         if decision.intent is Intent.SEARCH:
             require_trusted_permission(req)
-            runtime.begin_run()
+            try:
+                guard = _acquire_run_guard(runtime, resolved_run_limiter)
+            except ConcurrencyLimitError as exc:
+                raise _busy_http_exception(exc) from exc
             body = _tracked_search_events(
                 _stream_search(
                     runtime_tool,
@@ -449,16 +538,22 @@ def create_app(
                     session_store=resolved_sessions,
                     request_decision=decision,
                 ),
-                runtime,
+                guard,
             )
         else:
             memory = _record_reply_turn(resolved_conversations, req, decision)
             body = _stream_reply(decision, memory)
-        return StreamingResponse(
-            body,
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
+        try:
+            return StreamingResponse(
+                body,
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                background=BackgroundTask(guard.close) if guard else None,
+            )
+        except Exception:
+            if guard is not None:
+                guard.close()
+            raise
 
     @app.get("/search/stream")
     def search_stream(

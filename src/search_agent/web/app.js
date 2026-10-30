@@ -47,7 +47,7 @@ const RESUME_PAGE = "/resume.html";
 const RESUME_CACHE_PREFIX = "search-agent:candidate:";
 const FINALIZE_REASON_COPY = Object.freeze({
   target_reached: "达到目标人数，搜索提前收敛。",
-  max_iterations: "达到迭代轮数上限，交付当前最优结果。",
+  max_iterations: "达到策略调整次数上限，交付当前最优结果。",
   time_budget: "达到时间预算上限，交付当前最优结果。",
   llm_budget: "达到模型调用预算上限，交付当前最优结果。",
   token_budget: "达到 Token 预算上限，交付当前最优结果。",
@@ -58,6 +58,13 @@ const FINALIZE_REASON_COPY = Object.freeze({
   paths_exhausted: "反思后没有新的可执行路径，已收敛现有结果。",
   no_path_actions: "反思没有产生可执行的策略动作，已收敛现有结果。",
   reflection_empty: "没有可用的反思结果，已收敛现有结果。",
+});
+const ROUND_ACTION_LABEL = Object.freeze({
+  add_path: "补充路径",
+  loosen: "放宽条件",
+  tighten: "收紧条件",
+  drop: "移除路径",
+  clarify: "请求澄清",
 });
 
 const state = {
@@ -436,6 +443,25 @@ function deliveryOverview(payload) {
     reasonCode,
     reason: FINALIZE_REASON_COPY[reasonCode] || "",
   };
+}
+
+function resolveExecutionRounds(payload) {
+  const summaries = payload?.debug?.roundSummaries;
+  if (Array.isArray(summaries) && summaries.length > 0) {
+    return summaries.length;
+  }
+  const totals = payload?.debug?.agentMetrics?.rounds?.qualifiedTotalPerRound;
+  if (Array.isArray(totals) && totals.length > 0) {
+    return totals.length;
+  }
+  if (payload?.debug?.directSearch) return 1;
+  const executed = Number(state.executeCount || 0);
+  return Number.isFinite(executed) && executed > 0 ? executed : 0;
+}
+
+function resolveReflectionIterations(payload) {
+  const iterations = Number(payload?.debug?.agentMetrics?.rounds?.iterations || 0);
+  return Number.isFinite(iterations) && iterations > 0 ? iterations : 0;
 }
 
 function hardGapBreakdown(overview) {
@@ -1161,12 +1187,15 @@ function openExecutionConsole() {
 
 function buildWorkbenchTaskHead(wb, payload, run, overview) {
   const metrics = payload.debug?.agentMetrics || {};
-  const iterations = Number(metrics.rounds?.iterations ?? run?.visitedStages?.size ?? 0);
+  const executionRounds = resolveExecutionRounds(payload);
+  const reflectionIterations = resolveReflectionIterations(payload);
   const elapsedMs = Number(metrics.meta?.elapsedMs || 0);
   const route = payload.debug?.difficultyRoute || run?.route || "";
   const kicker = el("div", "aw-task-kicker");
   kicker.append(el("span", "aw-status-dot"));
-  const pace = route === "direct_search" ? "直连检索" : `${Math.max(1, iterations)} 轮`;
+  const pace = route === "direct_search"
+    ? "直连检索"
+    : `执行 ${executionRounds} 轮 · 策略调整 ${reflectionIterations} 次`;
   const duration = elapsedMs > 0
     ? ` · ${elapsedMs < 10000 ? `${(elapsedMs / 1000).toFixed(1)} 秒` : `${Math.round(elapsedMs / 1000)} 秒`}`
     : "";
@@ -1225,7 +1254,8 @@ function buildWorkbenchRunPanel(wb, payload, run, overview) {
   const metrics = payload.debug?.agentMetrics || {};
   const hasMetrics = Boolean(payload.debug?.agentMetrics);
   const pageCoverage = computeWorkbenchPageCoverage(wb.pageEntries);
-  const iterations = Number(metrics.rounds?.iterations ?? run?.visitedStages?.size ?? 0);
+  const executionRounds = resolveExecutionRounds(payload);
+  const reflectionIterations = resolveReflectionIterations(payload);
   const judged = Number(metrics.recall?.judged || 0);
   const hardRate = hasMetrics ? metrics.match?.hardMatchHitRate : pageCoverage.hardRate;
   const abilityCoverage = hasMetrics ? metrics.match?.abilityCoverage : pageCoverage.abilityCoverage;
@@ -1262,8 +1292,8 @@ function buildWorkbenchRunPanel(wb, payload, run, overview) {
       hitTarget || overview.target <= 0
         ? overview.hasHardGap
           ? `已交付 ${overview.delivered} 位候选人，其中硬条件${hardGapBreakdown(overview)}，请优先复核。`
-          : `已交付 ${overview.delivered} 位候选人，完成 ${Math.max(1, iterations)} 轮检索。可以继续追问，或调整条件发起下一轮。`
-        : `已交付 ${overview.delivered} 位候选人，完成 ${Math.max(1, iterations)} 轮检索。当前仍有数量缺口，可补充或放宽条件后再次检索。`,
+          : `已交付 ${overview.delivered} 位候选人，执行 ${executionRounds} 轮检索，策略调整 ${reflectionIterations} 次。可以继续追问，或调整条件发起下一轮。`
+        : `已交付 ${overview.delivered} 位候选人，执行 ${executionRounds} 轮检索，策略调整 ${reflectionIterations} 次。当前仍有数量缺口，可补充或放宽条件后再次检索。`,
     ),
   );
   const progress = el("div", "aw-progress");
@@ -1350,7 +1380,8 @@ function buildWorkbenchRunPanel(wb, payload, run, overview) {
     item.append(el("strong", "", value), el("span", "", label));
     ledgerGrid.append(item);
   };
-  addLedger(String(Math.max(1, iterations)), "检索轮次");
+  addLedger(String(executionRounds), "执行轮次");
+  addLedger(String(reflectionIterations), "反思迭代");
   addLedger(stageCount > 0 ? String(stageCount) : "—", "执行阶段");
   addLedger(judged > 0 ? String(judged) : "—", "通过判定");
   ledger.append(ledgerGrid);
@@ -2594,6 +2625,169 @@ function reasoningStep(kicker, copy) {
   return item;
 }
 
+function formatRoundDuration(ms) {
+  const value = Math.max(0, Number(ms || 0));
+  if (!value) return "0 秒";
+  if (value < 1000) return `${Math.round(value)} 毫秒`;
+  return `${(value / 1000).toFixed(value < 10000 ? 1 : 0)} 秒`;
+}
+
+function roundAdjustmentParts(summary) {
+  const parts = [];
+  const paths = Number(summary?.newPathCount || 0);
+  const softSignals = Number(summary?.newSoftSignals || 0);
+  const sourceHints = Number(summary?.newSourceHints || 0);
+  if (paths > 0) parts.push(`新增 ${paths} 条路径`);
+  if (softSignals > 0) parts.push(`+${softSignals} 个软信号`);
+  if (sourceHints > 0) parts.push(`+${sourceHints} 个来源假设`);
+  return parts;
+}
+
+function roundActionLabels(summary) {
+  const actions = Array.isArray(summary?.actions) ? summary.actions : [];
+  const labels = [];
+  for (const action of actions) {
+    const label = ROUND_ACTION_LABEL[action?.kind] || String(action?.kind || "").trim();
+    if (label && !labels.includes(label)) labels.push(label);
+  }
+  return labels;
+}
+
+function roundBadgeText(summary) {
+  const parts = roundActionLabels(summary).slice(0, 2);
+  const softSignals = Number(summary?.newSoftSignals || 0);
+  const sourceHints = Number(summary?.newSourceHints || 0);
+  if (softSignals > 0) parts.push(`+${softSignals} 个软信号`);
+  if (sourceHints > 0) parts.push(`+${sourceHints} 个来源假设`);
+  return parts.join(" · ") || roundAdjustmentParts(summary).join(" · ") || "画像更新";
+}
+
+function finalSearchHasGain(summary) {
+  return ["newUnique", "newJudged", "newMustQualified"].some(
+    (key) => Number(summary?.[key] || 0) > 0,
+  );
+}
+
+function roundOutcomeCopy(summary) {
+  if (summary?.stopReason) {
+    return `去向 · 结束：${FINALIZE_REASON_COPY[summary.stopReason] || summary.stopReason}`;
+  }
+  if (summary?.next === "execute") return "去向 · 调整已生效，进入下一轮验证";
+  if (summary?.next === "reflect") return "去向 · 缺口仍在，继续反思下一轮策略";
+  if (summary?.next === "finalize") return "去向 · 策略已收敛，进入最终交付";
+  return "";
+}
+
+function appendRoundEffects(container, payload) {
+  const rounds = (Array.isArray(payload.debug?.roundSummaries) ? payload.debug.roundSummaries : [])
+    .filter((summary) => summary && typeof summary === "object");
+  const finalSearch =
+    payload.debug?.finalSearch && typeof payload.debug.finalSearch === "object"
+      ? payload.debug.finalSearch
+      : null;
+  const showFinalSearch = Boolean(finalSearch && finalSearchHasGain(finalSearch));
+  if (rounds.length < 2 && !showFinalSearch) return;
+
+  const section = el("section", "chat-round-effects");
+  section.setAttribute("aria-label", "每轮搜索策略效果");
+  const head = el("div", "chat-round-effects-head");
+  const title = el("div");
+  title.append(
+    el("strong", "", "策略效果"),
+    el("span", "", "真实 evaluate / reflect / revise / finalize 数据的增量与成本"),
+  );
+  head.append(title, el("span", "chat-round-effects-count", `${Math.max(1, rounds.length)} 轮`));
+  section.append(head);
+
+  if (rounds.length) {
+    const list = el("ol", "chat-round-effect-list");
+    for (const summary of rounds) {
+      const roundNumber = Math.max(1, Number(summary.round || 1));
+      const baseline = roundNumber === 1;
+      const item = el("li", `chat-round-effect${baseline ? " is-baseline" : ""}`);
+      const titleRow = el("div", "chat-round-effect-title");
+      titleRow.append(
+        el("b", "", `第 ${roundNumber} 轮`),
+        el("span", "", baseline ? "初始策略" : "策略调整后"),
+      );
+      if (!baseline) {
+        const badge = el("em", "chat-round-effect-badge", roundBadgeText(summary));
+        if (summary.actions?.length) {
+          badge.title = summary.actions
+            .map((action) => `${ROUND_ACTION_LABEL[action.kind] || action.kind}${action.rationale ? `：${action.rationale}` : ""}`)
+            .join("\n");
+        }
+        titleRow.append(badge);
+      }
+      item.append(titleRow);
+
+      if (!baseline) {
+        const gaps = (summary.gaps || []).filter(Boolean);
+        const actions = Array.isArray(summary.actions) ? summary.actions : [];
+        const trigger = gaps.length
+          ? gaps.slice(0, 2).join("；")
+          : actions.find((action) => action?.rationale)?.rationale || "覆盖检查触发策略调整";
+        const triggerLine = el("p", "chat-round-effect-trigger");
+        triggerLine.append(el("strong", "", "触发："), document.createTextNode(trigger));
+        item.append(triggerLine);
+      }
+
+      const grid = el("div", "chat-round-effect-grid");
+      const addMetric = (label, value, tone = "", tooltip = "") => {
+        const metric = el("span", `chat-round-effect-metric ${tone}`.trim());
+        metric.append(el("small", "", label), el("b", "", value));
+        if (tooltip) metric.title = tooltip;
+        grid.append(metric);
+      };
+      addMetric(`${baseline ? "" : "新增"}召回`, Number(summary.newUnique || 0), "is-yield");
+      addMetric(`${baseline ? "" : "新增"}判断`, Number(summary.newJudged || 0), "is-judge");
+      addMetric(
+        `${baseline ? "" : "新增"}通过`,
+        Number(summary.newMustQualified || 0),
+        "is-pass",
+        "新增判断中已命中全部必备能力的人数",
+      );
+      const cost = `${Number(summary.llmCallsDelta || 0)} LLM · ${formatRoundDuration(summary.elapsedMsDelta)}`;
+      addMetric(
+        baseline ? "起始成本" : "本轮消耗",
+        baseline ? cost : `+${Number(summary.llmCallsDelta || 0)} LLM · +${formatRoundDuration(summary.elapsedMsDelta)}`,
+        "is-cost",
+      );
+      item.append(grid);
+      const outcome = roundOutcomeCopy(summary);
+      if (outcome) item.append(el("p", "chat-round-effect-outcome", outcome));
+      list.append(item);
+    }
+    section.append(list);
+  }
+
+  if (showFinalSearch) {
+    const finalRow = el("div", "chat-round-final");
+    const finalTitle = el("div", "chat-round-final-title");
+    finalTitle.append(
+      el("b", "", finalSearch.label || "最终收敛检索"),
+      el("span", "", "画像富化后的额外召回与判断"),
+    );
+    const facts = el("div", "chat-round-final-facts");
+    const addFact = (label, value) => {
+      const fact = el("span");
+      fact.append(el("b", "", value), el("small", "", label));
+      facts.append(fact);
+    };
+    addFact("新召回", Number(finalSearch.newUnique || 0));
+    addFact("新判断", Number(finalSearch.newJudged || 0));
+    addFact("新通过", Number(finalSearch.newMustQualified || 0));
+    addFact(
+      "本轮消耗",
+      `+${Number(finalSearch.llmCallsDelta || 0)} LLM · +${formatRoundDuration(finalSearch.elapsedMsDelta)}`,
+    );
+    finalRow.append(finalTitle, facts);
+    section.append(finalRow);
+  }
+
+  container.append(section);
+}
+
 function appendChatReasoning(container, payload) {
   if (payload.debug?.difficultyRoute === "direct_search") return;
   const events = state.runEvents || [];
@@ -2786,7 +2980,7 @@ function renderChatResult(payload) {
       add(metrics.meta?.agentLlmCalls ?? 0, "Agent LLM");
       add(metrics.meta?.parserLlmCalls ?? metrics.meta?.llmCalls ?? 0, "V2 parser LLM");
     } else {
-      add(metrics.rounds?.iterations ?? Math.max(1, state.executeCount), "检索轮次");
+      add(resolveExecutionRounds(payload), "执行轮次");
       add(metrics.recall?.judged ?? "—", "通过判定");
     }
     message.body.append(stats);
@@ -2796,6 +2990,7 @@ function renderChatResult(payload) {
     note.append(el("strong", "", "降级原因："), document.createTextNode(degradedReason));
     message.body.append(note);
   }
+  appendRoundEffects(message.body, payload);
 
   let workbench = null;
   if (clarification) {
@@ -2862,17 +3057,17 @@ function renderChatReply(payload) {
   scrollChatToEnd();
 }
 
-function renderChatError(message) {
+function renderChatError(message, title = "执行失败") {
   state.activeRun?.pending?.remove();
   const run = state.activeRun?.chatRun;
   if (run) setChatStatus(run.status, "失败", "failed");
   const chatMessage = createChatMessage("agent", "chat-error-message");
-  setChatStatus(chatMessage.status, "执行失败", "failed");
+  setChatStatus(chatMessage.status, title, "failed");
   chatMessage.body.append(
-    el("h3", "", "这次执行没有完成"),
+    el("h3", "", title === "服务繁忙" ? "当前搜索服务繁忙" : "这次执行没有完成"),
     el("p", "", message),
   );
-  announceAgentStatus(`执行失败：${message}`);
+  announceAgentStatus(`${title}：${message}`);
   scrollChatToEnd();
 }
 
@@ -3533,7 +3728,7 @@ function snapTimelineToLatestCard() {
 function appendDeliverySummary(payload) {
   const metrics = payload.debug?.agentMetrics || {};
   const directRoute = payload.debug?.difficultyRoute === "direct_search";
-  const rounds = metrics.rounds?.iterations ?? state.executeCount;
+  const executionRounds = resolveExecutionRounds(payload);
   const judged = metrics.recall?.judged;
   const overview = deliveryOverview(payload);
   const li = el("li", "agent-delivery");
@@ -3575,7 +3770,7 @@ function appendDeliverySummary(payload) {
     addStat(metrics.meta?.agentLlmCalls ?? 0, "Agent LLM");
     addStat(metrics.meta?.parserLlmCalls ?? metrics.meta?.llmCalls ?? 0, "V2 parser LLM");
   } else {
-    addStat(rounds, "检索轮次");
+    addStat(executionRounds, "执行轮次");
     if (judged !== undefined) addStat(judged, "通过判定");
   }
   li.append(head, stats);
@@ -4393,21 +4588,23 @@ function renderMetrics(payload) {
   if (!m) {
     setMetric("m-calls", "—");
     setMetric("m-tokens", "—");
-    setMetric("m-iterations", Math.max(1, state.executeCount));
+    const executionRounds = resolveExecutionRounds(payload);
+    setMetric("m-rounds", executionRounds > 0 ? executionRounds : "—");
+    setMetric("m-iterations", "—");
     setMetric("m-elapsed", formatSeconds(performance.now() - state.startedAt));
     setMetric("m-judged", payload.total ?? "—");
     setMetric("m-degraded", "—");
     return;
   }
   const meta = m.meta || {};
-  const rounds = m.rounds || {};
   const recall = m.recall || {};
   setMetric("m-calls", meta.llmCalls);
   setMetric(
     "m-tokens",
     `${meta.tokensEstimated ? "≈" : ""}${Number(meta.totalTokens || 0).toLocaleString()}`,
   );
-  setMetric("m-iterations", rounds.iterations);
+  setMetric("m-rounds", resolveExecutionRounds(payload));
+  setMetric("m-iterations", resolveReflectionIterations(payload));
   setMetric("m-elapsed", formatSeconds(meta.elapsedMs));
   setMetric("m-judged", `${recall.judged ?? "—"} / ${recall.target ?? "—"}`);
   setMetric("m-degraded", meta.degradedReason || "无");
@@ -4449,10 +4646,10 @@ function parseFrame(frame) {
   }
 }
 
-function showError(message) {
+function showError(message, title = "执行失败") {
   runHint.classList.add("error");
   runHint.textContent = message;
-  setAgentState("error", "执行失败", message);
+  setAgentState("error", title, message);
   const card = el("li", "err-card", message);
   results.append(card);
   resultsEmpty.hidden = true;
@@ -4556,7 +4753,18 @@ async function runSearch(query, topK) {
       }),
       signal: controller.signal,
     });
-    if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    if (!resp.ok || !resp.body) {
+      let payload = null;
+      try {
+        payload = await resp.json();
+      } catch (err) {
+        payload = null;
+      }
+      const error = new Error(`HTTP ${resp.status} ${resp.statusText}`);
+      error.status = resp.status;
+      error.busyDetail = payload?.detail || null;
+      throw error;
+    }
 
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
@@ -4631,7 +4839,7 @@ async function runSearch(query, topK) {
             ? "已取消 · 未产出部分结果"
             : needsClarification
               ? "等待补充 · 未启动检索"
-              : `完成 · ${state.stageCount} 个阶段事件 · ${Math.max(1, state.executeCount)} 轮`;
+              : `完成 · ${state.stageCount} 个阶段事件 · 执行 ${resolveExecutionRounds(payload)} 轮 · 反思 ${resolveReflectionIterations(payload)} 次`;
           setAgentProgress();
           const overview = deliveryOverview(payload);
           const hardGapNotice = overview.hasHardGap
@@ -4698,8 +4906,17 @@ async function runSearch(query, topK) {
         setChatStatus(state.activeRun.chatRun.status, "停止中", "stopped");
       }
     } else {
-      showError(`请求失败：${err.message}`);
-      renderChatError(`请求失败：${err.message}`);
+      if (err?.busyDetail?.code === "server_busy") {
+        const retryAfter = Number(err.busyDetail.retryAfterSec || 0);
+        const message = retryAfter > 0
+          ? `当前搜索并发已满，请 ${retryAfter} 秒后重试。`
+          : "当前搜索并发已满，请稍后重试。";
+        showError(message, "服务繁忙");
+        renderChatError(message, "服务繁忙");
+      } else {
+        showError(`请求失败：${err.message}`);
+        renderChatError(`请求失败：${err.message}`);
+      }
     }
   } finally {
     state.controller = null;

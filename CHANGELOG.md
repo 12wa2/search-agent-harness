@@ -7,6 +7,24 @@
 
 ### Added
 
+- **搜索运行并发闸门**（`core/concurrency.py`、`config.py`、`server.py`、`web/`）：为
+  `/search` 与 `/search/stream` 增加进程内有界准入控制，限制活跃运行、排队请求与等待超时。
+  超限返回 HTTP `429`、`Retry-After` 和结构化 `server_busy` 原因；同步与 SSE 路径均幂等释放
+  运行租约，`/healthz` 暴露 `active`、`queued`、`peakActive`、`accepted`、`completed`、
+  `rejected`、`timeouts` 与平均排队时间。新增 `SEARCH_AGENT_MAX_CONCURRENT_RUNS`、
+  `SEARCH_AGENT_MAX_QUEUED_RUNS`、`SEARCH_AGENT_RUN_QUEUE_TIMEOUT_SEC`，以及并发专项测试、
+  标准库压测脚本和验收报告，并完成真实在线单次冒烟与 25 客户端突发验证。当前限额按 uvicorn
+  进程生效，不引入消息队列。
+- **每轮搜索策略效果**（`core/round_metrics.py`、`harness.py`、`graph.py`、`service.py`、
+  `server.py`、`web/`）：在不改变检索、排序与硬条件软门控的前提下，按 `doc_id` 去重记录每一轮
+  的新增召回、新判断、必备能力全通过人数、新增路径 / 软信号 / 来源假设，以及 LLM 与墙钟成本。
+  第一轮作为初始策略基线，后续轮次展示触发缺口、策略动作、收益和结束原因；最终收敛检索单独记录，
+  避免把 finalize 成本重复计入上一轮。新增 `debug.roundSummaries`、`debug.finalSearch` 与 SSE
+  `evaluate` / `revise` 事件中的 `roundSummary`，对话结果区同步展示策略效果卡片。同时修正
+  `rounds.newQualifiedPerRound` 为真实的逐轮增量，并保留 `qualifiedTotalPerRound` 累计口径；
+  明确区分“执行轮次”（`roundSummaries` 的已完成次数）与“反思迭代”（`rounds.iterations`），
+  修复单轮收敛时 `0 检索轮次` 与 `1 轮` 的口径冲突；Agent 体验层用“策略调整”呈现反思迭代，
+  运行账本与执行观测保留“执行轮次 / 反思迭代”的技术口径。
 - **弱直连信号的 LLM 入口复核**（`entry_router.py`、`service.py`、`server.py`、`docs/INTENT_ROUTING.md`）：
   强直连规则保持零额外调用；只有缺少岗位/技能、仅含城市或年限等弱直连计划，才调用一次
   `agent_entry_route` 轻量分类器复核 `direct_search | agent`。高置信度遵从模型判断，低置信度安全回退

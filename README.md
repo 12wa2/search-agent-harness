@@ -14,7 +14,7 @@
 ![Pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
 ![Elasticsearch](https://img.shields.io/badge/Elasticsearch-8-005571)
 ![Web UI](https://img.shields.io/badge/Web_UI-zero--build-2f6f61)
-![Tests](https://img.shields.io/badge/tests-550-brightgreen)
+![Tests](https://img.shields.io/badge/tests-562-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 <img src="docs/console.png" alt="Search Agent 对话式人才搜索界面" width="100%">
@@ -50,7 +50,9 @@ Search Agent Harness 在确定性检索之上增加一层受控的策略循环�
 - **人数优先的硬条件软门控**：硬条件区分“满足 / 违规 / 待核实”，违规与待核实者后置展示但不从名单删除，交付摘要显式暴露复核缺口。
 - **受控循环**：显式状态机、迭代/路径/LLM/Token/墙钟预算、签名防重，以及阶段级降级。
 - **可观测与会话**：SSE 阶段事件、实际执行阶段、原始 Trace；L1 最近上下文、L2 会话归档、L3 候选人排除。
-- **可插拔且可复现**：内存、SQLite/FTS5、Elasticsearch、Hybrid V2 共用同一契约；550 项测试与零 Key 演示可直接运行。
+- **策略效果可核验**：每轮展示触发缺口、策略动作、新增召回 / 判断 / 必备能力全通过人数与 LLM / 耗时成本；最终收敛检索单独统计，累计值与增量值不再混淆。
+- **受控并发**：进程内准入控制限制活跃运行与排队数，超限返回 `429` 和 `Retry-After`，健康检查暴露峰值与拒绝计数。
+- **可插拔且可复现**：内存、SQLite/FTS5、Elasticsearch、Hybrid V2 共用同一契约；562 项测试与零 Key 演示可直接运行。
 
 ## 架构总览
 
@@ -211,10 +213,11 @@ class SearchTool(Protocol):
 |---|---|
 | [意图路由](docs/INTENT_ROUTING.md) | 五类意图、3/5/8 路径选择与可观测字段 |
 | [架构设计](docs/ARCHITECTURE.md) | 状态机、预算、降级矩阵、合并与 finalize |
-| [HTTP API](docs/API.md) | 搜索、SSE、会话、候选人排除与分页协议 |
+| [HTTP API](docs/API.md) | 搜索、SSE、会话、候选人排除、分页与并发准入协议 |
 | [部署指南](docs/DEPLOYMENT.md) | 快速演示、本地完整在线、Docker Compose 与排障 |
 | [配置参考](docs/CONFIGURATION.md) | 模型、网关、Redis、预算、ES 与 Hybrid V2 变量 |
 | [评测报告](docs/EVALUATION.md) | 真实 LLM top-5 A/B、区间与结果边界 |
+| [并发验收报告](docs/CONCURRENCY_REPORT.md) | 并发闸门、离线 10/25/50、真实在线冒烟与突发结果 |
 | [Hybrid V2](docs/HYBRID_V2.md) | NL2IR、ES mapping、BM25/kNN、embedding 与重排 |
 | [LLM Gateway](docs/LLM_GATEWAY.md) | 模型别名、主备降级、鉴权与用量 |
 | [案例走查](docs/CASE_STUDY.md) | 一次完整查询的逐阶段演示 |
@@ -225,7 +228,7 @@ class SearchTool(Protocol):
 
 ## 质量与边界
 
-- 测试集当前共 `550` 项；本地完整环境为 `550 passed`，CI 会在独立作业中执行 ES 集成用例。
+- 测试集当前共 `562` 项；本地完整环境为 `562 passed`，CI 会在独立作业中执行 ES 集成用例。
 - CI 包含 Ruff、pytest、前端语法、Web 资源校验、Demo 冒烟、评测门禁、Elasticsearch 集成与 Docker 运行时依赖冒烟。
 - 仓库未部署到生产环境，不包含真实简历、企业数据、内部主机或凭据；演示数据均为虚构。
 - 不同模型提供方的质量、成本和延迟差异很大，接入真实数据前应重新评测。

@@ -72,9 +72,27 @@ def require_permission_from_env() -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def max_concurrent_runs_from_env() -> int:
+    """Maximum number of agent runs executing at once in this process."""
+    return max(1, _env_int("SEARCH_AGENT_MAX_CONCURRENT_RUNS", 4))
+
+
+def max_queued_runs_from_env() -> int:
+    """Maximum number of requests waiting for an agent run slot."""
+    return max(0, _env_int("SEARCH_AGENT_MAX_QUEUED_RUNS", 16))
+
+
+def run_queue_timeout_sec_from_env() -> float:
+    """How long a request may wait for an agent run slot before rejection."""
+    return max(0.0, _env_float("SEARCH_AGENT_RUN_QUEUE_TIMEOUT_SEC", 3.0))
+
+
 __all__ = [
     "budget_from_env",
     "final_selection_policy_from_env",
+    "max_concurrent_runs_from_env",
+    "max_queued_runs_from_env",
     "recall_pool_size_from_env",
     "require_permission_from_env",
+    "run_queue_timeout_sec_from_env",
 ]

@@ -28,6 +28,10 @@ from search_agent.core.metrics import (
     collect_metrics,
     emit_metrics,
 )
+from search_agent.core.round_metrics import (
+    finalize_round_display,
+    record_round_summary,
+)
 from search_agent.core.signature import intent_signature
 from search_agent.core.trace import (
     build_agent_trace,
@@ -210,6 +214,7 @@ def assemble_observability(
     iterations: list[dict[str, Any]],
 ) -> None:
     """Attach metrics + trace to the final state (shared by all runners)."""
+    finalize_round_display(state, deps.budget_state)
     metrics = collect_metrics(state, deps.budget_state)
     emit_metrics(metrics, query=state.get("query"))
     state["agent_metrics"] = metrics.to_dict()
@@ -256,6 +261,9 @@ class Harness:
                 p.status == "pending" for p in state.get("paths", [])
             )
             pr_count_before = len(state.get("path_results", []))
+            if phase == "finalize":
+                state["finalize_start_llm_calls"] = bs.llm_calls
+                state["finalize_start_elapsed_ms"] = int(bs.elapsed_sec() * 1000)
 
             try:
                 updates = _STAGES[phase](state, self.deps)
@@ -291,14 +299,15 @@ class Harness:
 
             # post-evaluate: record iteration trace + qualified snapshot
             if phase == "evaluate":
-                state.setdefault("qualified_per_round", []).append(
-                    len(state.get("accumulated", {}))
-                )
                 # difficulty routing: skip reflection for single_pass
                 if state.get("skip_reflection"):
                     state["phase"] = "finalize"
                     state["finalize"] = True
                     state["finalize_reason"] = "difficulty_single_pass"
+                record_round_summary(state, bs)
+                state.setdefault("qualified_per_round", []).append(
+                    len(state.get("accumulated", {}))
+                )
                 reflections = state.get("reflections", [])
                 iterations.append(
                     iteration_trace(

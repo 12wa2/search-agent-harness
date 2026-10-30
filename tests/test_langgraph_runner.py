@@ -28,6 +28,48 @@ def _search(runner, query: str):
     return service.search(SearchRequest(query=query, topK=10, details=True))
 
 
+_ROUND_KEYS = (
+    "round",
+    "pathCount",
+    "returned",
+    "uniqueReturned",
+    "newUnique",
+    "newJudged",
+    "judgedTotal",
+    "newMustQualified",
+    "mustQualifiedTotal",
+    "newPathCount",
+    "newSoftSignals",
+    "newSourceHints",
+    "llmCallsDelta",
+    "next",
+    "stopReason",
+)
+
+
+def _round_view(summary: dict) -> dict:
+    return {key: summary.get(key) for key in _ROUND_KEYS}
+
+
+_FINAL_KEYS = (
+    "kind",
+    "pathCount",
+    "returned",
+    "newUnique",
+    "newJudged",
+    "judgedTotal",
+    "newMustQualified",
+    "mustQualifiedTotal",
+    "llmCallsDelta",
+    "next",
+    "stopReason",
+)
+
+
+def _final_view(summary: dict | None) -> dict | None:
+    return None if summary is None else {key: summary.get(key) for key in _FINAL_KEYS}
+
+
 @pytest.mark.parametrize("query", DEMO_QUERIES)
 def test_langgraph_matches_loop_runner(query: str) -> None:
     baseline = _search(LoopRunner(), query)
@@ -45,6 +87,12 @@ def test_langgraph_matches_loop_runner(query: str) -> None:
     )
     assert len(graph_debug["agentTrace"]["iterations"]) == len(
         base_debug["agentTrace"]["iterations"]
+    )
+    assert [_round_view(item) for item in graph_debug.get("roundSummaries", [])] == [
+        _round_view(item) for item in base_debug.get("roundSummaries", [])
+    ]
+    assert _final_view(graph_debug.get("finalSearch")) == _final_view(
+        base_debug.get("finalSearch")
     )
 
 

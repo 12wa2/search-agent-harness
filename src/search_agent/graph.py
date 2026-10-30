@@ -33,6 +33,7 @@ from search_agent.core.cancellation import (
     raise_if_cancelled,
 )
 from search_agent.core.degrade import degrade
+from search_agent.core.round_metrics import record_round_summary
 from search_agent.core.trace import iteration_trace
 from search_agent.harness import (
     apply_difficulty_routing,
@@ -84,6 +85,9 @@ def build_graph(deps: Deps) -> Any:
                 p.status == "pending" for p in state.get("paths", [])
             )
             pr_count_before = len(state.get("path_results", []))
+            if phase == "finalize":
+                state["finalize_start_llm_calls"] = bs.llm_calls
+                state["finalize_start_elapsed_ms"] = int(bs.elapsed_sec() * 1000)
 
             try:
                 state.update(fn(state, deps))
@@ -111,13 +115,14 @@ def build_graph(deps: Deps) -> Any:
                     state["phase"] = "done"
 
             if phase == "evaluate":
-                state.setdefault("qualified_per_round", []).append(
-                    len(state.get("accumulated", {}))
-                )
                 if state.get("skip_reflection") and state.get("phase") == "reflect":
                     state["phase"] = "finalize"
                     state["finalize"] = True
                     state["finalize_reason"] = "difficulty_single_pass"
+                record_round_summary(state, bs)
+                state.setdefault("qualified_per_round", []).append(
+                    len(state.get("accumulated", {}))
+                )
                 reflections = state.get("reflections", [])
                 iterations.append(
                     iteration_trace(

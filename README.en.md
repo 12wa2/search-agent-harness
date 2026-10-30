@@ -14,7 +14,7 @@ Controlled direct search · Adaptive reflection for harder requests · Evidence-
 ![Pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
 ![Elasticsearch](https://img.shields.io/badge/Elasticsearch-8-005571)
 ![Web UI](https://img.shields.io/badge/Web_UI-zero--build-2f6f61)
-![Tests](https://img.shields.io/badge/tests-550-brightgreen)
+![Tests](https://img.shields.io/badge/tests-562-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 <img src="docs/console.png" alt="Search Agent conversational talent-search UI" width="100%">
@@ -50,7 +50,9 @@ Search Agent Harness adds a controlled policy loop on top of deterministic retri
 - **Headcount-first hard-condition soft gate**: hard constraints use `satisfied / violated / unverified`; violating or unverified candidates move to the end but are never dropped, and the delivery summary exposes the review gap.
 - **Governed loop**: explicit state machine, iteration/path/LLM/token/wall-clock budgets, signature deduplication, and stage-level degradation.
 - **Observable and conversational**: SSE stage events, actual executed stages, raw trace, L1 recent context, L2 conversation archive, and L3 candidate exclusion.
-- **Pluggable and reproducible**: in-memory, SQLite/FTS5, Elasticsearch, and Hybrid V2 share one contract; 550 tests and a zero-key demo run locally.
+- **Verifiable strategy effects**: each round exposes trigger gaps, policy actions, new recall / judgment / must-qualified counts, and LLM / latency cost; the optional final converged search is accounted separately so cumulative and incremental values are not mixed.
+- **Bounded admission**: a process-local limiter caps active and queued runs, returns `429` with `Retry-After`, and exposes peak/rejection counters through health checks.
+- **Pluggable and reproducible**: in-memory, SQLite/FTS5, Elasticsearch, and Hybrid V2 share one contract; 562 tests and a zero-key demo run locally.
 
 ## Architecture
 
@@ -208,10 +210,11 @@ See [`examples/custom_backend.py`](examples/custom_backend.py) for a minimal imp
 |---|---|
 | [Intent Routing](docs/INTENT_ROUTING.md) | Five intents, 3/5/8 route selection, and observable fields |
 | [Architecture](docs/ARCHITECTURE.md) | State machine, budgets, degradation, merging, and finalize |
-| [HTTP API](docs/API.md) | Search, SSE, conversations, candidate exclusion, and pagination |
+| [HTTP API](docs/API.md) | Search, SSE, conversations, candidate exclusion, pagination, and admission control |
 | [Deployment](docs/DEPLOYMENT.md) | Quick demo, full local online mode, Docker Compose, and troubleshooting |
 | [Configuration](docs/CONFIGURATION.md) | Model, gateway, Redis, budgets, ES, and Hybrid V2 variables |
 | [Evaluation](docs/EVALUATION.md) | Real-LLM top-5 A/B, intervals, and limitations |
+| [Concurrency acceptance report](docs/CONCURRENCY_REPORT.md) | Admission gate, offline 10/25/50, online smoke/burst results, and limits |
 | [Hybrid V2](docs/HYBRID_V2.md) | NL2IR, ES mapping, BM25/kNN, embeddings, and reranking |
 | [LLM Gateway](docs/LLM_GATEWAY.md) | Model aliases, fallback routing, authentication, and usage |
 | [Case Study](docs/CASE_STUDY.md) | Stage-by-stage walkthrough of a complete query |
@@ -222,7 +225,7 @@ See [`examples/custom_backend.py`](examples/custom_backend.py) for a minimal imp
 
 ## Quality and scope
 
-- The suite currently contains 550 tests; a local run reports `550 passed`, and CI runs the Elasticsearch integration cases in a dedicated job.
+- The suite currently contains 562 tests; a local run reports `562 passed`, and CI runs the Elasticsearch integration cases in a dedicated job.
 - CI covers Ruff, pytest, browser asset syntax, packaged Web resources, the offline demo, the evaluation gate, Elasticsearch integration, and Docker runtime dependency smoke tests.
 - The repository is not deployed to production and contains no real resumes, company data, internal hosts, or credentials. Demo data is synthetic.
 - Model quality, cost, and latency vary by provider; rerun the evaluation before connecting real data.

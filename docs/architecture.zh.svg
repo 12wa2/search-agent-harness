@@ -217,7 +217,7 @@
 <line x1="1022" y1="932" x2="1022" y2="972" stroke="#e4ebe5" stroke-width="1"/>
 <rect x="1050" y="932" width="4" height="40" rx="2" fill="#315b78" stroke="none" stroke-width="1"/>
 <text x="1064" y="944" font-family="Aptos, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="12.8" font-weight="650" fill="#15221d" text-anchor="start">评测与交付</text>
-<text x="1064" y="960" font-family="Aptos, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="8.8" font-weight="400" fill="#596b63" text-anchor="start">离线 A/B · baseline · 550 项测试</text>
+<text x="1064" y="960" font-family="Aptos, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="8.8" font-weight="400" fill="#596b63" text-anchor="start">离线 A/B · baseline · 562 项测试</text>
 <text x="1064" y="976" font-family="Aptos, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="8.8" font-weight="400" fill="#596b63" text-anchor="start">排序名单 + 候选人证据</text>
 <text x="64" y="1018" font-family="Cascadia Mono, Cascadia Code, Consolas, Liberation Mono, monospace" font-size="10" font-weight="500" fill="#596b63" text-anchor="start">确定性负责边界，推理负责策略。</text>
 <text x="1536" y="1018" font-family="Cascadia Mono, Cascadia Code, Consolas, Liberation Mono, monospace" font-size="9.2" font-weight="500" fill="#74847f" text-anchor="end">search-agent-harness · v0.1.0</text>

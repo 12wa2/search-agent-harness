@@ -198,6 +198,10 @@ def test_search_with_details_returns_agent_trace(client: TestClient) -> None:
     debug = resp.json()["debug"]
     assert debug["agentTrace"]
     assert "agentMetrics" in debug
+    assert debug["roundSummaries"]
+    assert debug["roundSummaries"][0]["newJudged"] >= 0
+    assert "newMustQualified" in debug["roundSummaries"][0]
+    assert "finalSearch" in debug
 
 
 def test_search_returns_conversation_and_positions_first_page(client: TestClient) -> None:
@@ -420,6 +424,9 @@ def test_search_stream_emits_stage_and_result_frames(client: TestClient) -> None
 
     assert text.index('"stage": "understand"') < text.index('"stage": "finalize"')
     assert "event: stage" in text
+    assert '"stage": "evaluate"' in text
+    assert '"roundSummary"' in text
+    assert '"newUnique"' in text
 
     result_frames = [c for c in text.split("\n\n") if c.startswith("event: result")]
     assert result_frames, text[:500]

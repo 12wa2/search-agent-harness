@@ -194,6 +194,12 @@ parser 失败时会重试一次；仍失败则显式回退到本地结构化 IR�
 同时记录 `llm_calls` / `iteration` / `new_qualified_last_round`，以及
 `prompt_tokens + completion_tokens` 的累计 token 用量。
 
+每轮结束后，`core/round_metrics.py` 基于已有 `path_results`、`accumulated`、反思与预算快照
+生成只读归因：按 `doc_id` 去重统计新增召回、新判断、must 能力全通过人数，以及新增路径、软信号、
+来源假设和 LLM / 墙钟成本。该模块不参与检索、排序或硬条件软门控；`finalize` 的最终收敛检索
+使用独立成本边界，避免重复计入上一轮。运行时通过 `debug.roundSummaries`、`debug.finalSearch`
+和 SSE `roundSummary` 暴露，供 Web 结果卡片与评测排查复用。
+
 ## 5. 降级矩阵
 
 `core/degrade.py` 把 `(阶段, 失败类型)` 映射为 `(动作, degradedReason)`：
@@ -404,3 +410,18 @@ HTTP + SSE。配置 `PRIMARY_LLM_API_KEY` 后，compose 会把在线预置接到
 不重新运行 Agent、不增加 LLM/token 成本。没有 `conversationId` 时由后端生成并返回；没有
 `pageSize` 时仍返回完整 `final_items`，且不创建分页 Session。这两条兼容边界让记忆与分页都是
 可选增强，而不是主链路的新故障点。
+
+## 16. 运行准入控制（并发闸门）
+
+HTTP 进程在搜索入口使用 `core/concurrency.py::BoundedRunLimiter` 做进程内准入控制：
+`/search` 和 `/search/stream` 的搜索请求必须先取得 `RunLease`；活跃运行、排队位和等待超时
+分别由 `SEARCH_AGENT_MAX_CONCURRENT_RUNS`、`SEARCH_AGENT_MAX_QUEUED_RUNS`、
+`SEARCH_AGENT_RUN_QUEUE_TIMEOUT_SEC` 控制。超过限额时不启动 Harness，返回 `429`、
+`Retry-After` 和 `server_busy` 结构化错误。
+
+准入控制覆盖同步与 SSE 两条路径：同步路径在 `finally` 中释放租约；SSE 在生成器结束、
+客户端断连或 `BackgroundTask` 清理时幂等释放。`/healthz` 暴露 `active`、`queued`、
+`peakActive`、`accepted`、`completed`、`rejected`、`timeouts` 与平均排队时间，便于观测和压测。
+
+这是单进程限额，不是分布式配额。多 worker / 多实例部署时每个进程各自计数；需要全局并发上限、
+持久排队、跨进程重试或削峰时，应在网关或消息队列层实现，而不是假设当前内存队列具备这些能力。

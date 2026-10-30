@@ -1,0 +1,26 @@
+{
+    "status":  "ok",
+    "version":  "0.1.0",
+    "mode":  "online",
+    "onlineConfigured":  true,
+    "backend":  "HybridV2SearchService",
+    "offlineBackend":  "InMemorySearchTool",
+    "onlineBackend":  "HybridV2SearchService",
+    "llm":  "OpenAILlmClient",
+    "startedAt":  1793111757.7542236,
+    "activeRuns":  0,
+    "concurrency":  {
+                        "limit":  4,
+                        "active":  0,
+                        "peakActive":  1,
+                        "queued":  0,
+                        "maxQueued":  16,
+                        "queueTimeoutSec":  3.0,
+                        "retryAfterSec":  3,
+                        "accepted":  1,
+                        "completed":  1,
+                        "rejected":  0,
+                        "timeouts":  0,
+                        "avgQueueWaitMs":  0.0
+                    }
+}

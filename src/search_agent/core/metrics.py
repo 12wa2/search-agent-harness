@@ -34,6 +34,7 @@ class AgentMetrics:
     # 2. Search rounds
     iterations: int = 0
     new_qualified_per_round: list[int] = field(default_factory=list)
+    qualified_total_per_round: list[int] = field(default_factory=list)
 
     # 3. Match quality
     matched_ability_coverage: float = 0.0
@@ -68,6 +69,7 @@ class AgentMetrics:
             },
             "rounds": {
                 "iterations": self.iterations,
+                "qualifiedTotalPerRound": self.qualified_total_per_round,
                 "newQualifiedPerRound": self.new_qualified_per_round,
             },
             "match": {
@@ -125,7 +127,13 @@ def collect_metrics(state: dict[str, Any], bs: Any) -> AgentMetrics:
 
     # --- 2. Search rounds ---
     iterations = state.get("iteration", 0)
-    qualified_per_round: list[int] = state.get("qualified_per_round", [])
+    qualified_total_per_round: list[int] = list(state.get("qualified_per_round", []))
+    new_qualified_per_round: list[int] = []
+    previous_qualified = 0
+    for total in qualified_total_per_round:
+        current_total = max(0, int(total))
+        new_qualified_per_round.append(max(0, current_total - previous_qualified))
+        previous_qualified = current_total
 
     # --- 3. Match quality ---
     total_abilities = 0
@@ -160,9 +168,7 @@ def collect_metrics(state: dict[str, Any], bs: Any) -> AgentMetrics:
                 source_conversion[src.id] = 0
 
     # --- 5. Reflection power ---
-    reflection_gain: list[int] = []
-    for i in range(1, len(qualified_per_round)):
-        reflection_gain.append(qualified_per_round[i] - qualified_per_round[i - 1])
+    reflection_gain: list[int] = new_qualified_per_round[1:]
 
     surfaced_doc_ids: list[str] = []
     seen_surfaced: set[str] = set()
@@ -191,7 +197,8 @@ def collect_metrics(state: dict[str, Any], bs: Any) -> AgentMetrics:
         quality_distribution=quality_dist,
         surfaced_doc_ids=surfaced_doc_ids,
         iterations=iterations,
-        new_qualified_per_round=qualified_per_round,
+        new_qualified_per_round=new_qualified_per_round,
+        qualified_total_per_round=qualified_total_per_round,
         matched_ability_coverage=matched_cov,
         hard_match_hit_rate=hard_hit,
         source_conversion=source_conversion,
