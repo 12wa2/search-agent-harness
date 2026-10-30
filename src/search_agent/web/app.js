@@ -869,7 +869,9 @@ function addChatStage(stage, detail = {}) {
 function addChatCandidateCards(run, items, offset = 0) {
   const list = el("ul", "chat-candidates");
   items.forEach((item, index) => {
-    const card = renderCandidate(item, offset + index + 1);
+    const card = renderCandidate(item, offset + index + 1, {
+      showScore: isDirectSearchRoute(run?.route),
+    });
     card.classList.add("chat-candidate");
     list.append(card);
   });
@@ -890,7 +892,9 @@ function replaceChatCandidateCards(items, offset = 0) {
   if (!run?.resultList) return;
   run.resultList.replaceChildren();
   items.forEach((item, index) => {
-    const card = renderCandidate(item, offset + index + 1);
+    const card = renderCandidate(item, offset + index + 1, {
+      showScore: isDirectSearchRoute(run?.route),
+    });
     card.classList.add("chat-candidate");
     run.resultList.append(card);
   });
@@ -1088,6 +1092,10 @@ function formatWorkbenchHard(hard) {
   const state = hardConditionState(hard);
   const actualText = actual === "—" ? "实际值未提供" : `当前 ${actual}`;
   return `${field}：期望 ${expected} · ${actualText} · ${HARD_CONDITION_LABELS[state]}`;
+}
+
+function isDirectSearchRoute(route) {
+  return String(route || "").trim() === "direct_search";
 }
 
 function formatWorkbenchScore(item) {
@@ -1458,7 +1466,7 @@ function compareAbilityKey(value) {
   return compareText(value).toLocaleLowerCase("zh-CN");
 }
 
-function buildCompareCandidate(entry, index) {
+function buildCompareCandidate(entry, index, showScore = true) {
   const data = workbenchMatchData(entry.item);
   const hardRows = [];
   const hardMap = new Map();
@@ -1496,6 +1504,7 @@ function buildCompareCandidate(entry, index) {
     hardMap,
     abilities,
     score: Number.isFinite(score) ? score : null,
+    showScore,
     evidenceLines,
     evidenceKey: evidenceLines.map(compareText).join(" | "),
     pathKey: data.pathRationale.map(compareText).join(" | "),
@@ -1538,7 +1547,7 @@ function compareCoreEqual(left, right, hardAligned = true) {
   );
 }
 
-function compareCandidatesByEvidence(left, right, hardAligned = true) {
+function compareCandidatesByEvidence(left, right, hardAligned = true, showScore = true) {
   if (hardAligned) {
     if (left.metrics.hardStatusRank !== right.metrics.hardStatusRank) {
       return right.metrics.hardStatusRank - left.metrics.hardStatusRank;
@@ -1556,13 +1565,15 @@ function compareCandidatesByEvidence(left, right, hardAligned = true) {
   if (left.metrics.missing !== right.metrics.missing) {
     return left.metrics.missing - right.metrics.missing;
   }
-  const leftScore = left.metrics.score ?? -Infinity;
-  const rightScore = right.metrics.score ?? -Infinity;
-  if (leftScore !== rightScore) return rightScore - leftScore;
+  if (showScore) {
+    const leftScore = left.metrics.score ?? -Infinity;
+    const rightScore = right.metrics.score ?? -Infinity;
+    if (leftScore !== rightScore) return rightScore - leftScore;
+  }
   return left.index - right.index;
 }
 
-function compareLeaderReason(leader, candidates, hardAligned = true) {
+function compareLeaderReason(leader, candidates, hardAligned = true, showScore = true) {
   const metrics = leader.metrics;
   const others = candidates.filter((candidate) => candidate !== leader).map((candidate) => candidate.metrics);
   if (hardAligned) {
@@ -1593,6 +1604,7 @@ function compareLeaderReason(leader, candidates, hardAligned = true) {
     return `能力缺口更少（${metrics.missing} 项）`;
   }
   if (
+    showScore &&
     metrics.score !== null &&
     others.every((other) => other.score === null || other.score < metrics.score)
   ) {
@@ -1603,7 +1615,12 @@ function compareLeaderReason(leader, candidates, hardAligned = true) {
 
 function selectCompareLeader(model) {
   const ranked = [...model.candidates].sort(
-    (left, right) => compareCandidatesByEvidence(left, right, model.hardConditionsAligned),
+    (left, right) => compareCandidatesByEvidence(
+      left,
+      right,
+      model.hardConditionsAligned,
+      model.showScore,
+    ),
   );
   const top = ranked[0];
   const tied = ranked.filter((candidate) =>
@@ -1612,11 +1629,18 @@ function selectCompareLeader(model) {
     return {
       kind: "leader",
       candidate: top,
-      reason: compareLeaderReason(top, model.candidates, model.hardConditionsAligned),
+      reason: compareLeaderReason(
+        top,
+        model.candidates,
+        model.hardConditionsAligned,
+        model.showScore,
+      ),
     };
   }
 
-  const scored = tied.filter((candidate) => candidate.metrics.score !== null);
+  const scored = model.showScore
+    ? tied.filter((candidate) => candidate.metrics.score !== null)
+    : [];
   if (scored.length) {
     const topScore = Math.max(...scored.map((candidate) => candidate.metrics.score));
     const scoreLeaders = scored.filter((candidate) => candidate.metrics.score === topScore);
@@ -1636,8 +1660,10 @@ function selectCompareLeader(model) {
   return { kind: hasEvidence ? "tie" : "limited", candidates: tied };
 }
 
-function buildCompareModel(entries) {
-  const candidates = entries.map(buildCompareCandidate);
+function buildCompareModel(entries, { showScore = true } = {}) {
+  const candidates = entries.map((entry, index) =>
+    buildCompareCandidate(entry, index, showScore)
+  );
   candidates.forEach((candidate) => {
     candidate.metrics = compareCandidateMetrics(candidate);
   });
@@ -1684,6 +1710,7 @@ function buildCompareModel(entries) {
   }
 
   const model = {
+    showScore,
     candidates,
     hardRows,
     abilityRows,
@@ -1722,7 +1749,9 @@ function compareCandidateEvidenceCopy(candidate) {
   }
   if (metrics.matched || metrics.missing) parts.push(`能力命中 ${metrics.matched} 项`);
   if (metrics.missing) parts.push(`缺口 ${metrics.missing} 项`);
-  if (candidate.score !== null) parts.push(`相关度 ${candidate.score.toFixed(2)}`);
+  if (candidate.showScore && candidate.score !== null) {
+    parts.push(`相关度 ${candidate.score.toFixed(2)}`);
+  }
   return parts.join("，") || "本轮可比较的信号有限";
 }
 
@@ -1852,7 +1881,11 @@ function renderCompareMatrix(model) {
     candidateHead.setAttribute("scope", "col");
     const scoreText = formatWorkbenchScore(candidate.item);
     candidateHead.append(el("span", "", candidate.name));
-    if (scoreText) candidateHead.append(el("small", "", `相关度 ${scoreText}`));
+    if (scoreText && candidate.showScore) {
+      candidateHead.append(el("small", "", `相关度 ${scoreText}`));
+    } else if (!candidate.showScore) {
+      candidateHead.append(el("small", "", `综合顺位 #${candidate.entry.rank}`));
+    }
     headRow.append(candidateHead);
   }
   thead.append(headRow);
@@ -1969,7 +2002,11 @@ function renderCompareCandidate(candidate, model) {
     el("h3", "", candidate.name),
     el("p", "", workbenchMetaText(candidate.item)),
   );
-  if (scoreText) identity.append(el("span", "aw-compare-score", `相关度 ${scoreText}`));
+  if (scoreText && candidate.showScore) {
+    identity.append(el("span", "aw-compare-score", `相关度 ${scoreText}`));
+  } else if (!candidate.showScore) {
+    identity.append(el("span", "aw-compare-score", `综合顺位 #${candidate.entry.rank}`));
+  }
   head.append(avatar, identity);
   if (isLeader) {
     const badge = el("span", "aw-compare-leader-badge", "优先查看");
@@ -2175,7 +2212,9 @@ function openWorkbenchComparison(wb) {
   hideCandidateTooltip();
   const entries = [...wb.compare.values()];
   if (entries.length < 2 || !compareDialog || !compareGrid) return;
-  compareModel = buildCompareModel(entries);
+  compareModel = buildCompareModel(entries, {
+    showScore: isDirectSearchRoute(wb.route),
+  });
   compareViewMode = compareModel.differingCount ? COMPARE_VIEW_DIFF : COMPARE_VIEW_ALL;
   renderCompareContent(compareModel);
   compareDialogTrigger = wb.compareButton || null;
@@ -2321,6 +2360,7 @@ function toggleWorkbenchCompare(wb, entry) {
 
 function renderWorkbenchCandidate(wb, entry) {
   const item = entry.item;
+  const directSearch = isDirectSearchRoute(wb.route);
   const data = workbenchMatchData(item);
   const key = entry.key;
   const shortlisted = wb.shortlisted.has(key);
@@ -2339,6 +2379,9 @@ function renderWorkbenchCandidate(wb, entry) {
   const name = el("h3", "", candidateName);
   name.setAttribute("aria-label", `结果排序第 ${entry.rank} 位：${candidateName}`);
   const status = workbenchStatusPill(item, data);
+  if (!directSearch) {
+    nameLine.append(el("span", "aw-rank", `综合顺位 #${entry.rank}`));
+  }
   nameLine.append(name, el("span", `aw-match-pill ${status.tone}`.trim(), status.text));
   const meta = el("p", "aw-person-meta", workbenchMetaText(item));
   person.append(nameLine, meta);
@@ -2350,7 +2393,7 @@ function renderWorkbenchCandidate(wb, entry) {
   const addStat = (text, tone = "") => {
     stats.append(el("span", `aw-stat ${tone}`.trim(), text));
   };
-  const scoreText = formatWorkbenchScore(item);
+  const scoreText = directSearch ? formatWorkbenchScore(item) : "";
   if (scoreText) {
     const scoreStat = el("span", "aw-stat is-score");
     scoreStat.title = "相关度仅作同层参考，不表示通过率或匹配率。";
@@ -2434,7 +2477,7 @@ function renderWorkbenchCandidate(wb, entry) {
     missingAbilities: data.missingAbilities,
     hardMatches: data.hardMatches,
     pathRationale: data.pathRationale,
-  });
+  }, false, directSearch);
   return node;
 }
 
@@ -2455,6 +2498,7 @@ function renderAgentWorkbench(container, payload, run, options = {}) {
     query: String(options.query || payload.query || "").trim(),
     jobTitle: String(options.jobTitle || run?.jobTitle || "").trim(),
     restored: Boolean(options.restored),
+    route: String(payload.debug?.difficultyRoute || run?.route || options.route || "").trim(),
     total,
     filter: "all",
     pageEntries: items.map((item, index) => workbenchCandidateEntry(item, offset + index + 1, token)),
@@ -3384,6 +3428,7 @@ function renderRestoredConversation(memory) {
           query: turn.query || "",
           jobTitle: turn.jobProfileSummary?.title || "",
           restored: true,
+          route: turn.route || "",
         });
       } else {
         appendScoreMethodNote(message.body);
@@ -3391,6 +3436,7 @@ function renderRestoredConversation(memory) {
         items.forEach((item, index) => {
           const card = renderCandidate(item, index + 1, {
             resumeToken: turn.queryToken || null,
+            showScore: isDirectSearchRoute(turn.route),
           });
           card.classList.add("chat-candidate");
           list.append(card);
@@ -4112,9 +4158,16 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") hideCandidateTooltip();
 });
 
-function buildCandidateTooltip(item, rank, explanation, groups, showRawMatchExplanation) {
+function buildCandidateTooltip(
+  item,
+  rank,
+  explanation,
+  groups,
+  showRawMatchExplanation,
+  showScore = true,
+) {
   const { matchedAbilities, missingAbilities, hardMatches, pathRationale } = groups;
-  const scoreText = formatWorkbenchScore(item);
+  const scoreText = showScore ? formatWorkbenchScore(item) : "";
   const hasDetails = Boolean(
     item.summary ||
       matchedAbilities.length ||
@@ -4202,6 +4255,7 @@ function attachCandidateTooltip(
   rank,
   groups,
   showRawMatchExplanation = false,
+  showScore = true,
 ) {
   const tooltipDetail = buildCandidateTooltip(
     item,
@@ -4209,6 +4263,7 @@ function attachCandidateTooltip(
     item?.matchExplanation || {},
     groups,
     showRawMatchExplanation,
+    showScore,
   );
   if (!tooltipDetail) return null;
   const description = el("span", "sr-only");
@@ -4224,7 +4279,7 @@ function attachCandidateTooltip(
 function renderCandidate(
   item,
   rank,
-  { showRawMatchExplanation = false, resumeToken = state.queryToken } = {},
+  { showRawMatchExplanation = false, resumeToken = state.queryToken, showScore = true } = {},
 ) {
   const li = el("li", "candidate");
   const docId = String(item.docId || "");
@@ -4263,7 +4318,7 @@ function renderCandidate(
   );
   score.append(el("span", "score-label", "相关度"), el("span", "score", scoreText));
   const control = el("div", "cand-control");
-  control.append(score);
+  if (showScore) control.append(score);
   if (resumeUrl) {
     const resumeLink = el("a", "cand-resume", "简历");
     resumeLink.href = resumeUrl;
@@ -4376,6 +4431,7 @@ function renderCandidate(
     rank,
     { matchedAbilities, missingAbilities, hardMatches, pathRationale },
     showRawMatchExplanation,
+    showScore,
   );
   return li;
 }
@@ -4407,7 +4463,10 @@ function updatePager(page) {
 function renderCandidateList(items, offset = 0) {
   results.replaceChildren();
   items.forEach((item, index) => {
-    results.append(renderCandidate(item, offset + index + 1, { showRawMatchExplanation: true }));
+    results.append(renderCandidate(item, offset + index + 1, {
+      showRawMatchExplanation: true,
+      showScore: isDirectSearchRoute(state.activeRun?.route),
+    }));
   });
 }
 

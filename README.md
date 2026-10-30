@@ -218,6 +218,7 @@ class SearchTool(Protocol):
 | [配置参考](docs/CONFIGURATION.md) | 模型、网关、Redis、预算、ES 与 Hybrid V2 变量 |
 | [评测报告](docs/EVALUATION.md) | 真实 LLM top-5 A/B、区间与结果边界 |
 | [并发验收报告](docs/CONCURRENCY_REPORT.md) | 并发闸门、离线 10/25/50、真实在线冒烟与突发结果 |
+| [排序设计草案](docs/TO_PLAN.md) | Agent 综合顺位、未来后端排序元数据与双视图设计 |
 | [Hybrid V2](docs/HYBRID_V2.md) | NL2IR、ES mapping、BM25/kNN、embedding 与重排 |
 | [LLM Gateway](docs/LLM_GATEWAY.md) | 模型别名、主备降级、鉴权与用量 |
 | [案例走查](docs/CASE_STUDY.md) | 一次完整查询的逐阶段演示 |

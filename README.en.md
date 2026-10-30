@@ -215,6 +215,7 @@ See [`examples/custom_backend.py`](examples/custom_backend.py) for a minimal imp
 | [Configuration](docs/CONFIGURATION.md) | Model, gateway, Redis, budgets, ES, and Hybrid V2 variables |
 | [Evaluation](docs/EVALUATION.md) | Real-LLM top-5 A/B, intervals, and limitations |
 | [Concurrency acceptance report](docs/CONCURRENCY_REPORT.md) | Admission gate, offline 10/25/50, online smoke/burst results, and limits |
+| [Ranking design plan](docs/TO_PLAN.md) | Agent composite order, future backend ranking metadata, and dual-view design |
 | [Hybrid V2](docs/HYBRID_V2.md) | NL2IR, ES mapping, BM25/kNN, embeddings, and reranking |
 | [LLM Gateway](docs/LLM_GATEWAY.md) | Model aliases, fallback routing, authentication, and usage |
 | [Case Study](docs/CASE_STUDY.md) | Stage-by-stage walkthrough of a complete query |
