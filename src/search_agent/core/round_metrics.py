@@ -88,9 +88,7 @@ def _budget_values(
     elapsed_ms: int | None,
 ) -> tuple[int, int]:
     current_calls = (
-        int(llm_calls)
-        if llm_calls is not None
-        else int(getattr(budget_state, "llm_calls", 0) or 0)
+        int(llm_calls) if llm_calls is not None else int(getattr(budget_state, "llm_calls", 0) or 0)
     )
     if elapsed_ms is not None:
         current_elapsed = int(elapsed_ms)
@@ -190,9 +188,7 @@ def record_round_summary(
     soft_signal_total, source_hint_total = _talent_counts(talent)
     reflection = _latest_reflection(state)
     gaps = [
-        str(gap).strip()
-        for gap in (getattr(reflection, "gaps", None) or [])
-        if str(gap).strip()
+        str(gap).strip() for gap in (getattr(reflection, "gaps", None) or []) if str(gap).strip()
     ]
 
     new_path_ids = set(round_path_ids) - previous_path_ids
@@ -209,12 +205,8 @@ def record_round_summary(
         "newUnique": len(round_docs - prior_docs),
         "newJudged": len(new_judged_ids),
         "judgedTotal": len(current_judged_ids),
-        "newMustQualified": _count_must_qualified(
-            new_judged_ids, accumulated, must_names
-        ),
-        "mustQualifiedTotal": _count_must_qualified(
-            current_judged_ids, accumulated, must_names
-        ),
+        "newMustQualified": _count_must_qualified(new_judged_ids, accumulated, must_names),
+        "mustQualifiedTotal": _count_must_qualified(current_judged_ids, accumulated, must_names),
         "gaps": gaps,
         "actions": _strategy_actions(reflection),
         "newSoftSignals": (
@@ -298,12 +290,8 @@ def build_final_search_summary(
         "newUnique": final_search_new,
         "newJudged": len(new_judged_ids),
         "judgedTotal": len(current_judged_ids),
-        "newMustQualified": _count_must_qualified(
-            new_judged_ids, accumulated, must_names
-        ),
-        "mustQualifiedTotal": _count_must_qualified(
-            current_judged_ids, accumulated, must_names
-        ),
+        "newMustQualified": _count_must_qualified(new_judged_ids, accumulated, must_names),
+        "mustQualifiedTotal": _count_must_qualified(current_judged_ids, accumulated, must_names),
         "softSignalTotal": soft_signal_total,
         "sourceHintTotal": source_hint_total,
         "llmCallsDelta": max(0, current_llm_calls - previous_llm_calls),

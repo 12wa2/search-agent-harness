@@ -91,9 +91,7 @@ def test_langgraph_matches_loop_runner(query: str) -> None:
     assert [_round_view(item) for item in graph_debug.get("roundSummaries", [])] == [
         _round_view(item) for item in base_debug.get("roundSummaries", [])
     ]
-    assert _final_view(graph_debug.get("finalSearch")) == _final_view(
-        base_debug.get("finalSearch")
-    )
+    assert _final_view(graph_debug.get("finalSearch")) == _final_view(base_debug.get("finalSearch"))
 
 
 def test_langgraph_runner_satisfies_protocol() -> None:
