@@ -23,9 +23,28 @@
 
 > 一个面向人才搜索场景的自适应 Search Agent：明确条件先由 Hybrid V2 parser 生成检索 IR，再执行受控直连检索；需要能力判断的需求进入轻量 Agent；复杂需求通过多路径规划、候选人证据判断与反思修订，形成预算可控的搜索闭环。项目提供零 API Key 演示，并支持真实 LLM 和 Elasticsearch 8。
 
-[快速开始](#快速开始) · [架构总览](#架构总览) · [执行模型](#执行模型) · [评测摘要](#评测摘要) · [核心设计](#核心设计) · [文档导航](#文档导航)
+[60 秒演示](#60-秒看真实链路) · [快速开始](#快速开始) · [架构总览](#架构总览) · [执行模型](#执行模型) · [评测摘要](#评测摘要) · [核心设计](#核心设计) · [文档导航](#文档导航)
 
 ---
+
+## 60 秒看真实链路
+
+https://github.com/user-attachments/assets/058130c9-098d-4746-8535-1457ff141344
+
+真实 LLM + Hybrid V2 + Elasticsearch，完整走通 `understand → plan → execute → judge → evaluate → reflect → revise → finalize`，两轮检索交付 50 人；模型等待段按 4× 加速。视频展示完整在线链路，界面细节以当前截图为准。[本地 MP4](docs/demo.mp4) · [视频封面](docs/demo-poster.png)
+
+## 一次策略调整，改变交付结果
+
+在 100 人合成语料的真实模型 A/B 中，`backend_concurrency` 这条 Query 的单趟基线交付 5 人、其中 2 人相关；Agent 经反思修订扩大检索方向后交付 5 人、5 人相关，其中 3 人是新增相关候选人（池召回 0.857 → 1.000）。
+
+| 指标 | 单趟基线 | Agent 反思链路 |
+|---|---:|---:|
+| 交付候选人 | 5 | 5 |
+| 其中相关 | 2 | 5 |
+| 新增相关候选人 | — | +3 |
+| 池召回 | 0.857 | 1.000 |
+
+这是一条用来解释机制的案例，不代表每条 Query 都会提升。逐条结果见 [100 人 A/B 明细](docs/real_llm_ab_results_100.md)，阶段走查见 [案例研究](docs/CASE_STUDY.md)，10 条合成 Query 的平均结果、未提升案例与成本见 [评测报告](docs/EVALUATION.md)。
 
 ## 为什么做这个项目
 
@@ -123,7 +142,7 @@ pip install -e ".[api]"
 search-agent serve --offline
 ```
 
-打开 <http://127.0.0.1:8000>。快速演示使用脚本化 LLM 和 16 个虚构候选人，不请求外部模型，也不依赖 Elasticsearch。
+打开 <http://127.0.0.1:8000>。快速演示使用脚本化 LLM 和 16 个虚构候选人，默认交付 10 人，不请求外部模型，也不依赖 Elasticsearch。
 
 Windows 也可以直接运行：
 
@@ -157,15 +176,36 @@ search-agent hybrid-v2 doctor
 
 > 安全边界：本仓库是参考服务，不内置用户认证。生产环境必须由可信 API 网关完成鉴权，并注入 `companyId`、`hrId` 和 `permission`；不要信任浏览器直接提交这些字段。建议设置 `SEARCH_AGENT_REQUIRE_PERMISSION=1` 启用 fail-closed 校验。
 
-## 界面
+## 界面与关键能力
 
 默认界面是对话式 Agent 体验：左侧恢复最近会话，中间展示需求解析、实际执行路径和候选人证据，右侧交付名单。侧栏可收起为带竖排“展开会话”的导航条，点击后恢复完整会话列表。窄屏下侧栏以抽屉形式打开，并在顶栏保留会话入口。顶部还可切换到执行观测，查看实际阶段、检索路径、运行指标和原始 Trace。两种视图共享同一条 SSE 运行，切换不会重新搜索。
 
-https://github.com/user-attachments/assets/058130c9-098d-4746-8535-1457ff141344
-
-[候选人交付截图](docs/console-run.png) · [执行观测截图](docs/console-observe.png)
-
-演示连接真实 LLM + Hybrid V2 + Elasticsearch，完整走通 `understand → plan → execute → judge → evaluate → reflect → revise → finalize`，共 2 轮检索、交付 50 人；模型等待段按 4× 加速。
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/console-run.png"><img src="docs/feature-evidence.png" alt="候选人证据与综合顺位" width="100%"></a><br>
+      <strong>候选人证据</strong><br>
+      <small>综合顺位、能力命中、来源路径与入围操作同屏</small>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/feature-compare.png"><img src="docs/feature-compare.png" alt="候选人差异对比" width="100%"></a><br>
+      <strong>候选人对比</strong><br>
+      <small>只展开关键差异，并给出优先查看建议</small>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/feature-resume.png"><img src="docs/feature-resume.png" alt="候选人完整档案" width="100%"></a><br>
+      <strong>完整档案</strong><br>
+      <small>工作经历、教育、技能与查验入口集中展示</small>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/console-observe.png"><img src="docs/feature-trace.png" alt="Agent 执行观测" width="100%"></a><br>
+      <strong>执行观测</strong><br>
+      <small>八阶段、检索路径、运行账本与原始事件可追溯</small>
+    </td>
+  </tr>
+</table>
 
 ## 评测摘要
 
@@ -205,7 +245,7 @@ class SearchTool(Protocol):
     def rerank_pool(self, req: RerankToolRequest) -> SearchToolResult: ...
 ```
 
-最小接入示例见 [`examples/custom_backend.py`](examples/custom_backend.py)。更多细节见 [架构设计](docs/ARCHITECTURE.md) 与 [Hybrid V2](docs/HYBRID_V2.md)。
+接入与调用日志示例见 [`examples/custom_backend.py`](examples/custom_backend.py)。更多细节见 [架构设计](docs/ARCHITECTURE.md) 与 [Hybrid V2](docs/HYBRID_V2.md)。
 
 ## 文档导航
 

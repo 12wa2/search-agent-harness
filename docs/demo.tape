@@ -1,6 +1,6 @@
-# 录制演示 GIF：安装 vhs（https://github.com/charmbracelet/vhs）后运行
+# 历史终端流程录制脚本：安装 vhs（https://github.com/charmbracelet/vhs）后运行
 #   vhs docs/demo.tape
-# 生成 docs/demo.gif（README 首屏用）
+# 生成 docs/demo.gif（当前 README 不引用该文件；在线演示使用 scripts/record-demo.mjs 生成的 docs/demo.mp4）
 #
 # 没有 vhs 时：scoop install vhs（Windows）/ brew install vhs（macOS），
 # 或直接手动执行下面两条命令并用任意录屏工具录制。

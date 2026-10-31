@@ -23,9 +23,28 @@ Controlled direct search · Adaptive reflection for harder requests · Evidence-
 
 > An adaptive Search Agent for talent search: explicit constraints are first parsed into retrieval IR by Hybrid V2 and then executed through a controlled direct-search path; requests that need capability judgment use a lightweight agent; complex requests add multi-path planning, evidence-grounded judgment, and reflective revision inside a budget-governed loop. The project includes a zero-API-key demo and supports real LLMs and Elasticsearch 8.
 
-[Quick start](#quick-start) · [Architecture](#architecture) · [Execution model](#execution-model) · [Evaluation](#evaluation-snapshot) · [Core design](#core-design) · [Documentation](#documentation)
+[60-second demo](#60-second-real-stack-demo) · [Quick start](#quick-start) · [Architecture](#architecture) · [Execution model](#execution-model) · [Evaluation](#evaluation-snapshot) · [Core design](#core-design) · [Documentation](#documentation)
 
 ---
+
+## 60-second real-stack demo
+
+https://github.com/user-attachments/assets/058130c9-098d-4746-8535-1457ff141344
+
+The recording runs against the real LLM + Hybrid V2 + Elasticsearch stack, completes all eight stages (`understand → plan → execute → judge → evaluate → reflect → revise → finalize`), performs two retrieval rounds, and delivers 50 candidates; model wait time is shown at 4× speed. The video shows the full online flow, while current screenshots below reflect the latest UI details. [Local MP4](docs/demo.mp4) · [Video poster](docs/demo-poster.png)
+
+## How one policy revision changed the shortlist
+
+In the 100-candidate synthetic real-LLM A/B, the `backend_concurrency` query delivered five candidates in a single pass, two of them relevant. After reflection revised the search direction, the Agent delivered five candidates, all five relevant, including three new relevant candidates (pool recall 0.857 -> 1.000).
+
+| Metric | Single pass | Agent reflection |
+|---|---:|---:|
+| Delivered candidates | 5 | 5 |
+| Relevant candidates | 2 | 5 |
+| New relevant candidates | — | +3 |
+| Pool recall | 0.857 | 1.000 |
+
+This is a mechanism example, not a claim that every query improves. See the [100-candidate A/B details](docs/real_llm_ab_results_100.md), the [case walkthrough](docs/CASE_STUDY.md), and [Evaluation](docs/EVALUATION.md) for the 10-query average, non-improving cases, and cost.
 
 ## Why this project
 
@@ -123,7 +142,7 @@ pip install -e ".[api]"
 search-agent serve --offline
 ```
 
-Open <http://127.0.0.1:8000>. The quick demo uses a scripted LLM and 16 fictional candidates. It sends no external model requests and does not require Elasticsearch.
+Open <http://127.0.0.1:8000>. The quick demo uses a scripted LLM and 16 fictional candidates, defaults to 10 delivered candidates, sends no external model requests, and does not require Elasticsearch.
 
 Windows can also use the launcher:
 
@@ -154,15 +173,36 @@ Running `search-agent ...` directly does not load `.env`. The `$env:` lines abov
 
 See **[Deployment](docs/DEPLOYMENT.md)** for the full Docker stack, Redis setup, and troubleshooting. See **[Configuration](docs/CONFIGURATION.md)** for every environment variable.
 
-## Interface
+## Interface and core workflows
 
 The default view is a conversational agent workspace: recent conversations on the left, requirement parsing and live execution evidence in the center, and the delivered shortlist on the right. The sidebar can collapse into a narrow rail with a vertical Expand conversations control, then restore the full list when clicked. Narrow screens use a drawer for the same sidebar and keep a conversation entry in the top bar. Another top-bar switch opens the execution-observability view with actual stages, retrieval paths, metrics, and raw trace. Both views share the same SSE run and switching does not rerun the search.
 
-https://github.com/user-attachments/assets/058130c9-098d-4746-8535-1457ff141344
-
-[Delivered candidates](docs/console-run.png) · [Execution observability](docs/console-observe.png)
-
-The demo runs against the real LLM + Hybrid V2 + Elasticsearch stack and completes all eight stages: `understand → plan → execute → judge → evaluate → reflect → revise → finalize`, with two retrieval rounds and 50 delivered candidates. Model wait time is shown at 4× speed.
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/console-run.png"><img src="docs/feature-evidence.png" alt="Candidate evidence and composite order" width="100%"></a><br>
+      <strong>Candidate evidence</strong><br>
+      <small>Composite order, matched abilities, source paths, and shortlist actions in one view</small>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/feature-compare.png"><img src="docs/feature-compare.png" alt="Candidate difference comparison" width="100%"></a><br>
+      <strong>Candidate comparison</strong><br>
+      <small>Only the decisive differences, with a review recommendation</small>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/feature-resume.png"><img src="docs/feature-resume.png" alt="Complete candidate profile" width="100%"></a><br>
+      <strong>Complete profile</strong><br>
+      <small>Work history, education, skills, and review context in one place</small>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/console-observe.png"><img src="docs/feature-trace.png" alt="Agent execution observability" width="100%"></a><br>
+      <strong>Execution observability</strong><br>
+      <small>Eight stages, retrieval paths, run accounting, and raw events</small>
+    </td>
+  </tr>
+</table>
 
 ## Evaluation snapshot
 
@@ -202,7 +242,7 @@ class SearchTool(Protocol):
     def rerank_pool(self, req: RerankToolRequest) -> SearchToolResult: ...
 ```
 
-See [`examples/custom_backend.py`](examples/custom_backend.py) for a minimal implementation, plus [Architecture](docs/ARCHITECTURE.md) and [Hybrid V2](docs/HYBRID_V2.md) for details.
+See [`examples/custom_backend.py`](examples/custom_backend.py) for an integration and call-logging example, plus [Architecture](docs/ARCHITECTURE.md) and [Hybrid V2](docs/HYBRID_V2.md) for details.
 
 ## Documentation
 

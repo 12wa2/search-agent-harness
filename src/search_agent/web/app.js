@@ -5115,7 +5115,7 @@ function bindEvents() {
       runHint.textContent = "请先填写招聘需求。";
       return;
     }
-    const topK = Math.max(1, Math.min(50, Number(topKInput.value) || 20));
+    const topK = Math.max(1, Math.min(50, Number(topKInput.value) || 10));
     topKInput.value = topK;
     runSearch(query, topK);
   });
@@ -5144,7 +5144,7 @@ function bindEvents() {
       return;
     }
     setComposerNote(defaultComposerNote());
-    const topK = Math.max(1, Math.min(50, Number(chatTopKInput.value) || 20));
+    const topK = Math.max(1, Math.min(50, Number(chatTopKInput.value) || 10));
     chatTopKInput.value = topK;
     runSearch(query, topK);
     chatQueryInput.value = "";
@@ -5244,7 +5244,7 @@ function initFromUrl() {
   if (query) queryInput.value = query;
   if (topK) topKInput.value = topK;
   if (params.get("auto") === "1" && query) {
-    const k = Math.max(1, Math.min(50, Number(topK) || 20));
+    const k = Math.max(1, Math.min(50, Number(topK) || 10));
     runSearch(query, k);
   }
 }
