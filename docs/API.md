@@ -104,6 +104,10 @@ curl -s http://127.0.0.1:8000/search \
 `matchExplanation.hardMatches` 同时提供 `expectedValues`、可选 `actualValues` 和 `status`。
 违规与待核实候选人会排在满足条件的候选人之后，但仍保留在 `items`、分页结果和会话快照中。
 
+当某条搜索路径使用了与岗位原始硬条件不同的阈值或操作符时，最终软门控不会继承该路径的
+`matched=true`。系统会使用 `actualValues` 按岗位原始条件重新计算；实际值缺失时标记为
+`unverified`，而不是错误地标记为 `satisfied`。
+
 ### 轮次策略效果（`debug`）
 
 `details=true` 且实际执行 Agent 策略循环时，`debug` 额外提供逐轮归因：

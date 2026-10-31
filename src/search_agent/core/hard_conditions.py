@@ -14,6 +14,7 @@ omitted fact is materialised as ``unverified`` in the UI.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal, cast
 
 from search_agent.contract.tool import ToolCandidate
@@ -21,6 +22,14 @@ from search_agent.contract.tool import ToolCandidate
 HardConditionStatus = Literal["satisfied", "violated", "unverified"]
 CandidateHardConditionStatus = Literal["satisfied", "violated", "unverified", "not_applicable"]
 _STATUS_RANK = {"satisfied": 0, "not_applicable": 0, "unverified": 1, "violated": 2}
+_NUMBER_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(k|w|万|千)?", re.IGNORECASE)
+_WORK_STATE_CODES = {
+    "1": "在职，看看新机会",
+    "2": "在职，急寻新工作",
+    "3": "在职，暂无跳槽打算",
+    "4": "离职，正在找工作",
+    "5": "应届毕业生",
+}
 
 
 def _as_values(value: Any) -> list[Any]:
@@ -89,7 +98,7 @@ def _normalize_fact(
 ) -> dict[str, Any]:
     condition = fallback_condition or {}
     field = str(raw.get("field") or condition.get("field") or "").strip()
-    operator = str(raw.get("operator") or condition.get("operator") or "eq").strip()
+    operator = str(condition.get("operator") or raw.get("operator") or "eq").strip()
     expected = _expected_values(condition) or _expected_values(raw)
     actual = _actual_values(raw)
 
@@ -104,7 +113,21 @@ def _normalize_fact(
         fact["actualValues"] = actual
     else:
         fact.pop("actualValues", None)
-    fact["status"] = _fact_status(fact)
+
+    if fallback_condition is not None and not _fact_matches_condition(raw, condition):
+        if actual is None or not _has_values(actual):
+            fact["matched"] = False
+            fact["status"] = "unverified"
+        else:
+            matched = _condition_values_match(field, operator, expected, actual)
+            if matched is None:
+                fact["matched"] = False
+                fact["status"] = "unverified"
+            else:
+                fact["matched"] = matched
+                fact["status"] = "satisfied" if matched else "violated"
+    else:
+        fact["status"] = _fact_status(fact)
     return fact
 
 
@@ -117,8 +140,173 @@ def _fact_pool(tc: ToolCandidate) -> list[dict[str, Any]]:
     return [row for row in rows if isinstance(row, dict)]
 
 
+def _canonical_scalar(value: Any) -> str:
+    text = str(value).strip().casefold()
+    if not text:
+        return ""
+    try:
+        number = float(text.replace(",", ""))
+    except (TypeError, ValueError):
+        return text
+    if number.is_integer():
+        return str(int(number))
+    return format(number, ".15g")
+
+
 def _canonical_values(values: list[Any]) -> tuple[str, ...]:
-    return tuple(sorted(str(value).strip().casefold() for value in values if value is not None))
+    return tuple(sorted(value for value in map(_canonical_scalar, values) if value))
+
+
+def _as_number(value: Any) -> float | None:
+    try:
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
+def _salary_range(value: Any) -> tuple[int, int] | None:
+    text = str(value or "").strip().lower().replace(" ", "")
+    if not text:
+        return None
+    matches = list(_NUMBER_RE.finditer(text))
+    if not matches:
+        return None
+    amounts: list[int] = []
+    inferred_unit = 1.0
+    if any(match.group(2) in {"k", "千"} for match in matches):
+        inferred_unit = 1_000.0
+    if any(match.group(2) in {"w", "万"} for match in matches):
+        inferred_unit = 10_000.0
+    for match in matches[:2]:
+        amount = float(match.group(1))
+        unit = match.group(2)
+        if unit in {"k", "千"}:
+            multiplier = 1_000.0
+        elif unit in {"w", "万"}:
+            multiplier = 10_000.0
+        elif "元" in text:
+            multiplier = 1.0
+        else:
+            multiplier = inferred_unit if inferred_unit > 1 else (1_000.0 if amount <= 200 else 1.0)
+        amounts.append(round(amount * multiplier))
+    return (min(amounts), max(amounts)) if amounts else None
+
+
+def _salary_matches(
+    actual: Any,
+    expected_values: list[Any],
+    operator: str,
+) -> bool | None:
+    actual_range = _salary_range(actual)
+    expected_ranges = [value for value in map(_salary_range, expected_values) if value]
+    if actual_range is None or not expected_ranges:
+        return None
+    if operator == "not":
+        return all(
+            actual_range[1] < expected[0] or actual_range[0] > expected[1]
+            for expected in expected_ranges
+        )
+    if operator == "gte":
+        return actual_range[0] >= min(expected[0] for expected in expected_ranges)
+    if operator == "lte":
+        return actual_range[1] <= max(expected[1] for expected in expected_ranges)
+    if operator == "range":
+        low = min(expected[0] for expected in expected_ranges)
+        high = max(expected[1] for expected in expected_ranges)
+        return actual_range[0] <= high and actual_range[1] >= low
+    matches = [
+        actual_range[0] <= expected[1] and actual_range[1] >= expected[0]
+        for expected in expected_ranges
+    ]
+    return all(matches) if operator == "all" else any(matches)
+
+
+def _gender_bucket(value: Any) -> str:
+    text = _canonical_scalar(value)
+    if text in {"1", "男", "男性", "male", "m"}:
+        return "male"
+    if text in {"2", "女", "女性", "female", "f"}:
+        return "female"
+    return text
+
+
+def _work_state_text(value: Any) -> str:
+    text = str(value or "").strip().casefold()
+    return _WORK_STATE_CODES.get(text, text)
+
+
+def _condition_values_match(
+    field: str,
+    operator: str,
+    expected_values: list[Any],
+    actual_values: list[Any],
+) -> bool | None:
+    """Re-evaluate already-extracted actual values against the job condition."""
+    if not _has_values(expected_values):
+        return None
+    actual = [value for value in actual_values if value is not None and str(value).strip()]
+    if not actual:
+        return None
+    if field == "expected_salary":
+        return _salary_matches(actual[0], expected_values, operator)
+    if field == "gender":
+        actual_buckets = {_gender_bucket(value) for value in actual if _gender_bucket(value)}
+        expected_buckets = {
+            _gender_bucket(value) for value in expected_values if _gender_bucket(value)
+        }
+        if not actual_buckets or not expected_buckets:
+            return None
+        matched = bool(actual_buckets & expected_buckets)
+        return not matched if operator == "not" else matched
+    if field == "work_state":
+        actual_text = _work_state_text(actual[0])
+        expected = [_work_state_text(value) for value in expected_values]
+        if not actual_text or not any(expected):
+            return None
+        matched = any(
+            value == actual_text or value in actual_text or actual_text in value
+            for value in expected
+            if value
+        )
+        return not matched if operator == "not" else matched
+
+    if operator in {"gte", "lte", "range"}:
+        actual_numbers = [value for value in map(_as_number, actual) if value is not None]
+        expected_numbers = [
+            value for value in map(_as_number, expected_values) if value is not None
+        ]
+        if not actual_numbers or not expected_numbers:
+            return None
+        if operator == "gte":
+            return any(value >= expected_numbers[0] for value in actual_numbers)
+        if operator == "lte":
+            return any(value <= expected_numbers[0] for value in actual_numbers)
+        if len(expected_numbers) < 2:
+            return None
+        low, high = sorted(expected_numbers[:2])
+        return any(low <= value <= high for value in actual_numbers)
+
+    actual_set = {value for value in map(_canonical_scalar, actual) if value}
+    expected_set = {value for value in map(_canonical_scalar, expected_values) if value}
+    if not actual_set or not expected_set:
+        return None
+    if operator == "all":
+        return expected_set <= actual_set
+    if operator == "not":
+        return not bool(actual_set & expected_set)
+    return bool(actual_set & expected_set)
+
+
+def _fact_matches_condition(fact: dict[str, Any], condition: dict[str, Any]) -> bool:
+    if fact.get("negated") is True:
+        return False
+    return (
+        str(fact.get("field") or "").strip() == str(condition.get("field") or "").strip()
+        and str(fact.get("operator") or "eq").strip()
+        == str(condition.get("operator") or "eq").strip()
+        and _canonical_values(_expected_values(fact))
+        == _canonical_values(_expected_values(condition))
+    )
 
 
 def _pick_fact(

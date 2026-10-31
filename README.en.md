@@ -14,7 +14,7 @@ Controlled direct search · Adaptive reflection for harder requests · Evidence-
 ![Pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
 ![Elasticsearch](https://img.shields.io/badge/Elasticsearch-8-005571)
 ![Web UI](https://img.shields.io/badge/Web_UI-zero--build-2f6f61)
-![Tests](https://img.shields.io/badge/tests-562-brightgreen)
+![Tests](https://img.shields.io/badge/tests-568-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 <img src="docs/console.png" alt="Search Agent conversational talent-search UI" width="100%">
@@ -52,7 +52,7 @@ Search Agent Harness adds a controlled policy loop on top of deterministic retri
 - **Observable and conversational**: SSE stage events, actual executed stages, raw trace, L1 recent context, L2 conversation archive, and L3 candidate exclusion.
 - **Verifiable strategy effects**: each round exposes trigger gaps, policy actions, new recall / judgment / must-qualified counts, and LLM / latency cost; the optional final converged search is accounted separately so cumulative and incremental values are not mixed.
 - **Bounded admission**: a process-local limiter caps active and queued runs, returns `429` with `Retry-After`, and exposes peak/rejection counters through health checks.
-- **Pluggable and reproducible**: in-memory, SQLite/FTS5, Elasticsearch, and Hybrid V2 share one contract; 562 tests and a zero-key demo run locally.
+- **Pluggable and reproducible**: in-memory, SQLite/FTS5, Elasticsearch, and Hybrid V2 share one contract; 568 tests and a zero-key demo run locally.
 
 ## Architecture
 
@@ -226,7 +226,7 @@ See [`examples/custom_backend.py`](examples/custom_backend.py) for a minimal imp
 
 ## Quality and scope
 
-- The suite currently contains 562 tests; a local run reports `562 passed`, and CI runs the Elasticsearch integration cases in a dedicated job.
+- The suite currently contains 568 tests; a local run reports `568 passed`, and CI runs the Elasticsearch integration cases in a dedicated job.
 - CI covers Ruff, pytest, browser asset syntax, packaged Web resources, the offline demo, the evaluation gate, Elasticsearch integration, and Docker runtime dependency smoke tests.
 - The repository is not deployed to production and contains no real resumes, company data, internal hosts, or credentials. Demo data is synthetic.
 - Model quality, cost, and latency vary by provider; rerun the evaluation before connecting real data.

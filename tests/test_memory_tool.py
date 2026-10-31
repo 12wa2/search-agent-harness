@@ -45,6 +45,9 @@ def test_hard_filter_work_years():
     result = _tool().search_with_intent(req)
     assert result.total == 4
     assert all((item.item.workYears or 0) >= 8 for item in result.items)
+    assert all(
+        item.hard_matches[0]["actualValues"] == [item.item.workYears] for item in result.items
+    )
 
 
 def test_recall_pool_size_returns_more_than_top_k():

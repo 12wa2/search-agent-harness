@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from search_agent.contract.tool import ToolCandidate
 from search_agent.core.hard_conditions import (
     apply_hard_condition_soft_gate,
@@ -52,6 +54,23 @@ def _candidate(
         item=CandidateItem(docId=doc_id, score=score),
         hard_matches=facts,
     )
+
+
+def _work_years_condition() -> StructuredConditionIR:
+    return StructuredConditionIR(field="work_years", operator="gte", values=[3])
+
+
+def _relaxed_work_years_fact(actual: list[Any] | None) -> dict[str, Any]:
+    fact: dict[str, Any] = {
+        "field": "work_years",
+        "operator": "gte",
+        "expectedValues": [0],
+        "matched": True,
+        "required": True,
+    }
+    if actual is not None:
+        fact["actualValues"] = actual
+    return fact
 
 
 def test_explicit_actual_value_mismatch_is_violated() -> None:
@@ -137,3 +156,78 @@ def test_summary_is_not_applicable_without_constraints_or_facts() -> None:
     assert summary["delivered"] == 1
     assert summary["affected"] == 0
     assert summary["conditionCount"] == 0
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected_status", "expected_matched"),
+    [
+        ([2], "violated", False),
+        ([4], "satisfied", True),
+        (None, "unverified", False),
+    ],
+)
+def test_relaxed_threshold_is_recomputed_against_original_condition(
+    actual: list[Any] | None,
+    expected_status: str,
+    expected_matched: bool,
+) -> None:
+    candidate = _candidate("relaxed", [_relaxed_work_years_fact(actual)])
+
+    ordered, _ = apply_hard_condition_soft_gate([candidate], [_work_years_condition()])
+
+    fact = ordered[0].match_explanation["hardMatches"][0]
+    assert fact["expectedValues"] == [3]
+    assert fact["status"] == expected_status
+    assert fact["matched"] is expected_matched
+    if actual is not None:
+        assert fact["actualValues"] == actual
+
+
+def test_identical_condition_can_keep_tool_match_without_actual_value() -> None:
+    fact = {
+        "field": "work_years",
+        "operator": "gte",
+        "expectedValues": [3],
+        "matched": True,
+        "required": True,
+    }
+    candidate = _candidate("same-condition", [fact])
+
+    ordered, summary = apply_hard_condition_soft_gate([candidate], [_work_years_condition()])
+
+    assert ordered[0].match_explanation["hardMatches"][0]["status"] == "satisfied"
+    assert summary["satisfied"] == 1
+
+
+def test_different_operator_does_not_inherit_path_match() -> None:
+    fact = {
+        "field": "city",
+        "operator": "not",
+        "expectedValues": ["Beijing"],
+        "actualValues": ["Shenzhen"],
+        "matched": True,
+        "required": True,
+    }
+    candidate = _candidate("operator-mismatch", [fact])
+
+    ordered, summary = apply_hard_condition_soft_gate([candidate], [_condition()])
+
+    normalized = ordered[0].match_explanation["hardMatches"][0]
+    assert normalized["operator"] == "any"
+    assert normalized["status"] == "violated"
+    assert summary["violated"] == 1
+
+
+def test_relaxed_threshold_gate_preserves_membership_and_reorders() -> None:
+    short = _candidate("short", [_relaxed_work_years_fact([2])], 0.9)
+    qualified = _candidate("qualified", [_relaxed_work_years_fact([4])], 0.2)
+
+    ordered, summary = apply_hard_condition_soft_gate(
+        [short, qualified],
+        [_work_years_condition()],
+    )
+
+    assert [item.doc_id for item in ordered] == ["qualified", "short"]
+    assert {item.doc_id for item in ordered} == {"short", "qualified"}
+    assert summary["satisfied"] == 1
+    assert summary["violated"] == 1

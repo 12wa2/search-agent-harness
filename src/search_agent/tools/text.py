@@ -283,17 +283,27 @@ def hard_facts(
     leaves: list[StructuredConditionIR],
     item: CandidateItem,
 ) -> list[dict[str, Any]]:
-    """One explainable fact per leaf in the where tree (matched flag included)."""
-    return [
-        {
-            "field": cond.field,
-            "operator": cond.operator,
-            "values": list(cond.values),
-            "required": cond.required,
-            "matched": leaf_matches(cond, item),
-        }
-        for cond in leaves
-    ]
+    """One explainable fact per leaf, including extracted actual values."""
+    facts: list[dict[str, Any]] = []
+    for cond in leaves:
+        raw_actual = candidate_values(item, cond.field)
+        if raw_actual is None:
+            actual_values: list[Any] = []
+        elif isinstance(raw_actual, list):
+            actual_values = list(raw_actual)
+        else:
+            actual_values = [raw_actual]
+        facts.append(
+            {
+                "field": cond.field,
+                "operator": cond.operator,
+                "values": list(cond.values),
+                "actualValues": actual_values,
+                "required": cond.required,
+                "matched": leaf_matches(cond, item),
+            }
+        )
+    return facts
 
 
 def soft_score(

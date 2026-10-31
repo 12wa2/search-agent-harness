@@ -227,6 +227,9 @@
 
 ### Fixed
 
+- **多路径硬条件重新对齐**（`core/hard_conditions.py`、`tools/text.py`）：放宽路径返回的
+  `matched=true` 不再直接继承到原始岗位条件。最终软门控使用实际值重新校验阈值和操作符，
+  有条件地标记为满足或违规；实际值缺失时回退为待核实。修复不改变召回成员、交付人数或分页。
 - **Docker 完整在线依赖**（`Dockerfile`、`docs/ARCHITECTURE.md`、`docs/DECISIONS.md`）：
   build/runtime 阶段同时安装 `openai` extra，修复镜像切到完整在线后真实 LLM 调用缺少 SDK 的问题；
   CI 增加 Docker 运行时导入冒烟。

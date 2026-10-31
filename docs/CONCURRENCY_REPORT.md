@@ -19,7 +19,7 @@
 - 受控慢检索目标在 50 客户端并发、100 次请求下：12 次成功、88 次 429；健康快照记录峰值活跃 4、峰值排队 16、`queue_full` 80 次、`timeout` 8 次。
 - 真实在线单次搜索：HTTP 200、端到端 `62.08s`、交付 5 人；实际走过 `understand → plan → execute → judge → evaluate → reflect → revise → execute → judge → evaluate → finalize`，说明不是只跑首轮执行。
 - 真实在线 25 客户端、25 请求、无预热突发：4 次成功、21 次 429、0 次网络错误；峰值活跃 4、峰值排队 16，`queue_full=5`、`timeout=16`。拒绝均发生在搜索执行前，未继续消耗 LLM 与 ES。
-- 自动化测试：并发专项 `8 passed`；报告落盘时完整套件 `558 passed`，当前完整套件为 `562 passed`。
+- 自动化测试：并发专项 `8 passed`；报告落盘时完整套件 `558 passed`，当前完整套件为 `568 passed`。
 
 一句话判断：**当前实现已经具备单进程内可观测、可恢复的并发保护，真实在线链路也验证了保护边界；但它仍不是跨 worker、跨主机的生产级全局配额，不能把本轮数据当作在线容量承诺。**
 
@@ -293,12 +293,12 @@ Content-Type: application/json
 | 检查 | 结果 |
 |---|---|
 | `pytest -q tests/test_concurrency.py` | `8 passed in 0.86s` |
-| `pytest -q` | 验收时 `558 passed`；当前 `562 passed in 15.23s` |
+| `pytest -q` | 验收时 `558 passed`；当前 `568 passed in 16.14s` |
 | `ruff check .` | All checks passed |
 | `node --check src/search_agent/web/app.js` | 通过 |
 | `node --check scripts/generate-architecture-svg.mjs` | 通过 |
 
-完整测试数已同步到 README、架构 SVG 和评测展示中的 `562`。
+完整测试数已同步到 README、架构 SVG 和评测展示中的 `568`。
 
 ## 9. 边界与风险
 
