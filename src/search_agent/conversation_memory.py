@@ -41,6 +41,7 @@ class ConversationTurn(_ApiModel):
     query: str
     assistant_summary: str = ""
     job_profile_summary: dict[str, Any] = Field(default_factory=dict)
+    requirement_changes: dict[str, Any] | None = None
     result_count: int = 0
     hard_condition_summary: dict[str, Any] | None = None
     top_candidate_names: list[str] = Field(default_factory=list)

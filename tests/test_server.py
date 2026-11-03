@@ -214,6 +214,8 @@ def test_search_returns_conversation_and_positions_first_page(client: TestClient
     assert body["conversationId"]
     assert body["conversationTurns"] == 1
     assert body["queryToken"]
+    assert body["jobProfileSummary"]
+    assert body["requirementChanges"] is None
     assert len(body["items"]) == 2
     assert body["page"]["currentPage"] == 1
     assert body["page"]["hasMore"] is True
@@ -230,6 +232,7 @@ def test_search_returns_conversation_and_positions_first_page(client: TestClient
     assert second.status_code == 200
     assert second.json()["conversationId"] == body["conversationId"]
     assert second.json()["conversationTurns"] == 2
+    assert "requirementChanges" in second.json()
 
 
 def test_session_endpoint_paginates_and_expires_after_delete(client: TestClient) -> None:
@@ -619,6 +622,9 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "candidate-compare-dialog" in script.text
     assert "chat-progress-item" in script.text
     assert "renderChatResult" in script.text
+    assert "function renderRequirementChanges" in script.text
+    assert "本轮需求调整" in script.text
+    assert "硬条件移除或降级会单独提示" in script.text
     assert "agent-session-list" in script.text
     assert "SIDEBAR_KEY" in script.text
     assert "setSidebarVisible" in script.text
@@ -722,6 +728,8 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert ".compare-matrix-note" in styles.text
     assert ".aw-compare-leader-badge" in styles.text
     assert ".aw-compare-hard-value.is-na" in styles.text
+    assert ".aw-change-panel" in styles.text
+    assert ".aw-change-group.is-warning" in styles.text
     assert ".chat-run-details" not in styles.text
     assert ".raw > summary" in styles.text
 

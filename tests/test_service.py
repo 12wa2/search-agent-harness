@@ -517,6 +517,68 @@ def test_service_persists_restorable_turn_snapshot():
     assert turn.route
 
 
+def test_service_persists_requirement_changes_against_previous_turn():
+    conversations = ConversationStore(connect_redis=False)
+    conversation = conversations.create(39978, 7)
+    conversations.append_turn(
+        conversation.conversation_id,
+        39978,
+        7,
+        ConversationTurn(
+            turn_index=0,
+            query="Python engineer",
+            assistant_summary="上一轮结果",
+            job_profile_summary={
+                "title": "Python engineer",
+                "must_abilities": ["Python"],
+                "nice_abilities": [],
+                "hard_constraints": [
+                    {
+                        "field": "work_years",
+                        "operator": "gte",
+                        "values": [5],
+                        "required": True,
+                        "weight": 1.0,
+                    }
+                ],
+                "soft_signals": [],
+                "difficulty": "mid",
+            },
+            status="completed",
+            route="agent",
+        ),
+    )
+    svc = SearchAgentService(
+        tool=_FakeTool([_candidate(f"d{i}") for i in range(5)]),
+        llm_client=_llm(),
+        runner=LoopRunner(),
+        conversation_store=conversations,
+        session_store=AgentSessionStore(connect_redis=False),
+    )
+
+    resp = svc.search(
+        SearchRequest(
+            query="Python engineer",
+            companyId=39978,
+            hrId=7,
+            topK=5,
+            conversationId=conversation.conversation_id,
+        )
+    )
+
+    assert resp.jobProfileSummary is not None
+    assert resp.jobProfileSummary["nice_abilities"] == []
+    assert resp.requirementChanges is not None
+    assert resp.requirementChanges["hasChanges"] is True
+    assert resp.requirementChanges["warnings"][0]["label"] == "原硬条件未保留"
+
+    memory = conversations.load(conversation.conversation_id)
+    assert memory is not None
+    turn = memory.turns[-1]
+    assert turn.job_profile_summary == resp.jobProfileSummary
+    assert turn.requirement_changes == resp.requirementChanges
+
+
 def test_service_passes_explicit_exclusions_and_hides_them_defensively():
     conversations = ConversationStore(connect_redis=False)
     tool = _FakeTool([_candidate(f"d{i}") for i in range(5)])

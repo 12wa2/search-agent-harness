@@ -73,6 +73,8 @@ curl -s http://127.0.0.1:8000/search \
 | `query` / `total` / `topK` | 查询文本、交付总数和目标人数 |
 | `items` | 候选人列表，包含匹配证据、技能、经历和分数 |
 | `hardConditionSummary` | 完整结果池的硬条件三态摘要；违规和待核实候选不会被删除 |
+| `jobProfileSummary` | 本轮结构化岗位条件快照，用于下一轮变化对比与恢复 |
+| `requirementChanges` | 相对上一轮的条件变化；首轮或没有实质变化时为 `null` |
 | `debug` | Agent 指标、Trace、路由、降级原因；仅 `details=true` 时需要 |
 | `clarification` | 需要用户补充信息时的问题与可选项 |
 | `conversationId` / `conversationTurns` | 会话标识与轮次数 |
@@ -108,6 +110,21 @@ curl -s http://127.0.0.1:8000/search \
 当某条搜索路径使用了与岗位原始硬条件不同的阈值或操作符时，最终软门控不会继承该路径的
 `matched=true`。系统会使用 `actualValues` 按岗位原始条件重新计算；实际值缺失时标记为
 `unverified`，而不是错误地标记为 `satisfied`。
+
+`requirementChanges` 只根据相邻两轮持久化的岗位条件快照做确定性对比，不调用 LLM。主要分组为：
+
+| 字段 | 说明 |
+|---|---|
+| `hasChanges` | 是否存在需要展示的变化 |
+| `retained` | 本轮仍然保留的必需硬条件 |
+| `raised` | 新增硬条件、新增/升级必备能力或提高优先级的条件 |
+| `lowered` | 移除必备能力、降低优先级或能力层级下降 |
+| `adjusted` | 同一字段的值或操作符变化，例如城市从“上海”变为“上海 / 杭州” |
+| `warnings` | 原硬条件被移除或降为偏好，需要招聘者确认 |
+
+首轮搜索没有上一轮快照，因此 `requirementChanges` 为 `null`。变化面板只解释条件差异，
+不会改变实际交付名单或硬条件门控。Agent 反思阶段新增的 soft signals 属于检索策略调整，
+不参与该面板的对比，避免把系统推断误标成招聘者修改了需求。
 
 ### 轮次策略效果（`debug`）
 
@@ -223,6 +240,8 @@ curl -s -X PATCH \
 
 会话按 `companyId` 与 `hrId` 校验作用域；不匹配时返回 `404`。L1/L2/L3 记忆语义见 [架构设计](ARCHITECTURE.md)。
 每轮 L2 快照同时保存 `hardConditionSummary`，因此恢复会话后仍能区分违规、待核实与满足状态。
+每轮还会保存 `jobProfileSummary` 与 `requirementChanges`，恢复历史会话后可继续查看该轮相对上一轮的
+条件变化；旧版本会话没有新字段时按无变化处理，不会推断缺失信息。
 
 ## 6. 结果分页
 

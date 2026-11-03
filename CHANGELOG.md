@@ -7,6 +7,12 @@
 
 ### Added
 
+- **跨轮需求变化对比**（`requirement_changes.py`、`service.py`、`conversation_memory.py`、`web/`、`tests/`）：
+  每轮把岗位标题、必备/加分能力和硬条件保存为结构化快照，并与上一轮做确定性对比。
+  搜索结果新增 `jobProfileSummary` 与 `requirementChanges`；前端在工作台顶部展示保留硬条件、
+  提高要求、降低优先级、条件调整和待确认项。硬条件被移除或降为偏好时会单独告警，不再静默变化。
+  变化数据随会话轮次持久化，恢复历史会话后仍可查看；该能力不调用 LLM，也不修改 Judge、召回、
+  排序或硬条件软门控。
 - **会话级入围名单与导出**（`conversation_memory.py`、`server.py`、`web/`、`tests/`）：为每个会话持久化
   入围候选人的完整快照、原始综合顺位与档案 query token；刷新页面或恢复历史会话后仍可继续查看、
   比较和调整入围状态。新增 `PATCH /conversations/{id}/shortlist/{docId}`，支持租户隔离、最多

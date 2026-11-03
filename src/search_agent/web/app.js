@@ -2765,6 +2765,67 @@ function renderWorkbenchCandidate(wb, entry) {
   return node;
 }
 
+function requirementChangeValue(item) {
+  if (typeof item === "string") return item;
+  if (item && (item.from !== undefined || item.to !== undefined)) {
+    return `${item.text || "条件"}：${item.from ?? "未设置"} → ${item.to ?? "未设置"}`;
+  }
+  const label = item?.label ? `${item.label} · ` : "";
+  return `${label}${item?.text || ""}`.trim();
+}
+
+function renderRequirementChanges(changes) {
+  if (!changes || !changes.hasChanges) return null;
+  const groups = [
+    {
+      title: "需要确认",
+      className: "is-warning",
+      items: Array.isArray(changes.warnings) ? changes.warnings : [],
+    },
+    {
+      title: "保留硬条件",
+      items: Array.isArray(changes.retained) ? changes.retained : [],
+    },
+    {
+      title: "提高要求",
+      items: Array.isArray(changes.raised) ? changes.raised : [],
+    },
+    {
+      title: "降低优先级",
+      items: Array.isArray(changes.lowered) ? changes.lowered : [],
+    },
+    {
+      title: "调整条件",
+      items: Array.isArray(changes.adjusted) ? changes.adjusted : [],
+    },
+  ].filter((group) => group.items.length);
+  if (!groups.length) return null;
+
+  const panel = el("section", "aw-change-panel");
+  panel.setAttribute("aria-label", "本轮需求调整");
+  const head = el("div", "aw-change-head");
+  head.append(
+    el("span", "aw-change-kicker", "对比上一轮"),
+    el("h2", "", "本轮需求调整"),
+    el("p", "aw-change-copy", "以下变化来自结构化岗位条件对比；硬条件移除或降级会单独提示。"),
+  );
+  panel.append(head);
+
+  const groupsNode = el("div", "aw-change-groups");
+  for (const group of groups) {
+    const groupNode = el("section", `aw-change-group${group.className ? ` ${group.className}` : ""}`);
+    groupNode.append(el("h3", "", group.title));
+    const list = el("ul", "aw-change-list");
+    for (const item of group.items) {
+      list.append(el("li", "aw-change-item", requirementChangeValue(item)));
+    }
+    groupNode.append(list);
+    groupsNode.append(groupNode);
+  }
+  panel.append(groupsNode);
+  return panel;
+}
+
 function renderAgentWorkbench(container, payload, run, options = {}) {
   const items = Array.isArray(options.items) ? options.items : [];
   const offset = Math.max(0, Number(options.offset || 0));
@@ -2804,6 +2865,8 @@ function renderAgentWorkbench(container, payload, run, options = {}) {
   root.id = wb.id;
   root.dataset.workbenchId = wb.id;
   root.append(buildWorkbenchTaskHead(wb, payload, run, overview));
+  const requirementChanges = renderRequirementChanges(payload.requirementChanges);
+  if (requirementChanges) root.append(requirementChanges);
 
   const grid = el("div", "aw-workspace-grid");
   const candidatePanel = el("section", "aw-candidate-panel");
@@ -3375,6 +3438,10 @@ function renderChatResult(payload) {
     updateChatPager(payload.page ? { ...payload.page, totalPages: payload.page.totalPages } : {});
     if (!items.length) message.body.append(el("p", "chat-no-results", "本轮没有找到符合条件的候选人，可以补充或放宽条件后重试。"));
   }
+  if (!workbench && !clarification && !cancelled) {
+    const requirementChanges = renderRequirementChanges(payload.requirementChanges);
+    if (requirementChanges) message.body.append(requirementChanges);
+  }
   run.resultArticle = message.article;
   if (workbench) run.article.hidden = true;
   if (!clarification && !cancelled) compactCompletedChatRun(run);
@@ -3702,6 +3769,10 @@ function renderRestoredConversation(memory) {
         el("p", "chat-result-copy", turn.assistantSummary || "本轮对话已恢复。"),
       );
     }
+    if (!useWorkbench) {
+      const requirementChanges = renderRequirementChanges(turn.requirementChanges);
+      if (requirementChanges) message.body.append(requirementChanges);
+    }
 
     if (clarification) {
       const questions = (turn.clarification.questions || []).filter(Boolean);
@@ -3723,6 +3794,7 @@ function renderRestoredConversation(memory) {
           queryToken: turn.queryToken || null,
           page: null,
           hardConditionSummary: turn.hardConditionSummary || null,
+          requirementChanges: turn.requirementChanges || null,
           debug: {},
         };
         renderAgentWorkbench(message.body, workbenchPayload, null, {

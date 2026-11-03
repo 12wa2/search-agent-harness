@@ -44,6 +44,10 @@ from search_agent.models.api import (
     SearchResponse,
 )
 from search_agent.models.artifacts import Budget
+from search_agent.requirement_changes import (
+    build_job_profile_summary,
+    build_requirement_changes,
+)
 from search_agent.runner import HarnessRunner, LoopRunner
 from search_agent.session import AgentSessionStore
 from search_agent.stages.base import Deps
@@ -86,6 +90,7 @@ class SearchAgentService:
         perm_dict = req.permission.model_dump() if req.permission else None
         conversation_history: list[dict] = []
         excluded_doc_ids: list[str] = []
+        previous_job_profile_summary: dict[str, Any] = {}
         conv_id = req.conversationId or new_conversation_id()
         conversation_turns = 0
         if req.conversationId:
@@ -97,6 +102,10 @@ class SearchAgentService:
                     ]
                     conversation_turns = memory.total_turns
                     excluded_doc_ids = list(memory.excluded_candidate_ids)
+                    for turn in reversed(memory.turns):
+                        if turn.status != "reply" and turn.job_profile_summary:
+                            previous_job_profile_summary = dict(turn.job_profile_summary)
+                            break
                 elif memory:
                     conv_id = new_conversation_id()
             except Exception:
@@ -161,6 +170,17 @@ class SearchAgentService:
                 tc for tc in (state.get("final_items") or []) if tc.doc_id not in excluded
             ]
             state["final_total"] = len(state["final_items"])
+
+        state["job_profile_summary"] = build_job_profile_summary(
+            state.get("job_profile"),
+        )
+        requirement_changes = build_requirement_changes(
+            previous_job_profile_summary,
+            state["job_profile_summary"],
+        )
+        state["requirement_changes"] = (
+            requirement_changes if requirement_changes["hasChanges"] else None
+        )
 
         if state.get("cancelled"):
             resp = self._handle_cancelled(req, state)
@@ -526,6 +546,8 @@ class SearchAgentService:
             total=state.get("final_total", len(items)),
             items=items,
             hardConditionSummary=HardConditionSummary.model_validate(hard_condition_summary),
+            jobProfileSummary=state.get("job_profile_summary") or None,
+            requirementChanges=state.get("requirement_changes") or None,
             debug=self._build_debug(state, req),
             queryToken=query_token,
             page=page_info,
@@ -555,6 +577,8 @@ class SearchAgentService:
             total=0,
             items=[],
             clarification=clarification,
+            jobProfileSummary=state.get("job_profile_summary") or None,
+            requirementChanges=state.get("requirement_changes") or None,
             debug=self._build_debug(state, req),
         )
 
@@ -681,14 +705,12 @@ class SearchAgentService:
     ) -> ConversationMemory:
         """Persist one complete turn so the sidebar can restore the session."""
         job = state.get("job_profile")
-        summary: dict[str, Any] = {}
-        if job:
-            summary = {
-                "title": job.title,
-                "must_abilities": [a.name for a in (job.must_abilities or [])],
-                "hard_constraints": [c.model_dump() for c in (job.hard_constraints or [])],
-                "difficulty": job.subjective_difficulty,
-            }
+        summary = state.get("job_profile_summary")
+        if not isinstance(summary, dict):
+            summary = build_job_profile_summary(job)
+        requirement_changes = state.get("requirement_changes")
+        if not isinstance(requirement_changes, dict):
+            requirement_changes = None
 
         final_items = list(state.get("final_items") or [])
         top_names = [tc.item.name for tc in final_items[:3] if tc.item.name]
@@ -733,6 +755,7 @@ class SearchAgentService:
             query=req.query,
             assistant_summary=assistant_summary,
             job_profile_summary=summary,
+            requirement_changes=requirement_changes,
             result_count=response.total,
             hard_condition_summary=hard_summary,
             top_candidate_names=top_names,

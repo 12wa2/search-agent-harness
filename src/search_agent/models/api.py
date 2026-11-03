@@ -6,7 +6,7 @@ service. camelCase aliases are preserved for JSON round-tripping.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -115,6 +115,8 @@ class SearchResponse(BaseModel):
     topK: int = 0
     items: list[CandidateItem]
     hardConditionSummary: HardConditionSummary | None = None
+    jobProfileSummary: dict[str, Any] | None = None
+    requirementChanges: dict[str, Any] | None = None
     debug: dict | None = None
     clarification: dict | None = None
     conversationId: str | None = None
