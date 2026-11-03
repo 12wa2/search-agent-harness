@@ -7,6 +7,12 @@
 
 ### Added
 
+- **会话级入围名单与导出**（`conversation_memory.py`、`server.py`、`web/`、`tests/`）：为每个会话持久化
+  入围候选人的完整快照、原始综合顺位与档案 query token；刷新页面或恢复历史会话后仍可继续查看、
+  比较和调整入围状态。新增 `PATCH /conversations/{id}/shortlist/{docId}`，支持租户隔离、最多
+  100 位候选人、快照回填与显式移出；前端“已入围”筛选保持不变，并新增 CSV 与 Markdown 导出，
+  导出内容包含能力命中、能力缺口、项目证据、硬条件状态、路径证据和档案链接。该能力不改变
+  搜索结果排序、硬条件软门控或既有搜索链路。
 - **finalize 项目经历证据**（`stages/finalize.py`、`web/`、`tests/`）：在不改变 Judge、
   召回和硬条件门控的前提下，将 `projectExperiences` 的项目名称与描述纳入最终排序的
   must 证据覆盖。项目描述含“协助、参与、会议纪要”等弱表达且没有明确负责动作时不计入

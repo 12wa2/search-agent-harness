@@ -381,7 +381,7 @@ HTTP + SSE。配置 `PRIMARY_LLM_API_KEY` 后，compose 会把在线预置接到
 | 层级 | 存储 | 保留策略 | 内容与用途 |
 |---|---|---|---|
 | L1 工作记忆 | 请求状态 + Prompt | 每次请求取最近 3 轮 | 结构化岗位条件、结果数；用于承接“最好有”“不要外包”等追加条件 |
-| L2 会话归档 | Redis / 进程内降级 | 30 天，最多 50 轮 | 完整轮次快照：query、摘要、route/status、queryToken、Top 候选人 ID、最多 10 张候选人卡片字段 |
+| L2 会话归档 | Redis / 进程内降级 | 30 天，最多 50 轮 | 完整轮次快照：query、摘要、route/status、queryToken、Top 候选人 ID、最多 10 张候选人卡片字段；另存最多 100 位入围候选人的快照、原始顺位与 queryToken |
 | L3 候选人记忆 | 随 L2 保存 | 同一会话内 | `seenCandidateIds` 记录看过的人，`excludedCandidateIds` 记录招聘者显式排除的人 |
 
 只有显式排除项会传给 `SearchToolRequest.exclude_doc_ids`，并作为复杂链路每轮召回与最终
@@ -392,6 +392,10 @@ HTTP + SSE。配置 `PRIMARY_LLM_API_KEY` 后，compose 会把在线预置接到
 `SearchAgentService` 在搜索前按 `conversationId` 加载历史，并按 `(companyId, hrId)` 精确校验归属
 （`hrId` 为空也视为独立作用域）。搜索完成后先构建响应，再把同一轮 `queryToken` 与可恢复的
 候选人卡片快照写入 L2；新建检索只切换活动 `conversationId`，不删除旧会话。
+
+入围名单独立于 L3 排除项：它只表示招聘者希望保留并继续比较的候选人，不会进入后续搜索的
+`exclude_doc_ids`。`shortlistedCandidates` 按会话持久化，刷新页面或恢复历史时直接还原；
+前端可将其导出为 CSV 或 Markdown，导出不改变综合顺位或硬条件门控。
 
 路由直接回复的问候、身份询问、帮助和范围外说明同样以 `status=reply` 写入 L2，使左侧“最近会话”立即出现
 并可恢复；加载历史时会过滤这些轮次，L1 搜索上下文仍只包含实际搜索/澄清轮次。
@@ -405,6 +409,7 @@ HTTP + SSE。配置 `PRIMARY_LLM_API_KEY` 后，compose 会把在线预置接到
 | `GET /conversations/{id}?companyId=&hrId=` | 恢复完整轮次与候选人快照 |
 | `DELETE /conversations/{id}?companyId=&hrId=` | 删除指定归属的会话 |
 | `PATCH /conversations/{id}/candidates/{docId}` | 设置显式排除或恢复候选人 |
+| `PATCH /conversations/{id}/shortlist/{docId}` | 加入或移出入围名单 |
 
 结果分页与 L2 分离：`pageSize` 只控制首页切片，后续页通过 `GET /sessions/{queryToken}` 读取，
 不重新运行 Agent、不增加 LLM/token 成本。没有 `conversationId` 时由后端生成并返回；没有

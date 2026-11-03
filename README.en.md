@@ -14,7 +14,7 @@ Controlled direct search · Adaptive reflection for harder requests · Evidence-
 ![Pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
 ![Elasticsearch](https://img.shields.io/badge/Elasticsearch-8-005571)
 ![Web UI](https://img.shields.io/badge/Web_UI-zero--build-2f6f61)
-![Tests](https://img.shields.io/badge/tests-568-brightgreen)
+![Tests](https://img.shields.io/badge/tests-577-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 <img src="docs/console.png" alt="Search Agent conversational talent-search UI" width="100%">
@@ -68,10 +68,10 @@ Search Agent Harness adds a controlled policy loop on top of deterministic retri
 - **Evidence first**: the judge consumes candidate facts returned by the search tool; cards expose matched abilities, project evidence, gaps, hard constraints, and source paths.
 - **Headcount-first hard-condition soft gate**: hard constraints use `satisfied / violated / unverified`; violating or unverified candidates move to the end but are never dropped, and the delivery summary exposes the review gap.
 - **Governed loop**: explicit state machine, iteration/path/LLM/token/wall-clock budgets, signature deduplication, and stage-level degradation.
-- **Observable and conversational**: SSE stage events, actual executed stages, raw trace, L1 recent context, L2 conversation archive, and L3 candidate exclusion.
+- **Observable conversation loop**: SSE stage events, actual executed stages, raw trace, L1 recent context, L2 conversation archive, and L3 candidate exclusion; shortlisted candidates persist with the conversation across refreshes and can be exported as CSV or Markdown.
 - **Verifiable strategy effects**: each round exposes trigger gaps, policy actions, new recall / judgment / must-qualified counts, and LLM / latency cost; the optional final converged search is accounted separately so cumulative and incremental values are not mixed.
 - **Bounded admission**: a process-local limiter caps active and queued runs, returns `429` with `Retry-After`, and exposes peak/rejection counters through health checks.
-- **Pluggable and reproducible**: in-memory, SQLite/FTS5, Elasticsearch, and Hybrid V2 share one contract; 568 tests and a zero-key demo run locally.
+- **Pluggable and reproducible**: in-memory, SQLite/FTS5, Elasticsearch, and Hybrid V2 share one contract; 577 tests and a zero-key demo run locally.
 
 ## Architecture
 
@@ -175,7 +175,7 @@ See **[Deployment](docs/DEPLOYMENT.md)** for the full Docker stack, Redis setup,
 
 ## Interface and core workflows
 
-The default view is a conversational agent workspace: recent conversations on the left, requirement parsing and live execution evidence in the center, and the delivered shortlist on the right. The sidebar can collapse into a narrow rail with a vertical Expand conversations control, then restore the full list when clicked. Narrow screens use a drawer for the same sidebar and keep a conversation entry in the top bar. Another top-bar switch opens the execution-observability view with actual stages, retrieval paths, metrics, and raw trace. Both views share the same SSE run and switching does not rerun the search.
+The default view is a conversational agent workspace: recent conversations on the left, requirement parsing and live execution evidence in the center, and the delivered shortlist on the right. The sidebar can collapse into a narrow rail with a vertical Expand conversations control, then restore the full list when clicked. Narrow screens use a drawer for the same sidebar and keep a conversation entry in the top bar. Shortlisted candidates persist with the conversation across refreshes, remain available after restoring history, and can be exported as CSV or Markdown. Another top-bar switch opens the execution-observability view with actual stages, retrieval paths, metrics, and raw trace. Both views share the same SSE run and switching does not rerun the search.
 
 <table>
   <tr>
@@ -233,7 +233,7 @@ Full tables, confidence intervals, and per-query failure analysis are in **[Eval
 
 - **Adaptive harness**: stages are pure functions behind an explicit loop; an optional LangGraph runner compiles the same stages without changing behavior.
 - **Budgets and degradation**: the state machine governs five resource classes—iterations, search paths, LLM calls, tokens, and wall-clock time—and handles covered stage failures through degradation or an explainable termination.
-- **Conversation tiers**: L1 injects recent structured context, L2 persists the complete conversation, and L3 records viewed or explicitly excluded candidates.
+- **Conversation tiers**: L1 injects recent structured context, L2 persists the complete conversation and shortlist, and L3 records viewed or explicitly excluded candidates.
 - **Retrieval boundary**: implement the two methods below to connect your own search system without changing Agent stages.
 
 ```python
@@ -250,7 +250,7 @@ See [`examples/custom_backend.py`](examples/custom_backend.py) for an integratio
 |---|---|
 | [Intent Routing](docs/INTENT_ROUTING.md) | Five intents, 3/5/8 route selection, and observable fields |
 | [Architecture](docs/ARCHITECTURE.md) | State machine, budgets, degradation, merging, and finalize |
-| [HTTP API](docs/API.md) | Search, SSE, conversations, candidate exclusion, pagination, and admission control |
+| [HTTP API](docs/API.md) | Search, SSE, conversations, candidate exclusion, shortlist, pagination, and admission control |
 | [Deployment](docs/DEPLOYMENT.md) | Quick demo, full local online mode, Docker Compose, and troubleshooting |
 | [Configuration](docs/CONFIGURATION.md) | Model, gateway, Redis, budgets, ES, and Hybrid V2 variables |
 | [Evaluation](docs/EVALUATION.md) | Real-LLM top-5 A/B, intervals, and limitations |
@@ -266,7 +266,7 @@ See [`examples/custom_backend.py`](examples/custom_backend.py) for an integratio
 
 ## Quality and scope
 
-- The suite currently contains 568 tests; a local run reports `568 passed`, and CI runs the Elasticsearch integration cases in a dedicated job.
+- The suite currently contains 577 tests; a local run reports `577 passed`, and CI runs the Elasticsearch integration cases in a dedicated job.
 - CI covers Ruff, pytest, browser asset syntax, packaged Web resources, the offline demo, the evaluation gate, Elasticsearch integration, and Docker runtime dependency smoke tests.
 - The repository is not deployed to production and contains no real resumes, company data, internal hosts, or credentials. Demo data is synthetic.
 - Model quality, cost, and latency vary by provider; rerun the evaluation before connecting real data.

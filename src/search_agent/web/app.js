@@ -967,6 +967,79 @@ function workbenchCandidateEntry(item, rank, token) {
   };
 }
 
+function shortlistEntryFromPayload(entry, fallbackToken = null) {
+  const candidate =
+    entry?.candidate && typeof entry.candidate === "object" ? entry.candidate : {};
+  const docId = String(
+    entry?.docId ||
+      entry?.doc_id ||
+      candidate.docId ||
+      candidate.doc_id ||
+      candidate.candidateProfileId ||
+      candidate.id ||
+      "",
+  ).trim();
+  if (!docId) return null;
+  const rawRank = Number(entry?.rank || 0);
+  return {
+    key: docId,
+    item: { ...candidate, docId },
+    rank: Number.isFinite(rawRank) ? Math.max(0, Math.trunc(rawRank)) : 0,
+    token: entry?.queryToken ?? entry?.query_token ?? fallbackToken ?? null,
+  };
+}
+
+function shortlistMapFromEntries(entries, fallbackToken = null) {
+  const shortlist = new Map();
+  for (const raw of Array.isArray(entries) ? entries : []) {
+    const entry = shortlistEntryFromPayload(raw, fallbackToken);
+    if (entry) shortlist.set(entry.key, entry);
+  }
+  return shortlist;
+}
+
+function compareShortlistEntries(left, right) {
+  const leftRank = Number(left.rank || 0);
+  const rightRank = Number(right.rank || 0);
+  if (leftRank > 0 && rightRank > 0 && leftRank !== rightRank) return leftRank - rightRank;
+  if (leftRank > 0 && rightRank <= 0) return -1;
+  if (leftRank <= 0 && rightRank > 0) return 1;
+  return String(left.item?.name || left.key).localeCompare(
+    String(right.item?.name || right.key),
+    "zh-CN",
+  );
+}
+
+function workbenchShortlistEntries(wb) {
+  return [...wb.shortlisted.values()].sort(compareShortlistEntries);
+}
+
+function applyWorkbenchShortlist(wb, entries) {
+  wb.shortlisted = shortlistMapFromEntries(entries, wb.token);
+  wb.shortlistLoaded = true;
+  renderWorkbenchList(wb);
+  updateWorkbenchChrome(wb);
+}
+
+async function loadWorkbenchShortlist(wb, { force = false } = {}) {
+  if (!wb?.conversationId || (wb.shortlistLoaded && !force)) return;
+  const revision = wb.shortlistRevision;
+  try {
+    const resp = await fetch(
+      `/conversations/${encodeURIComponent(wb.conversationId)}?companyId=1`,
+      { cache: "no-store" },
+    );
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const memory = await resp.json();
+    if (state.activeWorkbench !== wb || wb.shortlistRevision !== revision) return;
+    applyWorkbenchShortlist(wb, memory.shortlistedCandidates || []);
+  } catch (err) {
+    if (state.activeWorkbench !== wb) return;
+    wb.shortlistLoaded = true;
+    setWorkbenchFeedback(wb, `入围名单恢复失败：${err.message}`, { warning: true });
+  }
+}
+
 function workbenchSkillNames(item, limit = 3) {
   const names = [];
   const seen = new Set();
@@ -2241,7 +2314,7 @@ function setWorkbenchFeedback(wb, text, { warning = false } = {}) {
 function renderWorkbenchList(wb) {
   hideCandidateTooltip();
   const entries = wb.filter === "shortlisted"
-    ? [...wb.shortlisted.values()]
+    ? workbenchShortlistEntries(wb)
     : wb.pageEntries;
   wb.list.replaceChildren();
   if (entries.length) {
@@ -2301,6 +2374,8 @@ function updateWorkbenchChrome(wb) {
   wb.compareButton.title = wb.compare.size >= 2
     ? "打开候选人对比"
     : "选择 2–4 位候选人后查看对比";
+  if (wb.csvButton) wb.csvButton.disabled = wb.shortlisted.size === 0;
+  if (wb.markdownButton) wb.markdownButton.disabled = wb.shortlisted.size === 0;
   syncWorkbenchPager(wb);
 }
 
@@ -2313,7 +2388,9 @@ function setWorkbenchFilter(wb, filter) {
 
 function toggleWorkbenchShortlist(wb, entry) {
   const name = entry.item?.name || entry.item?.docId || "该候选人";
-  if (wb.shortlisted.has(entry.key)) {
+  const wasShortlisted = wb.shortlisted.has(entry.key);
+  const snapshot = wb.shortlisted.get(entry.key) || entry;
+  if (wasShortlisted) {
     wb.shortlisted.delete(entry.key);
     setWorkbenchFeedback(wb, `已将 ${name} 移出本轮入围。`);
     announceAgentStatus(`已将 ${name} 移出本轮入围。`);
@@ -2322,8 +2399,209 @@ function toggleWorkbenchShortlist(wb, entry) {
     setWorkbenchFeedback(wb, `已将 ${name} 加入入围，共 ${wb.shortlisted.size} 人。`);
     announceAgentStatus(`已将 ${name} 加入入围。`);
   }
+  wb.shortlistRevision += 1;
+  const revision = wb.shortlistRevision;
   renderWorkbenchList(wb);
   updateWorkbenchChrome(wb);
+  persistWorkbenchShortlist(wb, snapshot, !wasShortlisted, revision);
+}
+
+function persistWorkbenchShortlist(wb, entry, shortlisted, revision) {
+  if (!wb.conversationId) return;
+  const request = {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      shortlisted,
+      candidate: entry.item,
+      rank: entry.rank,
+      queryToken: entry.token || wb.token || null,
+    }),
+  };
+  const persist = async () => {
+    const resp = await fetch(
+      `/conversations/${encodeURIComponent(wb.conversationId)}/shortlist/${encodeURIComponent(entry.key)}?companyId=1`,
+      request,
+    );
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const memory = await resp.json();
+    if (state.activeWorkbench !== wb || wb.shortlistRevision !== revision) return;
+    applyWorkbenchShortlist(wb, memory.shortlistedCandidates || []);
+  };
+  wb.shortlistWrite = (wb.shortlistWrite || Promise.resolve())
+    .then(persist)
+    .catch((err) => {
+      if (state.activeWorkbench !== wb) return;
+      setWorkbenchFeedback(wb, `入围名单保存失败：${err.message}`, { warning: true });
+      announceAgentStatus("入围名单保存失败，正在重新同步。");
+      void loadWorkbenchShortlist(wb, { force: true });
+    });
+}
+
+function shortlistTextList(values) {
+  return (Array.isArray(values) ? values : [])
+    .map((value) => {
+      if (typeof value === "string") return value.trim();
+      if (!value || typeof value !== "object") return String(value ?? "").trim();
+      return String(value.label || value.name || value.ability || value.text || "").trim();
+    })
+    .filter(Boolean)
+    .join("；");
+}
+
+function shortlistProjectEvidenceText(data) {
+  return data.projectEvidence
+    .map((entry) =>
+      [entry.ability, entry.project, entry.excerpt]
+        .map((part) => String(part || "").trim())
+        .filter(Boolean)
+        .join(" · "),
+    )
+    .filter(Boolean)
+    .join("\n");
+}
+
+function workbenchExportTitle(wb) {
+  return (
+    String(wb.jobTitle || wb.query || "候选人")
+      .replace(/\s+/g, " ")
+      .trim() || "候选人"
+  );
+}
+
+function workbenchExportFilename(wb, extension) {
+  const safeTitle =
+    workbenchExportTitle(wb)
+      .replace(/[\\/:*?"<>|\r\n]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 48) || "候选人";
+  const date = new Date().toISOString().slice(0, 10);
+  return `${safeTitle}-入围名单-${date}.${extension}`;
+}
+
+function shortlistResumeAbsoluteUrl(entry) {
+  return new URL(candidateResumeUrl(entry.item, entry.rank, entry.token), location.origin).href;
+}
+
+function csvField(value) {
+  let text = String(value ?? "");
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function downloadTextFile(filename, content, type) {
+  const blob = new Blob([content], { type: `${type};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.style.display = "none";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function exportWorkbenchShortlistCsv(wb) {
+  const entries = workbenchShortlistEntries(wb);
+  if (!entries.length) {
+    setWorkbenchFeedback(wb, "请先加入至少 1 位候选人再导出。", { warning: true });
+    return;
+  }
+  const header = [
+    "综合顺位",
+    "姓名",
+    "文档ID",
+    "工作年限",
+    "当前城市",
+    "匹配能力",
+    "能力缺口",
+    "项目证据",
+    "硬条件状态",
+    "硬条件详情",
+    "路径证据",
+    "简历链接",
+  ];
+  const rows = entries.map((entry) => {
+    const data = workbenchMatchData(entry.item);
+    return [
+      entry.rank > 0 ? `#${entry.rank}` : "",
+      entry.item?.name || "",
+      entry.key,
+      entry.item?.workYears ?? "",
+      entry.item?.currentResidence || "",
+      shortlistTextList(data.matchedAbilities),
+      shortlistTextList(data.missingAbilities),
+      shortlistProjectEvidenceText(data),
+      HARD_CONDITION_LABELS[data.hardStatus] || data.hardStatus || "未核验",
+      data.hardMatches.map((hard) => formatWorkbenchHard(hard)).join("\n"),
+      data.pathRationale.map((rationale) => String(rationale || "").trim()).filter(Boolean).join("\n"),
+      shortlistResumeAbsoluteUrl(entry),
+    ];
+  });
+  const content = `\uFEFF${[header, ...rows].map((row) => row.map(csvField).join(",")).join("\r\n")}`;
+  downloadTextFile(workbenchExportFilename(wb, "csv"), content, "text/csv");
+  setWorkbenchFeedback(wb, `已导出 ${entries.length} 位候选人的 CSV 入围名单。`);
+  announceAgentStatus(`已导出 ${entries.length} 位候选人的 CSV 入围名单。`);
+}
+
+function exportWorkbenchShortlistMarkdown(wb) {
+  const entries = workbenchShortlistEntries(wb);
+  if (!entries.length) {
+    setWorkbenchFeedback(wb, "请先加入至少 1 位候选人再导出。", { warning: true });
+    return;
+  }
+  const lines = [
+    `# ${workbenchExportTitle(wb)} · 入围名单`,
+    "",
+    `> 查询：${String(wb.query || "—").replace(/\s+/g, " ").trim() || "—"}`,
+    `> 导出时间：${new Date().toLocaleString("zh-CN", { hour12: false })}`,
+    `> 共 ${entries.length} 人。排序沿用本次搜索的综合顺位，不代表录用结论。`,
+    "",
+  ];
+  entries.forEach((entry, index) => {
+    const data = workbenchMatchData(entry.item);
+    const rankText = entry.rank > 0 ? ` · 综合顺位 #${entry.rank}` : "";
+    lines.push(`## ${index + 1}. ${entry.item?.name || entry.key}${rankText}`, "");
+    lines.push(`- 文档 ID：\`${entry.key}\``);
+    if (entry.item?.workYears != null) lines.push(`- 工作年限：${entry.item.workYears} 年`);
+    if (entry.item?.currentResidence) lines.push(`- 当前城市：${entry.item.currentResidence}`);
+    const matched = shortlistTextList(data.matchedAbilities);
+    const missing = shortlistTextList(data.missingAbilities);
+    if (matched) lines.push(`- 匹配能力：${matched}`);
+    if (missing) lines.push(`- 能力缺口：${missing}`);
+    lines.push(`- 硬条件：${HARD_CONDITION_LABELS[data.hardStatus] || data.hardStatus || "未核验"}`);
+    if (data.hardMatches.length) {
+      lines.push("- 硬条件详情：");
+      for (const hard of data.hardMatches) lines.push(`  - ${formatWorkbenchHard(hard)}`);
+    }
+    if (data.projectEvidence.length) {
+      lines.push("- 项目证据：");
+      for (const evidence of data.projectEvidence) {
+        const text = [evidence.ability, evidence.project, evidence.excerpt]
+          .map((part) => String(part || "").replace(/\s+/g, " ").trim())
+          .filter(Boolean)
+          .join(" · ");
+        if (text) lines.push(`  - ${text}`);
+      }
+    }
+    if (data.pathRationale.length) {
+      lines.push("- 路径证据：");
+      for (const rationale of data.pathRationale) {
+        const text = String(rationale || "").replace(/\s+/g, " ").trim();
+        if (text) lines.push(`  - ${text}`);
+      }
+    }
+    lines.push(`- [查看完整档案](${shortlistResumeAbsoluteUrl(entry)})`, "");
+  });
+  downloadTextFile(
+    workbenchExportFilename(wb, "md"),
+    `${lines.join("\n").trimEnd()}\n`,
+    "text/markdown",
+  );
+  setWorkbenchFeedback(wb, `已导出 ${entries.length} 位候选人的 Markdown 入围名单。`);
+  announceAgentStatus(`已导出 ${entries.length} 位候选人的 Markdown 入围名单。`);
 }
 
 function toggleWorkbenchCompare(wb, entry) {
@@ -2491,6 +2769,9 @@ function renderAgentWorkbench(container, payload, run, options = {}) {
   const items = Array.isArray(options.items) ? options.items : [];
   const offset = Math.max(0, Number(options.offset || 0));
   const token = options.token ?? payload.queryToken ?? state.queryToken ?? null;
+  const conversationId = String(
+    options.conversationId || payload.conversationId || state.conversationId || "",
+  ).trim();
   const total = Math.max(
     0,
     Number(payload.page?.total ?? payload.total ?? items.length),
@@ -2504,12 +2785,16 @@ function renderAgentWorkbench(container, payload, run, options = {}) {
     query: String(options.query || payload.query || "").trim(),
     jobTitle: String(options.jobTitle || run?.jobTitle || "").trim(),
     restored: Boolean(options.restored),
+    conversationId,
     route: String(payload.debug?.difficultyRoute || run?.route || options.route || "").trim(),
     total,
     filter: "all",
     pageEntries: items.map((item, index) => workbenchCandidateEntry(item, offset + index + 1, token)),
     page: payload.page ? { ...payload.page, total } : null,
-    shortlisted: new Map(),
+    shortlisted: shortlistMapFromEntries(options.shortlisted || [], token),
+    shortlistLoaded: Boolean(options.shortlistLoaded || options.restored),
+    shortlistRevision: 0,
+    shortlistWrite: Promise.resolve(),
     compare: new Map(),
   };
   state.activeWorkbench = wb;
@@ -2549,7 +2834,17 @@ function renderAgentWorkbench(container, payload, run, options = {}) {
   const compareLabel = document.createTextNode("比较 ");
   compareButton.append(compareLabel, compareCount);
   compareButton.addEventListener("click", () => openWorkbenchComparison(wb));
-  toolbarActions.append(compareButton);
+  const csvButton = el("button", "aw-compare-button aw-export-button", "导出 CSV");
+  csvButton.type = "button";
+  csvButton.disabled = true;
+  csvButton.title = "将当前入围名单导出为 CSV";
+  csvButton.addEventListener("click", () => exportWorkbenchShortlistCsv(wb));
+  const markdownButton = el("button", "aw-compare-button aw-export-button", "导出 Markdown");
+  markdownButton.type = "button";
+  markdownButton.disabled = true;
+  markdownButton.title = "将当前入围名单导出为 Markdown 摘要";
+  markdownButton.addEventListener("click", () => exportWorkbenchShortlistMarkdown(wb));
+  toolbarActions.append(compareButton, csvButton, markdownButton);
   toolbar.append(candidateTitle, tabs, feedback, toolbarActions);
 
   const candidateBody = el("div", "aw-candidate-body");
@@ -2576,6 +2871,8 @@ function renderAgentWorkbench(container, payload, run, options = {}) {
     compareButton,
     compareLabel,
     compareCount,
+    csvButton,
+    markdownButton,
     pager: pagerParts.pagerNode,
     pageState: pagerParts.stateLabel,
     prev: pagerParts.prev,
@@ -2590,6 +2887,7 @@ function renderAgentWorkbench(container, payload, run, options = {}) {
   renderWorkbenchList(wb);
   updateWorkbenchChrome(wb);
   setAgentResultMode(true);
+  if (!wb.shortlistLoaded) void loadWorkbenchShortlist(wb);
 
   if (run) {
     run.resultList = list;
@@ -3434,6 +3732,8 @@ function renderRestoredConversation(memory) {
           query: turn.query || "",
           jobTitle: turn.jobProfileSummary?.title || "",
           restored: true,
+          conversationId: memory.conversationId,
+          shortlisted: memory.shortlistedCandidates || [],
           route: turn.route || "",
         });
       } else {

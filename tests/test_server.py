@@ -382,6 +382,68 @@ def test_conversation_api_persists_history_exclusions_and_tenant_scope() -> None
         ).json() == {"deleted": True}
 
 
+def test_conversation_api_persists_shortlist_snapshot() -> None:
+    store = ConversationStore(connect_redis=False)
+    app = create_app(offline=True, conversation_store=store)
+    candidate = {
+        "docId": "c001",
+        "name": "Alice",
+        "summary": "Backend engineer",
+        "matchExplanation": {
+            "matchedAbilities": ["Python"],
+            "hardMatches": [{"field": "work_years", "matched": True, "required": True}],
+        },
+    }
+
+    with TestClient(app) as scoped:
+        created = scoped.post(
+            "/conversations",
+            json={"companyId": 98802, "hrId": 7, "title": "Shortlist"},
+        )
+        conversation_id = created.json()["conversationId"]
+
+        updated = scoped.patch(
+            f"/conversations/{conversation_id}/shortlist/c001",
+            params={"companyId": 98802, "hrId": 7},
+            json={
+                "shortlisted": True,
+                "candidate": candidate,
+                "rank": 3,
+                "queryToken": "query-token",
+            },
+        )
+        assert updated.status_code == 200
+        body = updated.json()
+        assert body["shortlistedCandidates"][0]["docId"] == "c001"
+        assert body["shortlistedCandidates"][0]["candidate"]["name"] == "Alice"
+        assert body["shortlistedCandidates"][0]["rank"] == 3
+        assert body["shortlistedCandidates"][0]["queryToken"] == "query-token"
+
+        detail = scoped.get(
+            f"/conversations/{conversation_id}",
+            params={"companyId": 98802, "hrId": 7},
+        )
+        assert detail.status_code == 200
+        assert detail.json()["shortlistedCandidates"][0]["candidate"]["docId"] == "c001"
+
+        assert (
+            scoped.patch(
+                f"/conversations/{conversation_id}/shortlist/c001",
+                params={"companyId": 40000, "hrId": 7},
+                json={"shortlisted": False},
+            ).status_code
+            == 404
+        )
+
+        removed = scoped.patch(
+            f"/conversations/{conversation_id}/shortlist/c001",
+            params={"companyId": 98802, "hrId": 7},
+            json={"shortlisted": False},
+        )
+        assert removed.status_code == 200
+        assert removed.json()["shortlistedCandidates"] == []
+
+
 def test_search_writes_restorable_conversation_snapshot() -> None:
     store = ConversationStore(connect_redis=False)
     app = create_app(offline=True, conversation_store=store)
@@ -540,6 +602,11 @@ def test_static_assets_are_served(client: TestClient) -> None:
     assert "function formatWorkbenchScore" in script.text
     assert "function updateChatPager(payload = null)" in script.text
     assert "function toggleWorkbenchShortlist" in script.text
+    assert "shortlistedCandidates" in script.text
+    assert "/shortlist/" in script.text
+    assert "function loadWorkbenchShortlist" in script.text
+    assert "function exportWorkbenchShortlistCsv" in script.text
+    assert "function exportWorkbenchShortlistMarkdown" in script.text
     assert "function openWorkbenchComparison" in script.text
     assert "function buildCompareModel" in script.text
     assert "function renderCompareOverview" in script.text

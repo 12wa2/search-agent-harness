@@ -338,3 +338,77 @@ class TestConversationHistory:
             )
             is None
         )
+
+    def test_shortlist_persists_candidate_snapshot_and_toggle(self):
+        store = ConversationStore(connect_redis=False)
+        conv = store.create(39978, 7)
+        candidate = {
+            "docId": "d1",
+            "name": "Alice",
+            "matchExplanation": {"matchedAbilities": ["Python"]},
+        }
+
+        updated = store.set_candidate_shortlisted(
+            conv.conversation_id,
+            39978,
+            7,
+            "d1",
+            shortlisted=True,
+            candidate=candidate,
+            rank=2,
+            query_token="token-1",
+        )
+
+        assert updated is not None
+        assert len(updated.shortlisted_candidates) == 1
+        entry = updated.shortlisted_candidates[0]
+        assert entry.doc_id == "d1"
+        assert entry.candidate["name"] == "Alice"
+        assert entry.rank == 2
+        assert entry.query_token == "token-1"
+        assert entry.added_at > 0
+
+        restored = store.load(conv.conversation_id)
+        assert restored is not None
+        assert restored.shortlisted_candidates[0].candidate["docId"] == "d1"
+
+        removed = store.set_candidate_shortlisted(
+            conv.conversation_id,
+            39978,
+            7,
+            "d1",
+            shortlisted=False,
+        )
+        assert removed is not None
+        assert removed.shortlisted_candidates == []
+
+    def test_shortlist_resolves_snapshot_from_turn_and_rejects_wrong_scope(self):
+        store = ConversationStore(connect_redis=False)
+        conv = store.create(39978, 7)
+        turn = _turn(0, "find backend")
+        turn.result_items = [{"docId": "d3", "name": "Carol"}]
+        turn.query_token = "turn-token"
+        store.append_turn(conv.conversation_id, 39978, 7, turn)
+
+        updated = store.set_candidate_shortlisted(
+            conv.conversation_id,
+            39978,
+            7,
+            "d3",
+            shortlisted=True,
+        )
+
+        assert updated is not None
+        entry = updated.shortlisted_candidates[0]
+        assert entry.candidate["name"] == "Carol"
+        assert entry.query_token == "turn-token"
+        assert (
+            store.set_candidate_shortlisted(
+                conv.conversation_id,
+                39978,
+                8,
+                "d3",
+                shortlisted=False,
+            )
+            is None
+        )

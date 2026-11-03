@@ -148,6 +148,15 @@ class CandidateExclusionRequest(BaseModel):
     excluded: bool
 
 
+class CandidateShortlistRequest(BaseModel):
+    """Toggle one candidate in the conversation's recruiter shortlist."""
+
+    shortlisted: bool
+    candidate: dict[str, Any] | None = None
+    rank: int = 0
+    queryToken: str | None = None
+
+
 def _round_summary_payload(state: dict[str, Any]) -> dict[str, Any] | None:
     """Latest round snapshot with any later revise outcome applied."""
     summaries = state.get("round_summaries") or []
@@ -653,6 +662,31 @@ def create_app(
             hrId,
             doc_id,
             excluded=req.excluded,
+        )
+        if memory is None:
+            raise HTTPException(status_code=404, detail="conversation not found")
+        return memory
+
+    @app.patch(
+        "/conversations/{conversation_id}/shortlist/{doc_id}",
+        response_model=ConversationMemory,
+    )
+    def set_candidate_shortlist(
+        conversation_id: str,
+        doc_id: str,
+        req: CandidateShortlistRequest,
+        companyId: int = Query(1, gt=0),
+        hrId: int | None = Query(None, gt=0),
+    ) -> ConversationMemory:
+        memory = resolved_conversations.set_candidate_shortlisted(
+            conversation_id,
+            companyId,
+            hrId,
+            doc_id,
+            shortlisted=req.shortlisted,
+            candidate=req.candidate,
+            rank=req.rank,
+            query_token=req.queryToken,
         )
         if memory is None:
             raise HTTPException(status_code=404, detail="conversation not found")

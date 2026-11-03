@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_TTL = int(os.environ.get("SEARCH_AGENT_CONVERSATION_TTL_SEC", str(30 * 24 * 3600)))
 _DEFAULT_MAX_TURNS = int(os.environ.get("SEARCH_AGENT_CONVERSATION_MAX_TURNS", "50"))
 _MAX_CANDIDATE_IDS = 500
+_MAX_SHORTLISTED_CANDIDATES = 100
 _MEM_CACHE: dict[str, tuple[int, str]] = {}  # key -> (expires_at, json)
 _MEM_INDEX: dict[str, dict[str, int]] = {}  # scope -> {conversation_id: updated_at}
 
@@ -53,6 +54,16 @@ class ConversationTurn(_ApiModel):
     timestamp: int = 0
 
 
+class ConversationShortlistEntry(_ApiModel):
+    """One recruiter-selected candidate kept with the conversation."""
+
+    doc_id: str
+    candidate: dict[str, Any] = Field(default_factory=dict)
+    rank: int = 0
+    query_token: str | None = None
+    added_at: int = 0
+
+
 class ConversationMemory(_ApiModel):
     """Full conversation history for one conversationId."""
 
@@ -64,6 +75,7 @@ class ConversationMemory(_ApiModel):
     total_turns: int = 0
     seen_candidate_ids: list[str] = Field(default_factory=list)
     excluded_candidate_ids: list[str] = Field(default_factory=list)
+    shortlisted_candidates: list[ConversationShortlistEntry] = Field(default_factory=list)
     created_at: int = 0
     updated_at: int = 0
     expires_at: int = 0
@@ -279,6 +291,66 @@ class ConversationStore:
         self._touch_index(memory)
         return memory
 
+    def set_candidate_shortlisted(
+        self,
+        conversation_id: str,
+        company_id: int,
+        hr_id: int | None,
+        doc_id: str,
+        *,
+        shortlisted: bool,
+        candidate: dict[str, Any] | None = None,
+        rank: int = 0,
+        query_token: str | None = None,
+    ) -> ConversationMemory | None:
+        """Persist a recruiter shortlist entry with a restorable candidate snapshot."""
+        memory = self.load(conversation_id)
+        if memory is None or not self._scope_matches(memory, company_id, hr_id):
+            return None
+        doc_id = str(doc_id).strip()
+        if not doc_id:
+            return memory
+
+        existing = next(
+            (entry for entry in memory.shortlisted_candidates if entry.doc_id == doc_id),
+            None,
+        )
+        remaining = [entry for entry in memory.shortlisted_candidates if entry.doc_id != doc_id]
+        now = int(time.time())
+        if shortlisted:
+            snapshot = dict(candidate or (existing.candidate if existing else {}))
+            resolved_token = query_token or (existing.query_token if existing else None)
+            if not snapshot:
+                for turn in reversed(memory.turns):
+                    found = next(
+                        (
+                            item
+                            for item in reversed(turn.result_items)
+                            if str(item.get("docId") or item.get("doc_id") or "").strip() == doc_id
+                        ),
+                        None,
+                    )
+                    if found is not None:
+                        snapshot = dict(found)
+                        resolved_token = resolved_token or turn.query_token
+                        break
+            snapshot["docId"] = doc_id
+            remaining.append(
+                ConversationShortlistEntry(
+                    doc_id=doc_id,
+                    candidate=snapshot,
+                    rank=max(0, int(rank)),
+                    query_token=resolved_token,
+                    added_at=now,
+                )
+            )
+        memory.shortlisted_candidates = remaining[-_MAX_SHORTLISTED_CANDIDATES:]
+        memory.updated_at = now
+        memory.expires_at = now + self._ttl
+        self._set(conversation_id, memory.model_dump())
+        self._touch_index(memory)
+        return memory
+
     # -- internals -- --------------------------------------------------------
 
     def _redis_failed(self, operation: str, exc: Exception) -> None:
@@ -442,6 +514,7 @@ def _merge_ids(existing: list[str], incoming: list[str]) -> list[str]:
 
 __all__ = [
     "ConversationMemory",
+    "ConversationShortlistEntry",
     "ConversationStore",
     "ConversationSummary",
     "ConversationTurn",

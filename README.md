@@ -14,7 +14,7 @@
 ![Pydantic](https://img.shields.io/badge/pydantic-v2-e92063)
 ![Elasticsearch](https://img.shields.io/badge/Elasticsearch-8-005571)
 ![Web UI](https://img.shields.io/badge/Web_UI-zero--build-2f6f61)
-![Tests](https://img.shields.io/badge/tests-568-brightgreen)
+![Tests](https://img.shields.io/badge/tests-577-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 <img src="docs/console.png" alt="Search Agent 对话式人才搜索界面" width="100%">
@@ -68,10 +68,10 @@ Search Agent Harness 在确定性检索之上增加一层受控的策略循环�
 - **证据优先**：Judge 使用工具返回的候选人事实；卡片展示命中能力、项目证据、缺口、硬条件与来源路径。
 - **人数优先的硬条件软门控**：硬条件区分“满足 / 违规 / 待核实”，违规与待核实者后置展示但不从名单删除，交付摘要显式暴露复核缺口。
 - **受控循环**：显式状态机、迭代/路径/LLM/Token/墙钟预算、签名防重，以及阶段级降级。
-- **可观测与会话**：SSE 阶段事件、实际执行阶段、原始 Trace；L1 最近上下文、L2 会话归档、L3 候选人排除。
+- **可观测与会话闭环**：SSE 阶段事件、实际执行阶段、原始 Trace；L1 最近上下文、L2 会话归档、L3 候选人排除；入围名单按会话持久化，刷新或恢复历史会话后仍可继续查看，并支持 CSV / Markdown 导出。
 - **策略效果可核验**：每轮展示触发缺口、策略动作、新增召回 / 判断 / 必备能力全通过人数与 LLM / 耗时成本；最终收敛检索单独统计，累计值与增量值不再混淆。
 - **受控并发**：进程内准入控制限制活跃运行与排队数，超限返回 `429` 和 `Retry-After`，健康检查暴露峰值与拒绝计数。
-- **可插拔且可复现**：内存、SQLite/FTS5、Elasticsearch、Hybrid V2 共用同一契约；568 项测试与零 Key 演示可直接运行。
+- **可插拔且可复现**：内存、SQLite/FTS5、Elasticsearch、Hybrid V2 共用同一契约；577 项测试与零 Key 演示可直接运行。
 
 ## 架构总览
 
@@ -178,7 +178,7 @@ search-agent hybrid-v2 doctor
 
 ## 界面与关键能力
 
-默认界面是对话式 Agent 体验：左侧恢复最近会话，中间展示需求解析、实际执行路径和候选人证据，右侧交付名单。侧栏可收起为带竖排“展开会话”的导航条，点击后恢复完整会话列表。窄屏下侧栏以抽屉形式打开，并在顶栏保留会话入口。顶部还可切换到执行观测，查看实际阶段、检索路径、运行指标和原始 Trace。两种视图共享同一条 SSE 运行，切换不会重新搜索。
+默认界面是对话式 Agent 体验：左侧恢复最近会话，中间展示需求解析、实际执行路径和候选人证据，右侧交付名单。侧栏可收起为带竖排“展开会话”的导航条，点击后恢复完整会话列表。窄屏下侧栏以抽屉形式打开，并在顶栏保留会话入口。入围名单按会话持久化，刷新或恢复历史会话后仍可继续查看、比较和导出 CSV / Markdown。顶部还可切换到执行观测，查看实际阶段、检索路径、运行指标和原始 Trace。两种视图共享同一条 SSE 运行，切换不会重新搜索。
 
 <table>
   <tr>
@@ -236,7 +236,7 @@ search-agent hybrid-v2 doctor
 
 - **自适应 Harness**：阶段是纯函数，默认使用显式循环；可选 LangGraph runner 复用同一批阶段，不改变行为。
 - **预算与降级**：状态机统一管理迭代次数、搜索路径、LLM 调用、Token 和墙钟时间五类资源约束；对已覆盖的阶段级失败提供降级路径或可解释的终止结果。
-- **会话分层**：L1 只注入最近结构化上下文，L2 持久化完整会话，L3 记录已看与显式排除的候选人。
+- **会话分层**：L1 只注入最近结构化上下文，L2 持久化完整会话与入围名单，L3 记录已看与显式排除的候选人。
 - **检索解耦**：只实现下面两个方法，即可替换为自己的搜索系统，不需要改 Agent 阶段代码。
 
 ```python
@@ -253,7 +253,7 @@ class SearchTool(Protocol):
 |---|---|
 | [意图路由](docs/INTENT_ROUTING.md) | 五类意图、3/5/8 路径选择与可观测字段 |
 | [架构设计](docs/ARCHITECTURE.md) | 状态机、预算、降级矩阵、合并与 finalize |
-| [HTTP API](docs/API.md) | 搜索、SSE、会话、候选人排除、分页与并发准入协议 |
+| [HTTP API](docs/API.md) | 搜索、SSE、会话、候选人排除、入围名单、分页与并发准入协议 |
 | [部署指南](docs/DEPLOYMENT.md) | 快速演示、本地完整在线、Docker Compose 与排障 |
 | [配置参考](docs/CONFIGURATION.md) | 模型、网关、Redis、预算、ES 与 Hybrid V2 变量 |
 | [评测报告](docs/EVALUATION.md) | 真实 LLM top-5 A/B、区间与结果边界 |
@@ -269,7 +269,7 @@ class SearchTool(Protocol):
 
 ## 质量与边界
 
-- 测试集当前共 `568` 项；本地完整环境为 `568 passed`，CI 会在独立作业中执行 ES 集成用例。
+- 测试集当前共 `577` 项；本地完整环境为 `577 passed`，CI 会在独立作业中执行 ES 集成用例。
 - CI 包含 Ruff、pytest、前端语法、Web 资源校验、Demo 冒烟、评测门禁、Elasticsearch 集成与 Docker 运行时依赖冒烟。
 - 仓库未部署到生产环境，不包含真实简历、企业数据、内部主机或凭据；演示数据均为虚构。
 - 不同模型提供方的质量、成本和延迟差异很大，接入真实数据前应重新评测。

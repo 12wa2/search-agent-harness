@@ -7856,8 +7856,14 @@ body[data-view="console"] .sidebar-toggle {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 5px;
   margin-left: auto;
+}
+
+.aw-export-button {
+  font-size: 10px;
 }
 
 .aw-compare-button {

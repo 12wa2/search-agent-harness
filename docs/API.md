@@ -34,6 +34,7 @@ search-agent serve --backend hybrid_v2
 | `GET` | `/conversations/{id}` | 恢复完整会话与候选人快照 |
 | `DELETE` | `/conversations/{id}` | 删除会话 |
 | `PATCH` | `/conversations/{id}/candidates/{docId}` | 排除或恢复候选人 |
+| `PATCH` | `/conversations/{id}/shortlist/{docId}` | 加入或移出入围名单 |
 | `GET` | `/sessions/{queryToken}` | 分页读取一次运行的结果池 |
 | `DELETE` | `/sessions/{queryToken}` | 使分页结果失效 |
 
@@ -175,7 +176,7 @@ data: {"query":"...","total":16,"items":[...],"debug":{...}}
 `debug.roundSummaries` 是完整数组。`new*` 已经是增量，客户端不应按 SSE 事件再次累加。
 前端应以真实 `stage` 事件为准，不能因为页面存在 8 个阶段轨道就把未执行阶段标记为完成。路由与阶段定义见 [意图路由](INTENT_ROUTING.md)。
 
-## 5. 会话与候选人排除
+## 5. 会话、候选人排除与入围名单
 
 ### 创建会话
 
@@ -200,6 +201,25 @@ curl -s -X PATCH \
   -H "Content-Type: application/json" \
   -d '{"excluded":true}'
 ```
+
+### 加入或移出入围名单
+
+```bash
+curl -s -X PATCH \
+  "http://127.0.0.1:8000/conversations/<conversationId>/shortlist/<docId>?companyId=1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "shortlisted": true,
+    "candidate": {"docId":"<docId>","name":"候选人姓名"},
+    "rank": 3,
+    "queryToken": "<queryToken>"
+  }'
+```
+
+接口返回完整 `ConversationMemory`，其中 `shortlistedCandidates` 保存候选人快照、原始综合顺位、
+档案 `queryToken` 与加入时间。传 `candidate` 可避免额外查询；省略时服务会从最近轮次的
+`resultItems` 回填同名 `docId` 的快照。`shortlisted:false` 会显式移出该候选人。名单按
+`companyId` / `hrId` 隔离，最多保留 100 人；刷新页面或恢复历史会话后可由前端直接还原。
 
 会话按 `companyId` 与 `hrId` 校验作用域；不匹配时返回 `404`。L1/L2/L3 记忆语义见 [架构设计](ARCHITECTURE.md)。
 每轮 L2 快照同时保存 `hardConditionSummary`，因此恢复会话后仍能区分违规、待核实与满足状态。
