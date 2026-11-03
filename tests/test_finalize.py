@@ -18,7 +18,13 @@ from search_agent.models.artifacts import (
 )
 from search_agent.models.ir import StructuredConditionIR
 from search_agent.stages.base import Deps
-from search_agent.stages.finalize import _judge_gate_key, _selection_key, run_finalize
+from search_agent.stages.finalize import (
+    _enrich,
+    _judge_gate_key,
+    _resume_evidence_coverage,
+    _selection_key,
+    run_finalize,
+)
 
 
 def _candidate(doc_id: str, score: float, *, has_python: bool) -> ToolCandidate:
@@ -32,6 +38,30 @@ def _candidate(doc_id: str, score: float, *, has_python: bool) -> ToolCandidate:
             skills=[{"name": "Python"}] if has_python else [],
         ),
         hard_matches=[{"field": "work_years", "matched": True, "required": True}],
+    )
+
+
+def _project_candidate(
+    doc_id: str,
+    score: float,
+    description: str,
+    *,
+    project_name: str = "交易链路",
+) -> ToolCandidate:
+    return ToolCandidate(
+        doc_id=doc_id,
+        score=score,
+        item=CandidateItem(
+            docId=doc_id,
+            score=score,
+            name=doc_id,
+            projectExperiences=[
+                {
+                    "project_name": project_name,
+                    "description": description,
+                }
+            ],
+        ),
     )
 
 
@@ -393,3 +423,163 @@ def test_selection_prefers_transferable_backend_evidence_on_llm_tie() -> None:
     assert _selection_key(backend, accumulated, abilities) < _selection_key(
         architect, accumulated, abilities
     )
+
+
+def test_selection_prefers_project_evidence_on_llm_tie() -> None:
+    abilities = [JobAbility(name="高并发系统设计", level="must")]
+    with_project = _project_candidate(
+        "with-project",
+        0.1,
+        "主导高并发链路的压测和性能优化。",
+    )
+    without_project = _candidate("without-project", 0.9, has_python=False)
+    accumulated = {
+        "with-project": CandidateJudgment(
+            doc_id="with-project", matched_abilities=["高并发系统设计"]
+        ),
+        "without-project": CandidateJudgment(
+            doc_id="without-project", matched_abilities=["高并发系统设计"]
+        ),
+    }
+
+    assert _selection_key(with_project, accumulated, abilities) < _selection_key(
+        without_project, accumulated, abilities
+    )
+
+
+def test_project_evidence_cannot_outrank_required_hard_condition() -> None:
+    abilities = [JobAbility(name="高并发系统设计", level="must")]
+    violating = _project_candidate(
+        "violating",
+        0.99,
+        "主导高并发链路压测和性能优化。",
+    ).model_copy(
+        update={
+            "hard_matches": [
+                {
+                    "field": "work_years",
+                    "operator": "gte",
+                    "expectedValues": [5],
+                    "actualValues": [2],
+                    "matched": False,
+                    "required": True,
+                }
+            ]
+        }
+    )
+    compliant = _candidate("compliant", 0.1, has_python=False)
+    accumulated = {
+        "violating": CandidateJudgment(doc_id="violating", matched_abilities=["高并发系统设计"]),
+        "compliant": CandidateJudgment(doc_id="compliant", matched_abilities=["高并发系统设计"]),
+    }
+
+    assert _selection_key(compliant, accumulated, abilities) < _selection_key(
+        violating, accumulated, abilities
+    )
+
+
+def test_weak_project_description_does_not_create_resume_evidence() -> None:
+    abilities = [JobAbility(name="高并发系统设计", level="must")]
+    strong = _project_candidate(
+        "strong",
+        0.2,
+        "主导高并发链路的压测和性能优化。",
+    )
+    weak = _project_candidate(
+        "weak",
+        0.9,
+        "协助主持高并发项目的会议纪要整理。",
+    )
+
+    assert _resume_evidence_coverage(strong, abilities) == (1, 0)
+    assert _resume_evidence_coverage(weak, abilities) == (0, 1)
+
+
+def test_project_name_supplies_evidence_without_description() -> None:
+    abilities = [JobAbility(name="高并发系统设计", level="must")]
+    candidate = ToolCandidate(
+        doc_id="name-only",
+        score=0.2,
+        item=CandidateItem(
+            docId="name-only",
+            score=0.2,
+            name="name-only",
+            projectExperiences=[{"project_name": "高并发交易系统"}],
+        ),
+    )
+
+    assert _resume_evidence_coverage(candidate, abilities) == (1, 0)
+
+
+def test_enrich_attaches_grounded_project_evidence() -> None:
+    abilities = [JobAbility(name="高并发系统设计", level="must")]
+    candidate = _project_candidate(
+        "relevant",
+        0.2,
+        "主导高并发链路的压测和性能优化。",
+        project_name="核心交易链路",
+    )
+    accumulated = {
+        "relevant": CandidateJudgment(
+            doc_id="relevant",
+            matched_abilities=["高并发系统设计"],
+            source_path_ids=["p1"],
+        )
+    }
+
+    enriched = _enrich(candidate, accumulated, {"p1": "业务系统路径"}, abilities)
+
+    assert enriched.match_explanation["projectEvidence"] == [
+        {
+            "ability": "高并发系统设计",
+            "project": "核心交易链路",
+            "excerpt": "主导高并发链路的压测和性能优化。",
+            "source": "projectExperiences",
+        }
+    ]
+
+
+def test_finalize_surfaces_project_evidence_in_delivered_explanation(monkeypatch) -> None:
+    monkeypatch.delenv("SEARCH_AGENT_FINAL_SELECTION_POLICY", raising=False)
+    candidate = ToolCandidate(
+        doc_id="relevant",
+        score=0.2,
+        item=CandidateItem(
+            docId="relevant",
+            score=0.2,
+            name="relevant",
+            projectExperiences=[
+                {
+                    "project_name": "Search Platform",
+                    "description": "主导 Python 检索服务重构。",
+                }
+            ],
+        ),
+        hard_matches=[{"field": "work_years", "matched": True, "required": True}],
+    )
+    tool = _PoolTool([candidate])
+    llm = _SelectiveJudge("relevant")
+    deps = Deps(
+        llm=llm,
+        tool=tool,
+        budget_state=BudgetState(budget=Budget(max_llm_calls=20, time_budget_sec=120.0)),
+    )
+    state = _policy_state()
+    state["job_profile"] = state["job_profile"].model_copy(
+        update={
+            "must_abilities": [JobAbility(name="Python", level="must", evidence_hints=["Python"])]
+        }
+    )
+    state.update({"top_k": 1, "recall_pool_size": 1})
+
+    result = run_finalize(state, deps)
+
+    explanation = result["final_items"][0].match_explanation
+    assert explanation["projectEvidence"] == [
+        {
+            "ability": "Python",
+            "project": "Search Platform",
+            "excerpt": "主导 Python 检索服务重构。",
+            "source": "projectExperiences",
+        }
+    ]

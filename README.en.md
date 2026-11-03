@@ -65,7 +65,7 @@ Search Agent Harness adds a controlled policy loop on top of deterministic retri
 ## Highlights
 
 - **Adaptive execution**: structured requests use a 3-stage direct path; clear requests use a 5-stage lightweight agent; complex requests may use the 8-stage reflective loop.
-- **Evidence first**: the judge consumes candidate facts returned by the search tool; cards expose matched abilities, gaps, hard constraints, and source paths.
+- **Evidence first**: the judge consumes candidate facts returned by the search tool; cards expose matched abilities, project evidence, gaps, hard constraints, and source paths.
 - **Headcount-first hard-condition soft gate**: hard constraints use `satisfied / violated / unverified`; violating or unverified candidates move to the end but are never dropped, and the delivery summary exposes the review gap.
 - **Governed loop**: explicit state machine, iteration/path/LLM/token/wall-clock budgets, signature deduplication, and stage-level degradation.
 - **Observable and conversational**: SSE stage events, actual executed stages, raw trace, L1 recent context, L2 conversation archive, and L3 candidate exclusion.

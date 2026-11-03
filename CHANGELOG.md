@@ -7,6 +7,11 @@
 
 ### Added
 
+- **finalize 项目经历证据**（`stages/finalize.py`、`web/`、`tests/`）：在不改变 Judge、
+  召回和硬条件门控的前提下，将 `projectExperiences` 的项目名称与描述纳入最终排序的
+  must 证据覆盖。项目描述含“协助、参与、会议纪要”等弱表达且没有明确负责动作时不计入
+  证据；命中片段以 `matchExplanation.projectEvidence` 返回，前端在候选人卡片展示
+  `项目证据 N 条` 并在匹配依据中给出项目、能力与真实描述片段。
 - **搜索运行并发闸门**（`core/concurrency.py`、`config.py`、`server.py`、`web/`）：为
   `/search` 与 `/search/stream` 增加进程内有界准入控制，限制活跃运行、排队请求与等待超时。
   超限返回 HTTP `429`、`Retry-After` 和结构化 `server_busy` 原因；同步与 SSE 路径均幂等释放

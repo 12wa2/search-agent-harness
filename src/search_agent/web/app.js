@@ -1061,12 +1061,18 @@ function workbenchMatchData(item) {
   const pathRationale = Array.isArray(explanation.pathRationale)
     ? explanation.pathRationale.filter(Boolean)
     : [];
+  const projectEvidence = Array.isArray(explanation.projectEvidence)
+    ? explanation.projectEvidence.filter(
+        (entry) => entry && typeof entry === "object" && entry.project && entry.excerpt,
+      )
+    : [];
   const hardSummary = summarizeHardConditions(hardMatches);
   return {
     matchedAbilities,
     missingAbilities,
     hardMatches,
     pathRationale,
+    projectEvidence,
     hardPassed: hardSummary.satisfied,
     hardViolated: hardSummary.violated,
     hardUnverified: hardSummary.unverified,
@@ -4166,7 +4172,13 @@ function buildCandidateTooltip(
   showRawMatchExplanation,
   showScore = true,
 ) {
-  const { matchedAbilities, missingAbilities, hardMatches, pathRationale } = groups;
+  const {
+    matchedAbilities,
+    missingAbilities,
+    hardMatches,
+    pathRationale,
+    projectEvidence = [],
+  } = groups;
   const scoreText = showScore ? formatWorkbenchScore(item) : "";
   const hasDetails = Boolean(
     item.summary ||
@@ -4174,6 +4186,7 @@ function buildCandidateTooltip(
       missingAbilities.length ||
       hardMatches.length ||
       pathRationale.length ||
+      projectEvidence.length ||
       showRawMatchExplanation,
   );
   if (!hasDetails) return null;
@@ -4219,6 +4232,12 @@ function buildCandidateTooltip(
 
   addTagSection("命中能力", matchedAbilities, "is-match");
   addTagSection("未覆盖能力", missingAbilities, "is-missing");
+  addListSection(
+    "项目证据",
+    projectEvidence.map((entry) => ({
+      text: `${entry.ability ? `${entry.ability} · ` : ""}${entry.project}：${entry.excerpt}`,
+    })),
+  );
   addListSection(
     "来源路径",
     pathRationale.map((rationale) => ({ text: rationale })),
@@ -4356,6 +4375,10 @@ function renderCandidate(
   const missingAbilities = (explanation.missingAbilities || []).filter(Boolean);
   const hardMatches = (explanation.hardMatches || []).filter(Boolean);
   const pathRationale = (explanation.pathRationale || []).filter(Boolean);
+  const projectEvidence = (Array.isArray(explanation.projectEvidence)
+    ? explanation.projectEvidence
+    : []
+  ).filter((entry) => entry && typeof entry === "object" && entry.project && entry.excerpt);
 
   const evidence = el("div", "cand-evidence");
   const facts = el("div", "cand-evidence-facts");
@@ -4370,6 +4393,13 @@ function renderCandidate(
   };
   if (matchedAbilities.length) {
     addFact("能力命中", `${matchedAbilities.length} 项`);
+  }
+  if (projectEvidence.length) {
+    addFact("项目证据", `${projectEvidence.length} 条`, {
+      title: projectEvidence
+        .map((entry) => `${entry.ability || "能力"} · ${entry.project}：${entry.excerpt}`)
+        .join("\n"),
+    });
   }
   if (hardMatches.length) {
     const hardSummary = summarizeHardConditions(hardMatches);
@@ -4429,7 +4459,7 @@ function renderCandidate(
     li,
     item,
     rank,
-    { matchedAbilities, missingAbilities, hardMatches, pathRationale },
+    { matchedAbilities, missingAbilities, hardMatches, pathRationale, projectEvidence },
     showRawMatchExplanation,
     showScore,
   );

@@ -118,9 +118,34 @@ _ABILITY_EVIDENCE_SYNONYMS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] 
     ),
 )
 
+_MAX_PROJECT_EVIDENCE_ROWS = 8
+_MAX_PROJECT_EXCERPT_CHARS = 120
+_WEAK_PROJECT_ACTIONS = ("协助", "参与", "会议纪要", "文档整理", "协调", "支持")
+_STRONG_PROJECT_ACTIONS = (
+    "主导",
+    "负责",
+    "设计",
+    "实现",
+    "落地",
+    "重构",
+    "优化",
+    "搭建",
+    "建设",
+    "治理",
+    "保障",
+    "压测",
+    "上线",
+    "排查",
+    "迁移",
+    "拆分",
+    "调优",
+    "开发",
+    "攻关",
+)
+
 
 def _candidate_text(tc: ToolCandidate) -> str:
-    """Text blob used only for explainable resume-evidence coverage."""
+    """Base resume text used for explainable evidence coverage."""
     item = tc.item
     parts: list[str] = [str(item.summary or "")]
     for skill in item.skills or []:
@@ -153,15 +178,113 @@ def _ability_evidence_terms(ability: Any) -> set[str]:
     return terms
 
 
-def _resume_evidence_coverage(tc: ToolCandidate, must_abilities: list[Any]) -> tuple[int, int]:
-    """How many must abilities have resume evidence; (matched, missing)."""
+def _row_text(row: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _project_description_has_strong_action(description: str) -> bool:
+    """Reject project descriptions that only show peripheral participation."""
+    text = description.strip().lower()
+    if not text:
+        return True
+    has_weak_action = any(marker in text for marker in _WEAK_PROJECT_ACTIONS)
+    if not has_weak_action:
+        return True
+    return any(marker in text for marker in _STRONG_PROJECT_ACTIONS)
+
+
+def _clip_project_excerpt(text: str, terms: set[str]) -> str:
+    text = text.strip()
+    if len(text) <= _MAX_PROJECT_EXCERPT_CHARS:
+        return text
+    lowered = text.lower()
+    positions = [lowered.find(term) for term in terms if lowered.find(term) >= 0]
+    term_position = min(positions, default=0)
+    start = max(0, term_position - _MAX_PROJECT_EXCERPT_CHARS // 3)
+    end = min(len(text), start + _MAX_PROJECT_EXCERPT_CHARS)
+    excerpt = text[start:end].strip()
+    if start > 0:
+        excerpt = f"…{excerpt}"
+    if end < len(text):
+        excerpt = f"{excerpt}…"
+    return excerpt
+
+
+def _project_evidence_rows(tc: ToolCandidate) -> list[tuple[str, str, str]]:
+    """Return (project, description, searchable text) rows with credible work."""
+    rows: list[tuple[str, str, str]] = []
+    for project in tc.item.projectExperiences or []:
+        if not isinstance(project, dict):
+            continue
+        name = _row_text(project, "project_name", "projectName", "name", "title")
+        description = _row_text(
+            project,
+            "description",
+            "project_description",
+            "projectDescription",
+        )
+        # A weak project description makes the whole row ineligible: a project
+        # name alone is too easy to over-credit without supporting work.
+        if description and not _project_description_has_strong_action(description):
+            continue
+        searchable = " ".join(part for part in (name, description) if part).lower()
+        if not searchable:
+            continue
+        rows.append((name or "项目经历", description, searchable))
+        if len(rows) >= _MAX_PROJECT_EVIDENCE_ROWS:
+            break
+    return rows
+
+
+def _project_excerpt(project: str, description: str, terms: set[str]) -> str:
+    for source in (description, project):
+        if source and any(term in source.lower() for term in terms):
+            return _clip_project_excerpt(source, terms)
+    return _clip_project_excerpt(description or project, terms)
+
+
+def _resume_evidence_details(
+    tc: ToolCandidate,
+    must_abilities: list[Any],
+) -> tuple[int, int, list[dict[str, str]]]:
+    """Return must coverage, gap, and grounded project excerpts."""
     text = _candidate_text(tc)
+    project_rows = _project_evidence_rows(tc)
     matched = 0
+    project_evidence: list[dict[str, str]] = []
     for ability in must_abilities:
         terms = _ability_evidence_terms(ability)
-        if terms and any(term in text for term in terms):
+        if not terms:
+            continue
+        text_hit = any(term in text for term in terms)
+        project_hit: tuple[str, str] | None = None
+        for project, description, searchable in project_rows:
+            if any(term in searchable for term in terms):
+                project_hit = (project, description)
+                break
+        if text_hit or project_hit:
             matched += 1
-    return matched, len(must_abilities) - matched
+        if project_hit:
+            project, description = project_hit
+            project_evidence.append(
+                {
+                    "ability": str(getattr(ability, "name", "") or ""),
+                    "project": project,
+                    "excerpt": _project_excerpt(project, description, terms),
+                    "source": "projectExperiences",
+                }
+            )
+    return matched, len(must_abilities) - matched, project_evidence
+
+
+def _resume_evidence_coverage(tc: ToolCandidate, must_abilities: list[Any]) -> tuple[int, int]:
+    """How many must abilities have resume evidence; (matched, missing)."""
+    matched, missing, _ = _resume_evidence_details(tc, must_abilities)
+    return matched, missing
 
 
 def _selection_key(
@@ -319,8 +442,13 @@ def _judge_converged_new(
         return 0
 
 
-def _enrich(tc: ToolCandidate, accumulated, path_rationale) -> ToolCandidate:
-    """Attach accumulated matched_abilities + path rationale to match_explanation."""
+def _enrich(
+    tc: ToolCandidate,
+    accumulated,
+    path_rationale,
+    must_abilities: list[Any] | None = None,
+) -> ToolCandidate:
+    """Attach accumulated judgments, path rationale, and project evidence."""
     judgment = accumulated.get(tc.doc_id)
     if not judgment:
         return tc
@@ -328,6 +456,9 @@ def _enrich(tc: ToolCandidate, accumulated, path_rationale) -> ToolCandidate:
     explanation["matchedAbilities"] = judgment.matched_abilities
     explanation["missingAbilities"] = judgment.missing_abilities
     explanation["pathRationale"] = [path_rationale.get(pid, "") for pid in judgment.source_path_ids]
+    _, _, project_evidence = _resume_evidence_details(tc, must_abilities or [])
+    if project_evidence:
+        explanation["projectEvidence"] = project_evidence
     return tc.model_copy(update={"match_explanation": explanation})
 
 
@@ -381,6 +512,9 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
         ],
         "hard_constraints": [c.model_dump() for c in state["job_profile"].hard_constraints],
     }
+    _job = state.get("job_profile")
+    _must_abilities = list(_job.must_abilities) if _job else []
+    _nice_abilities = list(_job.nice_abilities) if _job else []
 
     final_items: list[ToolCandidate] = []
     converged_pool: list[ToolCandidate] = []
@@ -438,9 +572,6 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
             converged = None
 
     final_judged = 0
-    _job = state.get("job_profile")
-    _must_abilities = list(_job.must_abilities) if _job else []
-    _nice_abilities = list(_job.nice_abilities) if _job else []
 
     if converged is not None and converged_pool:
         # Union the enriched converged page with the already-judged path pool,
@@ -462,7 +593,8 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
                 )
                 rerank_used = True
                 final_items = [
-                    _enrich(tc, accumulated, path_rationale) for tc in result.items[:top_k]
+                    _enrich(tc, accumulated, path_rationale, _must_abilities)
+                    for tc in result.items[:top_k]
                 ]
                 if len(final_items) < top_k:
                     have = {tc.doc_id for tc in final_items}
@@ -472,13 +604,16 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
                         reverse=True,
                     )
                     final_items.extend(
-                        _enrich(tc, accumulated, path_rationale)
+                        _enrich(tc, accumulated, path_rationale, _must_abilities)
                         for tc in fill[: top_k - len(final_items)]
                     )
             except Exception:  # noqa: BLE001 - keep an explainable fallback
                 _, reason = degrade("rerank_pool", "llm_failed")
                 degraded_reason = reason
-                final_items = [_enrich(tc, accumulated, path_rationale) for tc in candidate_pool]
+                final_items = [
+                    _enrich(tc, accumulated, path_rationale, _must_abilities)
+                    for tc in candidate_pool
+                ]
                 final_items.sort(key=lambda tc: _selection_key(tc, accumulated, _must_abilities))
                 final_items = final_items[:top_k]
         elif selection_policy in {"judge_gate", "judge_gate_v2"}:
@@ -506,7 +641,9 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
                 except Exception:  # noqa: BLE001 - keep gate ranking
                     _, reason = degrade("rerank_pool", "llm_failed")
                     degraded_reason = reason
-            final_items = [_enrich(tc, accumulated, path_rationale) for tc in ranking_pool]
+            final_items = [
+                _enrich(tc, accumulated, path_rationale, _must_abilities) for tc in ranking_pool
+            ]
             final_items.sort(
                 key=lambda tc: _judge_gate_key(
                     tc,
@@ -518,7 +655,9 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
             )
             final_items = final_items[:top_k]
         else:
-            final_items = [_enrich(tc, accumulated, path_rationale) for tc in candidate_pool]
+            final_items = [
+                _enrich(tc, accumulated, path_rationale, _must_abilities) for tc in candidate_pool
+            ]
             final_items.sort(key=lambda tc: _selection_key(tc, accumulated, _must_abilities))
             final_items = final_items[:top_k]
     else:
@@ -559,7 +698,9 @@ def run_finalize(state: dict[str, Any], deps: Deps) -> dict[str, Any]:
             fill.sort(key=lambda tc: tc.score, reverse=True)
             final_items = final_items + fill[: top_k - len(final_items)]
 
-        final_items = [_enrich(tc, accumulated, path_rationale) for tc in final_items[:top_k]]
+        final_items = [
+            _enrich(tc, accumulated, path_rationale, _must_abilities) for tc in final_items[:top_k]
+        ]
         final_items.sort(key=lambda tc: _selection_key(tc, accumulated, _must_abilities))
 
     hard_constraints = list(state["job_profile"].hard_constraints or [])
